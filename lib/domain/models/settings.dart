@@ -1,13 +1,99 @@
-enum AppThemeMode {
+﻿enum AppThemeMode {
   system,
   light,
   dark;
 
   String get label => switch (this) {
-    AppThemeMode.system => 'System',
-    AppThemeMode.light => 'Light',
-    AppThemeMode.dark => 'Dark',
-  };
+        AppThemeMode.system => 'System',
+        AppThemeMode.light => 'Light',
+        AppThemeMode.dark => 'Dark',
+      };
+}
+
+enum ReminderRepeat {
+  once,
+  daily;
+
+  String get label => switch (this) {
+        ReminderRepeat.once => 'Once',
+        ReminderRepeat.daily => 'Daily',
+      };
+
+  static ReminderRepeat tryParse(String? value) {
+    for (final v in ReminderRepeat.values) {
+      if (v.name == value) return v;
+    }
+    return ReminderRepeat.daily;
+  }
+}
+
+/// A simple in-app reminder (time + message) stored locally.
+class ReminderItem {
+  const ReminderItem({
+    required this.id,
+    required this.title,
+    this.note = '',
+    required this.hour,
+    required this.minute,
+    this.enabled = true,
+    this.repeat = ReminderRepeat.daily,
+  });
+
+  final String id;
+  final String title;
+  final String note;
+  final int hour;
+  final int minute;
+  final bool enabled;
+  final ReminderRepeat repeat;
+
+  String get timeLabel {
+    final h = hour % 12 == 0 ? 12 : hour % 12;
+    final m = minute.toString().padLeft(2, '0');
+    final suffix = hour >= 12 ? 'PM' : 'AM';
+    return '$h:$m $suffix';
+  }
+
+  ReminderItem copyWith({
+    String? title,
+    String? note,
+    int? hour,
+    int? minute,
+    bool? enabled,
+    ReminderRepeat? repeat,
+  }) {
+    return ReminderItem(
+      id: id,
+      title: title ?? this.title,
+      note: note ?? this.note,
+      hour: hour ?? this.hour,
+      minute: minute ?? this.minute,
+      enabled: enabled ?? this.enabled,
+      repeat: repeat ?? this.repeat,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'note': note,
+        'hour': hour,
+        'minute': minute,
+        'enabled': enabled,
+        'repeat': repeat.name,
+      };
+
+  factory ReminderItem.fromJson(Map<String, dynamic> json) {
+    return ReminderItem(
+      id: json['id'] as String? ?? '',
+      title: json['title'] as String? ?? 'Reminder',
+      note: json['note'] as String? ?? '',
+      hour: (json['hour'] as num?)?.toInt().clamp(0, 23) ?? 9,
+      minute: (json['minute'] as num?)?.toInt().clamp(0, 59) ?? 0,
+      enabled: json['enabled'] as bool? ?? true,
+      repeat: ReminderRepeat.tryParse(json['repeat'] as String?),
+    );
+  }
 }
 
 /// Sections on the Today dashboard. Stored by name so the order can be
@@ -82,14 +168,12 @@ class AppSettings {
     this.todaySections = const [],
     this.showArtwork = true,
     this.backupFolderPath,
-    this.googleClientId,
-    this.googleClientSecret,
-    this.googleAccountEmail,
-    this.googleAuthCipher,
-    this.googleConnectedAt,
-    this.googleLastSyncAt,
-    this.googleDriveFileId,
-    this.googleDriveFolderId,
+    this.cloudflareWorkerUrl,
+    this.cloudflareUsername,
+    this.cloudflareSessionCipher,
+    this.cloudflareConnectedAt,
+    this.cloudflareLastSyncAt,
+    this.reminders = const [],
   });
 
   final bool onboardingComplete;
@@ -123,24 +207,29 @@ class AppSettings {
   /// this off means browsing music makes no image requests at all.
   final bool showArtwork;
 
-  /// Optional linked folder for saving backups (e.g. a Google Drive synced folder).
+  /// Optional linked folder for saving backups (e.g. a synced/cloud folder).
   final String? backupFolderPath;
 
-  /// Google Drive sync (OAuth). Credentials/tokens stored encrypted separately where needed.
-  final String? googleClientId;
-  final String? googleClientSecret;
-  final String? googleAccountEmail;
-  final String? googleAuthCipher; // encrypted JSON: access/refresh tokens, expiry, scopes
-  final DateTime? googleConnectedAt;
-  final DateTime? googleLastSyncAt;
-  final String? googleDriveFileId; // id of the synced backup file in Drive
-  final String? googleDriveFolderId; // id of the Lifelog folder in Drive
+  /// Cloudflare Worker sync (client-side encrypted backups). Session token is stored encrypted.
+  final String? cloudflareWorkerUrl;
+  final String? cloudflareUsername;
+  final String? cloudflareSessionCipher; // encrypted JSON: token and account metadata
+  final DateTime? cloudflareConnectedAt;
+  final DateTime? cloudflareLastSyncAt;
+
+  /// In-app reminders (time + message), stored locally in encrypted settings.
+  final List<ReminderItem> reminders;
 
   bool get lastfmConnected =>
       lastfmUsername != null && lastfmUsername!.trim().isNotEmpty;
 
-  bool get googleDriveConnected =>
-      googleAccountEmail != null && googleAuthCipher != null;
+  bool get cloudflareConnected =>
+      cloudflareWorkerUrl != null &&
+      cloudflareWorkerUrl!.trim().isNotEmpty &&
+      cloudflareUsername != null &&
+      cloudflareUsername!.trim().isNotEmpty &&
+      cloudflareSessionCipher != null &&
+      cloudflareSessionCipher!.trim().isNotEmpty;
 
   AppSettings copyWith({
     bool? onboardingComplete,
@@ -165,21 +254,17 @@ class AppSettings {
     bool? showArtwork,
     String? backupFolderPath,
     bool clearBackupFolderPath = false,
-    String? googleClientId,
-    bool clearGoogleClientId = false,
-    String? googleClientSecret,
-    bool clearGoogleClientSecret = false,
-    String? googleAccountEmail,
-    bool clearGoogleAccountEmail = false,
-    String? googleAuthCipher,
-    bool clearGoogleAuth = false,
-    DateTime? googleConnectedAt,
-    DateTime? googleLastSyncAt,
-    String? googleDriveFileId,
-    bool clearGoogleDriveFileId = false,
-    String? googleDriveFolderId,
-    bool clearGoogleDriveFolderId = false,
+    String? cloudflareWorkerUrl,
+    bool clearCloudflareWorkerUrl = false,
+    String? cloudflareUsername,
+    bool clearCloudflareUsername = false,
+    String? cloudflareSessionCipher,
+    bool clearCloudflareSession = false,
+    DateTime? cloudflareConnectedAt,
+    DateTime? cloudflareLastSyncAt,
+    List<ReminderItem>? reminders,
   }) {
+    final clearCloud = clearCloudflareSession;
     return AppSettings(
       onboardingComplete: onboardingComplete ?? this.onboardingComplete,
       themeMode: themeMode ?? this.themeMode,
@@ -211,50 +296,48 @@ class AppSettings {
       backupFolderPath: clearBackupFolderPath
           ? null
           : (backupFolderPath ?? this.backupFolderPath),
-      googleClientId: clearGoogleClientId ? null : (googleClientId ?? this.googleClientId),
-      googleClientSecret: clearGoogleClientSecret ? null : (googleClientSecret ?? this.googleClientSecret),
-      googleAccountEmail: clearGoogleAccountEmail || clearGoogleAuth
+      cloudflareWorkerUrl: clearCloud || clearCloudflareWorkerUrl
           ? null
-          : (googleAccountEmail ?? this.googleAccountEmail),
-      googleAuthCipher: clearGoogleAuth ? null : (googleAuthCipher ?? this.googleAuthCipher),
-      googleConnectedAt: clearGoogleAuth ? null : (googleConnectedAt ?? this.googleConnectedAt),
-      googleLastSyncAt: clearGoogleAuth ? null : (googleLastSyncAt ?? this.googleLastSyncAt),
-      googleDriveFileId: clearGoogleAuth || clearGoogleDriveFileId
+          : (cloudflareWorkerUrl ?? this.cloudflareWorkerUrl),
+      cloudflareUsername: clearCloud || clearCloudflareUsername
           ? null
-          : (googleDriveFileId ?? this.googleDriveFileId),
-      googleDriveFolderId: clearGoogleAuth || clearGoogleDriveFolderId
+          : (cloudflareUsername ?? this.cloudflareUsername),
+      cloudflareSessionCipher: clearCloud
           ? null
-          : (googleDriveFolderId ?? this.googleDriveFolderId),
+          : (cloudflareSessionCipher ?? this.cloudflareSessionCipher),
+      cloudflareConnectedAt:
+          clearCloud ? null : (cloudflareConnectedAt ?? this.cloudflareConnectedAt),
+      cloudflareLastSyncAt:
+          clearCloud ? null : (cloudflareLastSyncAt ?? this.cloudflareLastSyncAt),
+      reminders: reminders ?? this.reminders,
     );
   }
 
   Map<String, dynamic> toJson() => {
-    'onboardingComplete': onboardingComplete,
-    'themeMode': themeMode.name,
-    'lastfmUsername': lastfmUsername,
-    'lastfmApiKeyCipher': lastfmApiKeyCipher,
-    'lastfmConnectedAt': lastfmConnectedAt?.toIso8601String(),
-    'lastfmLastSync': lastfmLastSync?.toIso8601String(),
-    'lastfmLastSyncFrom': lastfmLastSyncFrom?.toIso8601String(),
-    'weekStartsMonday': weekStartsMonday,
-    'lockEnabled': lockEnabled,
-    'pinSalt': pinSalt,
-    'pinHash': pinHash,
-    'autoLockMinutes': autoLockMinutes,
-    'lastBackupAt': lastBackupAt?.toIso8601String(),
-    'hiddenInsightCategories': hiddenInsightCategories,
-    'todaySections': todaySections,
-    'showArtwork': showArtwork,
-    'backupFolderPath': backupFolderPath,
-    'googleClientId': googleClientId,
-    'googleClientSecret': googleClientSecret,
-    'googleAccountEmail': googleAccountEmail,
-    'googleAuthCipher': googleAuthCipher,
-    'googleConnectedAt': googleConnectedAt?.toIso8601String(),
-    'googleLastSyncAt': googleLastSyncAt?.toIso8601String(),
-    'googleDriveFileId': googleDriveFileId,
-    'googleDriveFolderId': googleDriveFolderId,
-  };
+        'onboardingComplete': onboardingComplete,
+        'themeMode': themeMode.name,
+        'lastfmUsername': lastfmUsername,
+        'lastfmApiKeyCipher': lastfmApiKeyCipher,
+        'lastfmConnectedAt': lastfmConnectedAt?.toIso8601String(),
+        'lastfmLastSync': lastfmLastSync?.toIso8601String(),
+        'lastfmLastSyncFrom': lastfmLastSyncFrom?.toIso8601String(),
+        'weekStartsMonday': weekStartsMonday,
+        'lockEnabled': lockEnabled,
+        'pinSalt': pinSalt,
+        'pinHash': pinHash,
+        'autoLockMinutes': autoLockMinutes,
+        'lastBackupAt': lastBackupAt?.toIso8601String(),
+        'hiddenInsightCategories': hiddenInsightCategories,
+        'todaySections': todaySections,
+        'showArtwork': showArtwork,
+        'backupFolderPath': backupFolderPath,
+        'cloudflareWorkerUrl': cloudflareWorkerUrl,
+        'cloudflareUsername': cloudflareUsername,
+        'cloudflareSessionCipher': cloudflareSessionCipher,
+        'cloudflareConnectedAt': cloudflareConnectedAt?.toIso8601String(),
+        'cloudflareLastSyncAt': cloudflareLastSyncAt?.toIso8601String(),
+        'reminders': reminders.map((r) => r.toJson()).toList(),
+      };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
     final mode = AppThemeMode.values.firstWhere(
@@ -291,14 +374,18 @@ class AppSettings {
           const [],
       showArtwork: json['showArtwork'] as bool? ?? true,
       backupFolderPath: json['backupFolderPath'] as String?,
-      googleClientId: json['googleClientId'] as String?,
-      googleClientSecret: json['googleClientSecret'] as String?,
-      googleAccountEmail: json['googleAccountEmail'] as String?,
-      googleAuthCipher: json['googleAuthCipher'] as String?,
-      googleConnectedAt: DateTime.tryParse(json['googleConnectedAt'] as String? ?? ''),
-      googleLastSyncAt: DateTime.tryParse(json['googleLastSyncAt'] as String? ?? ''),
-      googleDriveFileId: json['googleDriveFileId'] as String?,
-      googleDriveFolderId: json['googleDriveFolderId'] as String?,
+      cloudflareWorkerUrl: json['cloudflareWorkerUrl'] as String?,
+      cloudflareUsername: json['cloudflareUsername'] as String?,
+      cloudflareSessionCipher: json['cloudflareSessionCipher'] as String?,
+      cloudflareConnectedAt:
+          DateTime.tryParse(json['cloudflareConnectedAt'] as String? ?? ''),
+      cloudflareLastSyncAt:
+          DateTime.tryParse(json['cloudflareLastSyncAt'] as String? ?? ''),
+      reminders: (json['reminders'] as List? ?? const [])
+          .whereType<Map>()
+          .map((e) => ReminderItem.fromJson(Map<String, dynamic>.from(e)))
+          .where((r) => r.id.isNotEmpty)
+          .toList(),
     );
   }
 }

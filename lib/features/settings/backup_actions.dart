@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
@@ -18,9 +18,7 @@ const _backupTypes = <XTypeGroup>[
   XTypeGroup(label: 'Lifelog backup', extensions: <String>['lifelog']),
 ];
 
-/// Creates a passphrase-encrypted, structured backup and lets the user choose
-/// where to save it. Media bytes are intentionally excluded from this container
-/// in the current build.
+/// Creates a passphrase-encrypted backup (including media) and lets the user choose\n/// where to save it. Everything in the backup is encrypted with the passphrase.
 Future<void> exportBackup(BuildContext context, WidgetRef ref) async {
   final services = ref.read(appServicesProvider);
   final passphrase = await _askBackupPassphrase(context);
@@ -29,10 +27,7 @@ Future<void> exportBackup(BuildContext context, WidgetRef ref) async {
 
   final bytes = await guard(
     context,
-    services.backup.createBackup(
-      archive: ref.read(archiveProvider),
-      passphrase: passphrase,
-    ),
+    services.backup.createBackup(\n      archive: ref.read(archiveProvider),\n      passphrase: passphrase,\n      mediaStore: services.mediaStore,\n    ),
     errorPrefix: 'Could not create the backup',
   );
   if (bytes == null) return;
@@ -97,7 +92,7 @@ Future<void> exportBackup(BuildContext context, WidgetRef ref) async {
   }
 }
 
-/// Links a folder (e.g. a Google Drive synced folder) for saving backups.
+/// Links a folder (e.g. a synced or cloud folder) for saving backups.
 Future<void> linkBackupFolder(BuildContext context, WidgetRef ref) async {
   String? path;
   if (!kIsWeb && Platform.isIOS) {
@@ -138,7 +133,7 @@ Future<void> saveBackupToLinkedFolder(BuildContext context, WidgetRef ref) async
   var folder = ref.read(settingsProvider).backupFolderPath;
   if (folder == null || folder.trim().isEmpty) {
     if (context.mounted) {
-      showSnack(context, 'Link a folder first (e.g. your Google Drive folder).');
+      showSnack(context, 'Link a folder first (e.g. a synced or cloud folder).');
     }
     return;
   }
@@ -157,10 +152,7 @@ Future<void> saveBackupToLinkedFolder(BuildContext context, WidgetRef ref) async
 
   final bytes = await guard(
     context,
-    services.backup.createBackup(
-      archive: ref.read(archiveProvider),
-      passphrase: passphrase,
-    ),
+    services.backup.createBackup(\n      archive: ref.read(archiveProvider),\n      passphrase: passphrase,\n      mediaStore: services.mediaStore,\n    ),
     errorPrefix: 'Could not create the backup',
   );
   if (bytes == null) return;
@@ -217,6 +209,9 @@ Future<void> restoreBackup(BuildContext context, WidgetRef ref) async {
   if (!context.mounted) return;
 
   final counts = contents.counts;
+  final mediaMsg = contents.includesMedia
+      ? 'This backup includes encrypted media files and will restore them on this device.'
+      : 'This backup does not include media files; existing media may be unavailable after restore.';
   final ok = await confirm(
     context,
     title: 'Replace this archive?',
@@ -226,9 +221,8 @@ Future<void> restoreBackup(BuildContext context, WidgetRef ref) async {
         '${counts['photos']} media records, '
         '${counts['trackers']} trackers and '
         '${counts['scrobbles']} tracks.\n\n'
-        'Restoring replaces the current archive and deletes the current '
-        'encrypted media vault, because this backup format excludes media '
-        'bytes. This cannot be undone.',
+        '$mediaMsg\n\n'
+        'Restoring replaces the current archive and media vault on this device. This cannot be undone.',
     confirmLabel: 'Restore backup',
   );
   if (!ok) return;
@@ -236,7 +230,10 @@ Future<void> restoreBackup(BuildContext context, WidgetRef ref) async {
 
   final restored = await guard(
     context,
-    ref.read(archiveProvider.notifier).restoreArchive(contents.archive),
+    ref.read(archiveProvider.notifier).restoreArchive(
+          contents.archive,
+          mediaFiles: contents.mediaFiles,
+        ),
     errorPrefix: 'Could not restore the archive',
   );
   if (restored == null) return;
@@ -368,3 +365,5 @@ class _PassphraseDialogState extends State<_PassphraseDialog> {
     );
   }
 }
+
+

@@ -22,7 +22,7 @@ import '../places/place_dialogs.dart';
 import '../timeline/event_dialogs.dart';
 import '../trackers/tracker_dialogs.dart';
 
-enum QuickAddAction { write, checkin, activity, media, music, place, event }
+enum QuickAddAction { write, vocab, checkin, activity, media, music, place, event }
 
 /// The one place where "add something" starts. Writes to whichever day Today
 /// is showing.
@@ -44,7 +44,20 @@ Future<void> runQuickAdd(
 ) async {
   switch (action) {
     case QuickAddAction.write:
-      await createJournalEntry(context, date: day, focusBody: true);
+      await createJournalEntry(
+        context,
+        date: day,
+        focusBody: true,
+        createNew: true,
+      );
+    case QuickAddAction.vocab:
+      await createJournalEntry(
+        context,
+        date: day,
+        focusBody: true,
+        createNew: true,
+        kind: JournalEntryKind.vocab,
+      );
     case QuickAddAction.checkin:
       await showDailyCheckinSheet(context, ref, day);
     case QuickAddAction.activity:
@@ -68,7 +81,8 @@ class _QuickAddSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.palette;
     final items = <({QuickAddAction action, IconData icon, String label, Color color})>[
-      (action: QuickAddAction.write, icon: Icons.edit_rounded, label: 'Journal', color: palette.journal),
+      (action: QuickAddAction.write, icon: Icons.edit_note_rounded, label: 'Journal', color: palette.journal),
+      (action: QuickAddAction.vocab, icon: Icons.translate_rounded, label: 'Vocab list', color: palette.tracker),
       (action: QuickAddAction.checkin, icon: Icons.favorite_border_rounded, label: 'Daily check-in', color: palette.tracker),
       (action: QuickAddAction.activity, icon: Icons.bolt_rounded, label: 'Activity', color: palette.tracker),
       (action: QuickAddAction.media, icon: Icons.photo_library_outlined, label: 'Photos', color: palette.photo),
@@ -85,12 +99,12 @@ class _QuickAddSheet extends StatelessWidget {
           subtitle: 'To ${relativeDayLabel(day).toLowerCase()}',
         ),
         GridView.count(
-          crossAxisCount: 3,
+          crossAxisCount: 4,
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           mainAxisSpacing: Insets.md,
           crossAxisSpacing: Insets.md,
-          childAspectRatio: 1.08,
+          childAspectRatio: 0.95,
           children: [
             for (final item in items)
               Pressable(
@@ -591,19 +605,132 @@ class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
   }
 }
 
-/// Picks photos/videos from the library on mobile, or files on desktop.
-Future<List<XFile>> pickMediaFromPhotosOrFiles() async {
-  final usePhotos = !kIsWeb && (Platform.isIOS || Platform.isAndroid);
-  if (usePhotos) {
-    try {
-      final picker = ImagePicker();
-      final picked = await picker.pickMultipleMedia();
-      return picked;
-    } catch (_) {
-      // fall through to file picker
-    }
+enum _MediaPickSource { cameraPhoto, cameraVideo, library, files }
+
+/// Picks photos/videos by taking a new capture or choosing existing media/files.
+/// On mobile this offers camera and library options; on desktop it opens the
+/// file picker.
+Future<List<XFile>> pickMediaFromPhotosOrFiles(BuildContext context) async {
+  final canUseCamera = !kIsWeb && (Platform.isIOS || Platform.isAndroid);
+  final canUseLibrary = !kIsWeb && (Platform.isIOS || Platform.isAndroid);
+
+  if (!canUseCamera && !canUseLibrary) {
+    return openFiles();
   }
-  return openFiles();
+
+  final choice = await showLifelogSheet<_MediaPickSource>(
+    context,
+    builder: (sheetContext) {
+      final palette = sheetContext.palette;
+      final items = <({IconData icon, String label, String hint, _MediaPickSource value, Color color})>[
+        if (canUseCamera)
+          (
+            icon: Icons.photo_camera_outlined,
+            label: 'Take photo',
+            hint: 'Use the camera to capture a photo',
+            value: _MediaPickSource.cameraPhoto,
+            color: palette.photo,
+          ),
+        if (canUseCamera)
+          (
+            icon: Icons.videocam_outlined,
+            label: 'Record video',
+            hint: 'Use the camera to record a video',
+            value: _MediaPickSource.cameraVideo,
+            color: palette.music,
+          ),
+        if (canUseLibrary)
+          (
+            icon: Icons.photo_library_outlined,
+            label: 'Choose from library',
+            hint: 'Select existing photos or videos',
+            value: _MediaPickSource.library,
+            color: palette.journal,
+          ),
+        (
+          icon: Icons.folder_open_outlined,
+          label: 'Choose files',
+          hint: 'Pick image or video files',
+          value: _MediaPickSource.files,
+          color: palette.place,
+        ),
+      ];
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SheetTitle(
+            title: 'Add media',
+            subtitle: 'Take a photo/video or choose existing media',
+          ),
+          for (final item in items)
+            Pressable(
+              borderRadius: BorderRadius.circular(Radii.md),
+              onTap: () => Navigator.of(sheetContext).pop(item.value),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: Insets.sm),
+                child: Row(
+                  children: [
+                    IconBadge(
+                      icon: item.icon,
+                      color: item.color,
+                      size: 40,
+                      iconSize: 20,
+                    ),
+                    const SizedBox(width: Insets.md),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(item.label,
+                              style: sheetContext.text.titleSmall),
+                          Text(
+                            item.hint,
+                            style: sheetContext.text.bodySmall?.copyWith(
+                              color: sheetContext.palette.mutedText,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(Icons.chevron_right_rounded,
+                        color: sheetContext.palette.dimText),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      );
+    },
+  );
+
+  if (choice == null) return const [];
+
+  final picker = ImagePicker();
+  try {
+    switch (choice) {
+      case _MediaPickSource.cameraPhoto:
+        final file = await picker.pickImage(
+          source: ImageSource.camera,
+          imageQuality: 95,
+        );
+        return file == null ? const [] : [file];
+      case _MediaPickSource.cameraVideo:
+        final file = await picker.pickVideo(source: ImageSource.camera);
+        return file == null ? const [] : [file];
+      case _MediaPickSource.library:
+        return picker.pickMultipleMedia();
+      case _MediaPickSource.files:
+        return openFiles();
+    }
+  } catch (_) {
+    if (choice == _MediaPickSource.library ||
+        choice == _MediaPickSource.cameraPhoto ||
+        choice == _MediaPickSource.cameraVideo) {
+      return openFiles();
+    }
+    rethrow;
+  }
 }
 
 /// Picks files, asks for a caption, encrypts and stores them on [day].
@@ -614,7 +741,7 @@ Future<void> importMediaForDay(
   String? journalEntryId,
 }) async {
   try {
-    final files = await pickMediaFromPhotosOrFiles();
+    final files = await pickMediaFromPhotosOrFiles(context);
     if (files.isEmpty || !context.mounted) return;
     await _importFilesWithProgress(
       context,

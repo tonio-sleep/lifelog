@@ -23,11 +23,13 @@ class JournalEditorScreen extends ConsumerStatefulWidget {
     this.entryId,
     this.initialDate,
     this.focusBody = false,
+    this.initialKind = JournalEntryKind.journal,
   });
 
   final String? entryId;
   final DateTime? initialDate;
   final bool focusBody;
+  final JournalEntryKind initialKind;
 
   @override
   ConsumerState<JournalEditorScreen> createState() =>
@@ -45,6 +47,7 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
   late DateTime _createdAt;
   late bool _draft;
   late bool _archived;
+  late JournalEntryKind _kind;
   Mood? _mood;
   int? _energy;
   double? _sleepHours;
@@ -53,6 +56,10 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
   String _highlight = '';
   String? _placeId;
   String? _placeLabel;
+
+  final List<TextEditingController> _vocabTerms = [];
+  final List<TextEditingController> _vocabMeanings = [];
+  final List<FocusNode> _vocabTermFocuses = [];
 
   Timer? _debounce;
   _SaveState _state = _SaveState.idle;
@@ -74,11 +81,13 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
     _source = existing;
     final blank = JournalEntry.blank(
       widget.initialDate ?? DateTime.now(),
+      kind: widget.initialKind,
     );
     _id = existing?.id ?? blank.id;
     _createdAt = existing?.createdAt ?? blank.createdAt;
     _draft = existing?.draft ?? true;
     _archived = existing?.archived ?? false;
+    _kind = existing?.kind ?? widget.initialKind;
     _mood = existing?.mood;
     _energy = existing?.energy;
     _sleepHours = existing?.sleepHours;
@@ -91,12 +100,35 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
     _body = TextEditingController(text: existing?.body ?? '');
     _tags = TextEditingController(text: existing?.tags.join(', ') ?? '');
     _showTags = (existing?.tags ?? const []).isNotEmpty;
+
+    final vocab = existing?.vocabItems ?? const <VocabItem>[];
+    if (vocab.isEmpty && _kind == JournalEntryKind.vocab) {
+      _addVocabRow(notify: false);
+      _addVocabRow(notify: false);
+    } else {
+      for (final item in vocab) {
+        _addVocabRow(
+          term: item.term,
+          meaning: item.meaning,
+          notify: false,
+        );
+      }
+      if (_kind == JournalEntryKind.vocab && _vocabTerms.isEmpty) {
+        _addVocabRow(notify: false);
+      }
+    }
+
     _title.addListener(_onChanged);
     _body.addListener(_onChanged);
     _tags.addListener(_onChanged);
     if (widget.focusBody) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _bodyFocus.requestFocus();
+        if (!mounted) return;
+        if (_kind == JournalEntryKind.vocab && _vocabTermFocuses.isNotEmpty) {
+          _vocabTermFocuses.first.requestFocus();
+        } else {
+          _bodyFocus.requestFocus();
+        }
       });
     }
   }
@@ -108,6 +140,15 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
     _body.dispose();
     _tags.dispose();
     _bodyFocus.dispose();
+    for (final c in _vocabTerms) {
+      c.dispose();
+    }
+    for (final c in _vocabMeanings) {
+      c.dispose();
+    }
+    for (final f in _vocabTermFocuses) {
+      f.dispose();
+    }
     super.dispose();
   }
 
@@ -123,6 +164,16 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
   }
 
   List<String> get _currentTags => normaliseTags(_tags.text.split(','));
+
+  List<VocabItem> get _currentVocabItems => List.generate(
+        _vocabTerms.length,
+        (i) => VocabItem(
+          term: _vocabTerms[i].text,
+          meaning: _vocabMeanings[i].text,
+        ),
+      );
+
+  bool get _hasVocabContent => _currentVocabItems.any((v) => !v.isEmpty);
 
   bool get _hasContent {
     final media = ref
@@ -140,17 +191,23 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
         _mood != null ||
         _energy != null ||
         _placeId != null ||
+        (_kind == JournalEntryKind.vocab && _hasVocabContent) ||
         media;
   }
 
   JournalEntry _buildEntry() {
     final tags = _currentTags;
+    final vocab = _kind == JournalEntryKind.vocab
+        ? _currentVocabItems.where((v) => !v.isEmpty).toList()
+        : const <VocabItem>[];
     return JournalEntry(
       id: _id,
       createdAt: _createdAt,
       updatedAt: DateTime.now(),
       title: _title.text.trim(),
       body: _body.text,
+      kind: _kind,
+      vocabItems: vocab,
       mood: _mood,
       energy: _energy,
       sleepHours: _sleepHours,
@@ -280,7 +337,7 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
   Future<void> _attachFiles() async {
     setState(() => _importing = true);
     try {
-      final files = await pickMediaFromPhotosOrFiles();
+      final files = await pickMediaFromPhotosOrFiles(context);
       if (files.isEmpty) return;
       if (!await _ensureSaved()) return;
       for (final file in files) {
@@ -292,9 +349,7 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
         );
         if (details == null) continue;
         if (!mounted) return;
-        await ref
-            .read(archiveProvider.notifier)
-            .importMedia(
+        await ref.read(archiveProvider.notifier).importMedia(
               bytes: Uint8List.fromList(bytes),
               fileName: file.name,
               caption: details.caption,
@@ -304,7 +359,10 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
             );
       }
       if (!mounted) return;
-      showSnack(context, files.length == 1 ? 'Added to the entry.' : '${files.length} items added.');
+      showSnack(
+        context,
+        files.length == 1 ? 'Added to the entry.' : '${files.length} items added.',
+      );
     } catch (error) {
       if (mounted) showSnack(context, 'Could not import media: $error');
     } finally {
@@ -379,7 +437,52 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
     });
   }
 
-  // Daily check-in details (mood, energy, sleep, steps, meals) are edited from Today.
+  void _addVocabRow({String term = '', String meaning = '', bool notify = true}) {
+    final termCtrl = TextEditingController(text: term);
+    final meaningCtrl = TextEditingController(text: meaning);
+    final focus = FocusNode();
+    termCtrl.addListener(_onChanged);
+    meaningCtrl.addListener(_onChanged);
+    if (notify) {
+      setState(() {
+        _vocabTerms.add(termCtrl);
+        _vocabMeanings.add(meaningCtrl);
+        _vocabTermFocuses.add(focus);
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) focus.requestFocus();
+      });
+    } else {
+      _vocabTerms.add(termCtrl);
+      _vocabMeanings.add(meaningCtrl);
+      _vocabTermFocuses.add(focus);
+    }
+  }
+
+  void _removeVocabRow(int index) {
+    if (index < 0 || index >= _vocabTerms.length) return;
+    setState(() {
+      _vocabTerms.removeAt(index).dispose();
+      _vocabMeanings.removeAt(index).dispose();
+      _vocabTermFocuses.removeAt(index).dispose();
+    });
+    _onChanged();
+  }
+
+  void _setKind(JournalEntryKind kind) {
+    if (_kind == kind) return;
+    setState(() {
+      _kind = kind;
+      if (kind == JournalEntryKind.vocab && _vocabTerms.isEmpty) {
+        _addVocabRow(notify: false);
+      }
+      _state = _SaveState.unsaved;
+    });
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () {
+      unawaited(_saveDraft());
+    });
+  }
 
   Future<void> _close() async {
     await _saveDraft();
@@ -387,6 +490,18 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
     _allowPop = true;
     Navigator.of(context).pop();
   }
+
+  String _titleHint() => switch (_kind) {
+        JournalEntryKind.journal => 'Title',
+        JournalEntryKind.note => 'Note title',
+        JournalEntryKind.vocab => 'Vocab list name (optional)',
+      };
+
+  String _bodyHint() => switch (_kind) {
+        JournalEntryKind.journal => 'Start writing…',
+        JournalEntryKind.note => 'Write a quick note…',
+        JournalEntryKind.vocab => 'Notes about this vocab list (optional)…',
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -415,7 +530,8 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
           child: Column(
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(Insets.xs, Insets.xs, Insets.md, 0),
+                padding:
+                    const EdgeInsets.fromLTRB(Insets.xs, Insets.xs, Insets.md, 0),
                 child: Row(
                   children: [
                     IconButton(
@@ -448,7 +564,9 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                           PopupMenuItem(
                             value: 'archive',
                             child: Text(
-                              _archived ? 'Restore from archive' : 'Archive entry',
+                              _archived
+                                  ? 'Restore from archive'
+                                  : 'Archive entry',
                             ),
                           ),
                           const PopupMenuItem(
@@ -462,7 +580,8 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                       onPressed: _state == _SaveState.saving ? null : _finish,
                       style: FilledButton.styleFrom(
                         minimumSize: const Size(0, 38),
-                        padding: const EdgeInsets.symmetric(horizontal: Insets.lg),
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: Insets.lg),
                       ),
                       child: const Text('Save'),
                     ),
@@ -487,22 +606,38 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                             margin: const EdgeInsets.only(bottom: Insets.md),
                             padding: const EdgeInsets.all(Insets.md),
                             decoration: BoxDecoration(
-                              color: scheme.secondary.withValues(alpha: 0.12),
+                              color:
+                                  scheme.secondary.withValues(alpha: 0.12),
                               borderRadius: BorderRadius.circular(Radii.md),
                             ),
                             child: Row(
                               children: [
-                                Icon(Icons.archive_outlined, size: 18, color: scheme.secondary),
+                                Icon(Icons.archive_outlined,
+                                    size: 18, color: scheme.secondary),
                                 const SizedBox(width: Insets.sm),
                                 Expanded(
                                   child: Text(
                                     'Archived. Restore it from the menu to bring it back.',
-                                    style: text.bodySmall?.copyWith(color: scheme.secondary),
+                                    style: text.bodySmall
+                                        ?.copyWith(color: scheme.secondary),
                                   ),
                                 ),
                               ],
                             ),
                           ),
+                        Wrap(
+                          spacing: Insets.sm,
+                          runSpacing: Insets.sm,
+                          children: [
+                            for (final kind in JournalEntryKind.values)
+                              ChoiceChip(
+                                label: Text(kind.label),
+                                selected: _kind == kind,
+                                onSelected: (_) => _setKind(kind),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: Insets.md),
                         Align(
                           alignment: Alignment.centerLeft,
                           child: Pressable(
@@ -520,11 +655,13 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Icon(Icons.schedule_rounded, size: 15, color: palette.mutedText),
+                                  Icon(Icons.schedule_rounded,
+                                      size: 15, color: palette.mutedText),
                                   const SizedBox(width: 6),
                                   Text(
                                     '${formatDayLong(_createdAt)}, ${formatTime(_createdAt)}',
-                                    style: text.labelMedium?.copyWith(color: palette.mutedText),
+                                    style: text.labelMedium
+                                        ?.copyWith(color: palette.mutedText),
                                   ),
                                 ],
                               ),
@@ -537,13 +674,14 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                           style: text.headlineMedium,
                           textCapitalization: TextCapitalization.sentences,
                           decoration: InputDecoration(
-                            hintText: 'Title',
+                            hintText: _titleHint(),
                             border: InputBorder.none,
                             enabledBorder: InputBorder.none,
                             focusedBorder: InputBorder.none,
                             filled: false,
                             contentPadding: EdgeInsets.zero,
-                            hintStyle: text.headlineMedium?.copyWith(color: palette.dimText),
+                            hintStyle: text.headlineMedium
+                                ?.copyWith(color: palette.dimText),
                           ),
                         ),
                         AnimatedSize(
@@ -553,9 +691,11 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                           child: media.isEmpty
                               ? const SizedBox(width: double.infinity)
                               : Padding(
-                                  padding: const EdgeInsets.only(top: Insets.md, bottom: Insets.xs),
+                                  padding: const EdgeInsets.only(
+                                      top: Insets.md, bottom: Insets.xs),
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       StoryStrip(
                                         items: media,
@@ -565,32 +705,68 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                                       const SizedBox(height: Insets.xs),
                                       Text(
                                         'Tap a photo to caption or remove it.',
-                                        style: text.labelSmall?.copyWith(color: palette.dimText),
+                                        style: text.labelSmall
+                                            ?.copyWith(color: palette.dimText),
                                       ),
                                     ],
                                   ),
                                 ),
                         ),
-                        const SizedBox(height: Insets.md),
-                        TextField(
-                          controller: _body,
-                          focusNode: _bodyFocus,
-                          minLines: 8,
-                          maxLines: null,
-                          keyboardType: TextInputType.multiline,
-                          textCapitalization: TextCapitalization.sentences,
-                          style: AppTheme.serif(text.bodyLarge, size: 17).copyWith(height: 1.65),
-                          decoration: InputDecoration(
-                            hintText: 'Start writing…',
-                            border: InputBorder.none,
-                            enabledBorder: InputBorder.none,
-                            focusedBorder: InputBorder.none,
-                            filled: false,
-                            contentPadding: EdgeInsets.zero,
-                            hintStyle: AppTheme.serif(text.bodyLarge, size: 17)
-                                .copyWith(color: palette.dimText),
+                        if (_kind == JournalEntryKind.vocab) ...[
+                          const SizedBox(height: Insets.md),
+                          _VocabEditor(
+                            termControllers: _vocabTerms,
+                            meaningControllers: _vocabMeanings,
+                            termFocuses: _vocabTermFocuses,
+                            onAdd: () => _addVocabRow(),
+                            onRemove: _removeVocabRow,
                           ),
-                        ),
+                          const SizedBox(height: Insets.md),
+                          TextField(
+                            controller: _body,
+                            focusNode: _bodyFocus,
+                            minLines: 2,
+                            maxLines: null,
+                            keyboardType: TextInputType.multiline,
+                            textCapitalization: TextCapitalization.sentences,
+                            style: AppTheme.serif(text.bodyLarge, size: 16)
+                                .copyWith(height: 1.6),
+                            decoration: InputDecoration(
+                              hintText: _bodyHint(),
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                              filled: false,
+                              contentPadding: EdgeInsets.zero,
+                              hintStyle:
+                                  AppTheme.serif(text.bodyLarge, size: 16)
+                                      .copyWith(color: palette.dimText),
+                            ),
+                          ),
+                        ] else ...[
+                          const SizedBox(height: Insets.md),
+                          TextField(
+                            controller: _body,
+                            focusNode: _bodyFocus,
+                            minLines: 8,
+                            maxLines: null,
+                            keyboardType: TextInputType.multiline,
+                            textCapitalization: TextCapitalization.sentences,
+                            style: AppTheme.serif(text.bodyLarge, size: 17)
+                                .copyWith(height: 1.65),
+                            decoration: InputDecoration(
+                              hintText: _bodyHint(),
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                              filled: false,
+                              contentPadding: EdgeInsets.zero,
+                              hintStyle:
+                                  AppTheme.serif(text.bodyLarge, size: 17)
+                                      .copyWith(color: palette.dimText),
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: Insets.md),
                         Container(
                           width: double.infinity,
@@ -600,8 +776,11 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                             borderRadius: BorderRadius.circular(Radii.md),
                           ),
                           child: Text(
-                            'Daily details like mood, energy, sleep, steps, and what you ate are in your Daily check-in on Today.',
-                            style: text.bodySmall?.copyWith(color: palette.mutedText),
+                            _kind == JournalEntryKind.vocab
+                                ? 'Use this vocab entry for words, phrases, and meanings. You can add more entries to the same day to keep notes and vocab together.'
+                                : 'You can add multiple entries to the same day (notes, journal, vocab). Daily details like mood, energy, sleep, steps, and meals are in your Daily check-in on Today.',
+                            style: text.bodySmall
+                                ?.copyWith(color: palette.mutedText),
                           ),
                         ),
                         AnimatedSize(
@@ -611,29 +790,40 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                           child: !_showTags
                               ? const SizedBox(width: double.infinity)
                               : Padding(
-                                  padding: const EdgeInsets.only(top: Insets.lg),
+                                  padding:
+                                      const EdgeInsets.only(top: Insets.lg),
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       TextField(
                                         controller: _tags,
                                         style: text.bodyMedium,
                                         decoration: const InputDecoration(
-                                          hintText: 'Tags, separated by commas',
-                                          prefixIcon: Icon(Icons.tag_rounded, size: 19),
+                                          hintText:
+                                              'Tags, separated by commas',
+                                          prefixIcon:
+                                              Icon(Icons.tag_rounded, size: 19),
                                         ),
                                       ),
                                       ValueListenableBuilder<TextEditingValue>(
                                         valueListenable: _tags,
                                         builder: (context, value, _) {
-                                          final tags = normaliseTags(value.text.split(','));
-                                          if (tags.isEmpty) return const SizedBox.shrink();
+                                          final tags = normaliseTags(
+                                              value.text.split(','));
+                                          if (tags.isEmpty) {
+                                            return const SizedBox.shrink();
+                                          }
                                           return Padding(
-                                            padding: const EdgeInsets.only(top: Insets.sm),
+                                            padding: const EdgeInsets.only(
+                                                top: Insets.sm),
                                             child: Wrap(
                                               spacing: Insets.sm,
                                               runSpacing: Insets.sm,
-                                              children: [for (final tag in tags) TagPill(tag)],
+                                              children: [
+                                                for (final tag in tags)
+                                                  TagPill(tag)
+                                              ],
                                             ),
                                           );
                                         },
@@ -646,7 +836,14 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                           height: 120,
                           child: GestureDetector(
                             behavior: HitTestBehavior.translucent,
-                            onTap: () => _bodyFocus.requestFocus(),
+                            onTap: () {
+                              if (_kind == JournalEntryKind.vocab &&
+                                  _vocabTermFocuses.isNotEmpty) {
+                                _vocabTermFocuses.first.requestFocus();
+                              } else {
+                                _bodyFocus.requestFocus();
+                              }
+                            },
                           ),
                         ),
                       ],
@@ -665,7 +862,8 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
           child: SafeArea(
             top: false,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: Insets.sm, vertical: Insets.xs),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: Insets.sm, vertical: Insets.xs),
               child: Row(
                 children: [
                   IconButton(
@@ -677,7 +875,8 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                             height: 18,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : Icon(Icons.add_photo_alternate_outlined, color: palette.photo),
+                        : Icon(Icons.add_photo_alternate_outlined,
+                            color: palette.photo),
                   ),
                   IconButton(
                     tooltip: _placeLabel ?? 'Add a place',
@@ -703,7 +902,8 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                         _placeLabel!,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: text.labelMedium?.copyWith(color: palette.mutedText),
+                        style:
+                            text.labelMedium?.copyWith(color: palette.mutedText),
                       ),
                     ),
                   const Spacer(),
@@ -711,10 +911,16 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                     valueListenable: _body,
                     builder: (context, value, _) {
                       final words = RegExp(r'\S+').allMatches(value.text).length;
+                      final vocabCount = _kind == JournalEntryKind.vocab
+                          ? _currentVocabItems.where((v) => !v.isEmpty).length
+                          : 0;
+                      final label = vocabCount > 0
+                          ? '$vocabCount ${plural(vocabCount, 'word')}${words > 0 ? ' · $words ${plural(words, 'word')} notes' : ''}'
+                          : '$words ${plural(words, 'word')}';
                       return Padding(
                         padding: const EdgeInsets.only(right: Insets.md),
                         child: Text(
-                          '$words ${plural(words, 'word')}',
+                          label,
                           style: text.labelSmall?.copyWith(
                             color: palette.dimText,
                             fontFeatures: tabularFigures,
@@ -729,6 +935,99 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _VocabEditor extends StatelessWidget {
+  const _VocabEditor({
+    required this.termControllers,
+    required this.meaningControllers,
+    required this.termFocuses,
+    required this.onAdd,
+    required this.onRemove,
+  });
+
+  final List<TextEditingController> termControllers;
+  final List<TextEditingController> meaningControllers;
+  final List<FocusNode> termFocuses;
+  final VoidCallback onAdd;
+  final ValueChanged<int> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final text = context.text;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.translate_rounded, size: 18, color: palette.tracker),
+            const SizedBox(width: Insets.sm),
+            Text('Words and meanings', style: text.titleSmall),
+            const Spacer(),
+            TextButton.icon(
+              onPressed: onAdd,
+              icon: const Icon(Icons.add_rounded, size: 18),
+              label: const Text('Add word'),
+            ),
+          ],
+        ),
+        const SizedBox(height: Insets.sm),
+        if (termControllers.isEmpty)
+          Text(
+            'Add a word or phrase with its meaning.',
+            style: text.bodySmall?.copyWith(color: palette.mutedText),
+          ),
+        for (var i = 0; i < termControllers.length; i++)
+          Container(
+            margin: const EdgeInsets.only(bottom: Insets.sm),
+            padding: const EdgeInsets.all(Insets.sm),
+            decoration: BoxDecoration(
+              color: palette.subtle,
+              borderRadius: BorderRadius.circular(Radii.md),
+              border: Border.all(color: palette.border),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    children: [
+                      TextField(
+                        controller: termControllers[i],
+                        focusNode: termFocuses[i],
+                        textCapitalization: TextCapitalization.sentences,
+                        decoration: const InputDecoration(
+                          hintText: 'Word or phrase',
+                          isDense: true,
+                        ),
+                      ),
+                      const SizedBox(height: Insets.xs),
+                      TextField(
+                        controller: meaningControllers[i],
+                        textCapitalization: TextCapitalization.sentences,
+                        decoration: const InputDecoration(
+                          hintText: 'Meaning / translation / note',
+                          isDense: true,
+                        ),
+                        minLines: 1,
+                        maxLines: 3,
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Remove',
+                  onPressed: () => onRemove(i),
+                  icon: Icon(Icons.close_rounded,
+                      size: 18, color: palette.dimText),
+                ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 }
@@ -799,30 +1098,30 @@ class _SaveStatus extends StatelessWidget {
     final scheme = context.scheme;
     final (String label, Color color, Widget lead) = switch (state) {
       _SaveState.idle => (
-        'Encrypted on this device',
-        palette.dimText,
-        Icon(Icons.lock_outline_rounded, size: 13, color: palette.dimText),
-      ),
+          'Encrypted on this device',
+          palette.dimText,
+          Icon(Icons.lock_outline_rounded, size: 13, color: palette.dimText),
+        ),
       _SaveState.unsaved => (
-        'Editing',
-        scheme.secondary,
-        PulsingDot(color: scheme.secondary, size: 6),
-      ),
+          'Editing',
+          scheme.secondary,
+          PulsingDot(color: scheme.secondary, size: 6),
+        ),
       _SaveState.saving => (
-        'Saving',
-        palette.mutedText,
-        PulsingDot(color: palette.mutedText, size: 6),
-      ),
+          'Saving',
+          palette.mutedText,
+          PulsingDot(color: palette.mutedText, size: 6),
+        ),
       _SaveState.saved => (
-        savedAt == null ? 'Saved' : 'Saved ${formatTime(savedAt!)}',
-        palette.tracker,
-        Icon(Icons.check_circle_rounded, size: 14, color: palette.tracker),
-      ),
+          savedAt == null ? 'Saved' : 'Saved ${formatTime(savedAt!)}',
+          palette.tracker,
+          Icon(Icons.check_circle_rounded, size: 14, color: palette.tracker),
+        ),
       _SaveState.error => (
-        'Could not save',
-        scheme.error,
-        Icon(Icons.error_outline_rounded, size: 14, color: scheme.error),
-      ),
+          'Could not save',
+          scheme.error,
+          Icon(Icons.error_outline_rounded, size: 14, color: scheme.error),
+        ),
     };
     return Tooltip(
       message: state == _SaveState.error && error != null ? error! : label,

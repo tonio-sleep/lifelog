@@ -1,12 +1,12 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../app/providers/settings_provider.dart';
 import '../domain/models/settings.dart';
 import '../features/onboarding/onboarding_screen.dart';
 import '../features/security/lock_screen.dart';
+import '../integrations/cloudflare/cloudflare_sync.dart';
 import '../integrations/lastfm/lastfm_sync.dart';
-import '../integrations/google_drive/google_drive_sync.dart';
 import 'shell/app_shell.dart';
 import 'theme/app_theme.dart';
 
@@ -47,11 +47,11 @@ class _StartupSyncState extends ConsumerState<_StartupSync> {
   @override
   void initState() {
     super.initState();
-    // Fire-and-forget: fetch new Last.fm scrobbles and check Google Drive restore on start.
+    // Fire-and-forget: fetch new Last.fm scrobbles and check Cloudflare restore on start.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       syncLastfmIfConnected(ref);
-      await maybePromptGoogleDriveRestore(context, ref);
+      await maybePromptCloudflareRestore(context, ref);
     });
   }
 

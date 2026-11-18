@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 
@@ -14,7 +14,7 @@ import '../../domain/models/settings.dart';
 import '../music/lastfm_screen.dart';
 import '../security/pin_dialogs.dart';
 import 'backup_actions.dart';
-import 'google_drive_actions.dart';
+import 'cloudflare_sync_actions.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -41,6 +41,46 @@ class SettingsScreen extends ConsumerWidget {
           ),
       ],
       children: [
+        ListGroup(
+          title: 'Reminders',
+          footer:
+              'In-app reminders to nudge you (for example: journal, check-in, habits, or vocab review). Enable notifications in a future update for system alerts.',
+          children: [
+            for (final reminder in settings.reminders)
+              ListRow(
+                icon: reminder.enabled
+                    ? Icons.notifications_active_outlined
+                    : Icons.notifications_off_outlined,
+                iconColor:
+                    reminder.enabled ? palette.tracker : palette.dimText,
+                title: reminder.title,
+                subtitle:
+                    '${reminder.timeLabel} · ${reminder.repeat.label}${reminder.note.trim().isEmpty ? '' : ' · ${reminder.note.trim()}'}',
+                trailing: Switch(
+                  value: reminder.enabled,
+                  onChanged: (value) => guard(
+                    context,
+                    ref
+                        .read(settingsProvider.notifier)
+                        .toggleReminder(reminder.id, value),
+                    errorPrefix: 'Could not update reminder',
+                  ),
+                ),
+                chevron: true,
+                onTap: () => _editReminder(context, ref, reminder),
+              ),
+            ListRow(
+              icon: Icons.add_alarm_rounded,
+              iconColor: context.scheme.primary,
+              title: 'Add reminder',
+              subtitle: settings.reminders.isEmpty
+                  ? 'Create a reminder for something you want to do'
+                  : 'Add another reminder',
+              chevron: true,
+              onTap: () => _editReminder(context, ref, null),
+            ),
+          ],
+        ),
         ListGroup(
           title: 'Appearance',
           children: [
@@ -212,48 +252,46 @@ class SettingsScreen extends ConsumerWidget {
             ],
           ),
         ListGroup(
-          title: 'Google account',
-          footer: settings.googleDriveConnected
-              ? 'Signed in as ${settings.googleAccountEmail}. ${settings.googleLastSyncAt == null ? 'Not synced yet.' : 'Last sync ${formatDayLong(settings.googleLastSyncAt!)}, ${formatTime(settings.googleLastSyncAt!)}.'} Sync stores an encrypted backup (records and text; media files not included).'
-              : 'Connect your Google account to back up and restore your encrypted data with Google Drive. Your data stays on this device unless you sync.',
+          title: 'Cloud sync',
+          footer: settings.cloudflareConnected
+              ? 'Signed in as ${settings.cloudflareUsername} on your Cloudflare Worker. ${settings.cloudflareLastSyncAt == null ? 'Not synced yet.' : 'Last sync ${formatDayLong(settings.cloudflareLastSyncAt!)}, ${formatTime(settings.cloudflareLastSyncAt!)}.'} Sync stores a client-side encrypted backup (records, text, and media) protected by your backup passphrase.'
+              : 'Sign in with your Cloudflare Worker account to back up and restore encrypted data. Your backup passphrase encrypts data before upload; the server stores encrypted blobs only.',
           children: [
-            if (!settings.googleDriveConnected)
+            if (!settings.cloudflareConnected)
               ListRow(
-                icon: Icons.account_circle_outlined,
+                icon: Icons.cloud_outlined,
                 iconColor: context.scheme.primary,
-                title: 'Connect Google account',
-                subtitle: (settings.googleClientId ?? '').trim().isEmpty
-                    ? 'Sign in to sync and restore your data'
-                    : 'Continue with your Google account',
+                title: 'Sign in to Cloudflare sync',
+                subtitle: 'Create an account or sign in to your Worker',
                 chevron: true,
-                onTap: () => connectGoogleDrive(context, ref),
+                onTap: () => connectCloudflareSync(context, ref),
               ),
-            if (settings.googleDriveConnected) ...[
+            if (settings.cloudflareConnected) ...[
               ListRow(
                 icon: Icons.cloud_done_outlined,
                 iconColor: palette.tracker,
-                title: settings.googleAccountEmail ?? 'Google account',
-                subtitle: 'Connected for Drive sync',
+                title: settings.cloudflareUsername ?? 'Cloudflare sync',
+                subtitle: settings.cloudflareWorkerUrl ?? 'Connected',
               ),
               ListRow(
                 icon: Icons.cloud_upload_outlined,
                 title: 'Back up now',
-                subtitle: 'Upload an encrypted backup to Google Drive',
+                subtitle: 'Upload an encrypted backup to Cloudflare',
                 chevron: true,
-                onTap: () => syncToGoogleDrive(context, ref),
+                onTap: () => syncToCloudflare(context, ref),
               ),
               ListRow(
                 icon: Icons.cloud_download_outlined,
                 title: 'Restore from cloud',
-                subtitle: 'Replace this device’s data with your cloud backup',
+                subtitle: 'Replace this device\'s data with your cloud backup',
                 chevron: true,
-                onTap: () => restoreFromGoogleDrive(context, ref),
+                onTap: () => restoreFromCloudflare(context, ref),
               ),
               ListRow(
                 icon: Icons.logout_rounded,
-                title: 'Disconnect account',
+                title: 'Disconnect',
                 destructive: true,
-                onTap: () => disconnectGoogleDrive(context, ref),
+                onTap: () => disconnectCloudflareSync(context, ref),
               ),
             ],
           ],
@@ -269,7 +307,7 @@ class SettingsScreen extends ConsumerWidget {
               icon: Icons.folder_shared_outlined,
               title: 'Linked folder',
               subtitle: settings.backupFolderPath == null
-                  ? 'Not linked (e.g. Google Drive folder)'
+                  ? 'Not linked (e.g. a synced/cloud folder)'
                   : settings.backupFolderPath!,
               chevron: true,
               onTap: () => linkBackupFolder(context, ref),
@@ -658,6 +696,175 @@ class SettingsScreen extends ConsumerWidget {
     showSnack(context, 'Synced ${parts.join(' and ')} for today.');
   }
 
+  Future<void> _editReminder(
+    BuildContext context,
+    WidgetRef ref,
+    ReminderItem? existing,
+  ) async {
+    final titleController =
+        TextEditingController(text: existing?.title ?? '');
+    final noteController = TextEditingController(text: existing?.note ?? '');
+    var time = TimeOfDay(
+      hour: existing?.hour ?? 20,
+      minute: existing?.minute ?? 0,
+    );
+    var repeat = existing?.repeat ?? ReminderRepeat.daily;
+    var enabled = existing?.enabled ?? true;
+
+    final result = await showLifelogSheet<String>(
+      context,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SheetTitle(
+              title: existing == null ? 'Add reminder' : 'Edit reminder',
+              subtitle: 'Set a time and message to remind yourself.',
+            ),
+            TextField(
+              controller: titleController,
+              autofocus: existing == null,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(
+                labelText: 'Reminder',
+                hintText: 'e.g. Write journal, Review vocab, Evening check-in',
+              ),
+            ),
+            const SizedBox(height: Insets.md),
+            TextField(
+              controller: noteController,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(
+                labelText: 'Note (optional)',
+                hintText: 'Extra details',
+              ),
+            ),
+            const SizedBox(height: Insets.md),
+            ListRow(
+              icon: Icons.schedule_rounded,
+              title: 'Time',
+              subtitle: time.format(sheetContext),
+              chevron: true,
+              onTap: () async {
+                final picked = await showTimePicker(
+                  context: sheetContext,
+                  initialTime: time,
+                );
+                if (picked != null) setSheetState(() => time = picked);
+              },
+            ),
+            ListRow(
+              icon: Icons.repeat_rounded,
+              title: 'Repeat',
+              subtitle: repeat.label,
+              chevron: true,
+              onTap: () async {
+                final picked = await showLifelogSheet<ReminderRepeat>(
+                  sheetContext,
+                  builder: (ctx) => Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SheetTitle(title: 'Repeat'),
+                      for (final option in ReminderRepeat.values)
+                        ListRow(
+                          title: option.label,
+                          trailing: option == repeat
+                              ? Icon(Icons.check_rounded,
+                                  color: ctx.scheme.primary)
+                              : null,
+                          onTap: () => Navigator.of(ctx).pop(option),
+                        ),
+                    ],
+                  ),
+                );
+                if (picked != null) setSheetState(() => repeat = picked);
+              },
+            ),
+            ListRow(
+              icon: Icons.notifications_outlined,
+              title: 'Enabled',
+              trailing: Switch(
+                value: enabled,
+                onChanged: (value) => setSheetState(() => enabled = value),
+              ),
+              onTap: () => setSheetState(() => enabled = !enabled),
+            ),
+            const SizedBox(height: Insets.md),
+            Row(
+              children: [
+                if (existing != null)
+                  Expanded(
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: sheetContext.scheme.error,
+                        side:
+                            BorderSide(color: sheetContext.scheme.error),
+                      ),
+                      onPressed: () =>
+                          Navigator.of(sheetContext).pop('delete'),
+                      child: const Text('Delete'),
+                    ),
+                  ),
+                if (existing != null) const SizedBox(width: Insets.md),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () => Navigator.of(sheetContext).pop('save'),
+                    child: const Text('Save'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+
+    final title = titleController.text.trim();
+    final note = noteController.text.trim();
+    Future<void>.delayed(
+      const Duration(milliseconds: 400),
+      () {
+        titleController.dispose();
+        noteController.dispose();
+      },
+    );
+
+    if (result == null || !context.mounted) return;
+    if (result == 'delete' && existing != null) {
+      await guard(
+        context,
+        ref.read(settingsProvider.notifier).deleteReminder(existing.id),
+        errorPrefix: 'Could not delete reminder',
+      );
+      if (context.mounted) showSnack(context, 'Reminder deleted.');
+      return;
+    }
+    if (result == 'save') {
+      if (title.isEmpty) {
+        showSnack(context, 'Add a reminder message.');
+        return;
+      }
+      final reminder = ReminderItem(
+        id: existing?.id ??
+            DateTime.now().microsecondsSinceEpoch.toString(),
+        title: title,
+        note: note,
+        hour: time.hour,
+        minute: time.minute,
+        enabled: enabled,
+        repeat: repeat,
+      );
+      await guard(
+        context,
+        ref.read(settingsProvider.notifier).saveReminder(reminder),
+        errorPrefix: 'Could not save reminder',
+      );
+      if (context.mounted) showSnack(context, 'Reminder saved.');
+    }
+  }
+
   Future<void> _wipe(BuildContext context, WidgetRef ref) async {
     final ok = await confirm(
       context,
@@ -728,12 +935,12 @@ class SettingsScreen extends ConsumerWidget {
             icon: Icons.backup_outlined,
             title: 'Backups',
             body: 'Backups use a separate passphrase key derived with '
-                'Argon2id. Media is excluded in this build.',
+                'Argon2id and can include your media. Everything in the backup file is encrypted and decrypted only in the app with your backup passphrase.',
           ),
           const _PrivacyPoint(
             icon: Icons.cloud_outlined,
             title: 'Network use',
-            body: 'No analytics or crash reporting. Optional connections you control: Google Drive backup/sync (encrypted), '
+            body: 'No analytics or crash reporting. Optional connections you control: Cloudflare sync (client-side encrypted backups via your Worker), '
                 'read-only Last.fm import, album artwork from Last.fm when enabled, and read-only Health/Health Connect step import on supported devices.',
           ),
           const _PrivacyPoint(
@@ -819,11 +1026,11 @@ class _LimitationsSheet extends StatelessWidget {
       children: [
         const SheetTitle(title: 'Known limitations'),
         for (final item in const <String>[
-          'Data is saved locally on this device. Google Drive sync is optional and stores an encrypted backup (records and text; media files are not included).',
+          'Data is saved locally on this device. Cloudflare sync is optional and stores a client-side encrypted backup via your Worker (records, text, and media).',
           'No automatic multi-device merge. Restoring from a backup replaces local data on that device.',
           'Screen Time/app usage data cannot be read by this app on iPhone without Apple Family Controls entitlement and approval (Family Controls, ManagedSettings, DeviceActivity). This is not currently available in this build.',
           'Automatic steps require Health access on supported devices. Other step sources are not imported automatically.',
-          'Backups exclude media file bytes. Keep your media vault separately if needed.',
+          'Encrypted backups can include media and may become large depending on your library. Keep an extra local backup copy for recovery.',
           'No background location tracking or automatic visit detection. Location is only used when you choose to save a place or visit.',
           'Last.fm import is optional and read-only; syncing may require an API key depending on Last.fm.',
           'The PIN is an app-level privacy screen, not a key-derivation step. A forgotten backup passphrase cannot be recovered.',
@@ -851,3 +1058,7 @@ class _LimitationsSheet extends StatelessWidget {
     );
   }
 }
+
+
+
+

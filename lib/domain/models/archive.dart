@@ -126,9 +126,10 @@ class Archive {
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
   }
 
-  /// The primary journal entry for a day (one-entry-per-day UX).
-  /// Prefers non-draft, non-archived entries, then drafts; newest-updated first.
-  /// Includes drafts so an in-progress day entry is resumed.
+  /// The primary/check-in journal entry for a day. Multiple entries per day are
+  /// supported; daily check-in data (mood, sleep, steps, meals, highlight) is
+  /// kept on this entry. Prefers entries that already hold check-in data, then
+  /// non-draft/non-archived, then drafts, then newest-updated.
   JournalEntry? dailyEntryFor(DateTime day) {
     final dayEntries = entries.where((e) => sameDay(e.createdAt, day)).toList();
     if (dayEntries.isEmpty) return null;
@@ -137,7 +138,11 @@ class Archive {
       if (!e.archived && e.draft) return 1;
       return 2;
     }
+
     dayEntries.sort((a, b) {
+      final aHas = a.hasCheckinData ? 0 : 1;
+      final bHas = b.hasCheckinData ? 0 : 1;
+      if (aHas != bHas) return aHas.compareTo(bHas);
       final r = rank(a).compareTo(rank(b));
       if (r != 0) return r;
       return b.updatedAt.compareTo(a.updatedAt);

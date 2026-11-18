@@ -35,13 +35,18 @@ class HeaderButton extends StatelessWidget {
         message: tooltip,
         child: Pressable(
           onTap: onPressed,
-          borderRadius: BorderRadius.circular(Radii.md),
-          child: Container(
+          borderRadius: BorderRadius.circular(Radii.lg),
+          child: AnimatedContainer(
+            duration: Motion.fast,
+            curve: Motion.out,
             width: 42,
             height: 42,
             decoration: BoxDecoration(
-              color: filled ? context.scheme.primary : palette.subtle,
-              borderRadius: BorderRadius.circular(Radii.md),
+              color: filled
+                  ? context.scheme.primary
+                  : palette.subtle.withValues(alpha: palette.isDark ? 0.55 : 0.8),
+              borderRadius: BorderRadius.circular(Radii.lg),
+              border: filled ? null : Border.all(color: palette.border),
             ),
             child: Icon(icon, size: 20, color: fg),
           ),
@@ -238,7 +243,7 @@ class DayNavigator extends StatelessWidget {
     return Container(
       height: 52,
       decoration: BoxDecoration(
-        color: palette.card,
+        color: palette.card.withValues(alpha: palette.isDark ? 0.55 : 0.72),
         borderRadius: BorderRadius.circular(Radii.pill),
         border: Border.all(color: palette.border),
       ),

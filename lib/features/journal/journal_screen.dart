@@ -33,10 +33,10 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
   }
 
   String get _filterLabel => switch (_filter) {
-    _JournalFilter.active => 'journal',
-    _JournalFilter.drafts => 'drafts',
-    _JournalFilter.archived => 'archive',
-  };
+        _JournalFilter.active => 'journal',
+        _JournalFilter.drafts => 'drafts',
+        _JournalFilter.archived => 'archive',
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -59,49 +59,63 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
           if (!entry.archived) return false;
       }
       if (_query.isEmpty) return true;
+      final vocabText =
+          entry.vocabItems.map((v) => '${v.term} ${v.meaning}').join(' ');
       final haystack = [
         entry.title,
         entry.body,
+        vocabText,
         entry.placeLabel ?? '',
         entry.tags.join(' '),
         entry.mood?.label ?? '',
+        entry.kind.label,
       ].join(' ').toLowerCase();
       return haystack.contains(_query);
     }).toList();
 
-    // One entry per day (daily log). Prefer the primary/daily entry for each day.
-    final byDay = <String, JournalEntry>{};
+    // Group all matching entries by day (kept together in a day "folder").
+    final byDay = <String, List<JournalEntry>>{};
     for (final entry in filtered) {
       final key = dayKey(entry.createdAt);
-      final existing = byDay[key];
-      if (existing == null) {
-        byDay[key] = entry;
-      } else {
-        // pick better representative: non-draft over draft, then newer update
-        int rank(JournalEntry e) => e.draft ? 1 : 0;
-        final r = rank(entry).compareTo(rank(existing));
-        if (r < 0 || (r == 0 && entry.updatedAt.isAfter(existing.updatedAt))) {
-          byDay[key] = entry;
-        }
-      }
+      byDay.putIfAbsent(key, () => []).add(entry);
     }
-    final dailyEntries = byDay.entries.toList()
-      ..sort((a, b) => b.value.createdAt.compareTo(a.value.createdAt));
+    for (final list in byDay.values) {
+      list.sort((a, b) {
+        final byTime = a.createdAt.compareTo(b.createdAt);
+        return byTime != 0 ? byTime : a.updatedAt.compareTo(b.updatedAt);
+      });
+    }
+    final dayKeys = byDay.keys.toList()..sort((a, b) => b.compareTo(a));
 
     final rows = <Object>[];
-    for (final e in dailyEntries) {
-      rows.add(e.key);
-      rows.add(e.value);
+    for (final key in dayKeys) {
+      rows.add(key);
+      rows.addAll(byDay[key]!);
     }
 
-    final wordCount = all.fold<int>(0, (sum, entry) => sum + _words(entry.body));
-    final dayCount = archive.entries.where((e) => !e.draft && !e.archived).map((e) => dayKey(e.createdAt)).toSet().length;
+    final wordCount = all.fold<int>(
+      0,
+      (sum, entry) =>
+          sum +
+          _words(entry.body) +
+          entry.vocabItems.fold<int>(
+            0,
+            (s, v) => s + _words(v.term) + _words(v.meaning),
+          ),
+    );
+    final dayCount = archive.entries
+        .where((e) => !e.draft && !e.archived)
+        .map((e) => dayKey(e.createdAt))
+        .toSet()
+        .length;
+    final entryCount =
+        archive.entries.where((e) => !e.draft && !e.archived).length;
 
     return ScreenFrame(
       title: 'Journal',
       subtitle: dayCount == 0
           ? null
-          : '$dayCount ${plural(dayCount, 'day')} · ${formatCompactNumber(wordCount)} ${plural(wordCount, 'word')}',
+          : '$entryCount ${plural(entryCount, 'entry')} in $dayCount ${plural(dayCount, 'day')} · ${formatCompactNumber(wordCount)} ${plural(wordCount, 'word')}',
       actions: [
         HeaderButton(
           icon: _searching ? Icons.search_off_rounded : Icons.search_rounded,
@@ -115,10 +129,11 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
           }),
         ),
         HeaderButton(
-          icon: Icons.edit_rounded,
-          tooltip: 'Write today',
+          icon: Icons.note_add_outlined,
+          tooltip: 'New entry for today',
           filled: true,
-          onPressed: () => createJournalEntry(context, focusBody: true),
+          onPressed: () =>
+              createJournalEntry(context, focusBody: true, createNew: true),
         ),
       ],
       children: [
@@ -137,7 +152,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                     onChanged: (value) =>
                         setState(() => _query = value.trim().toLowerCase()),
                     decoration: InputDecoration(
-                      hintText: 'Search writing, tags and places',
+                      hintText: 'Search writing, vocab, tags and places',
                       prefixIcon: const Icon(Icons.search_rounded, size: 20),
                       suffixIcon: _query.isEmpty
                           ? null
@@ -176,13 +191,17 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                   }
                 : 'No matches',
             message: _query.isEmpty
-                ? 'Start with a sentence. Moods, places and photos can come later.'
-                : 'Nothing in the $_filterLabel matches “$_query”.',
+                ? 'Add journal notes, quick entries, or a vocab list for any day. Entries stay grouped together by day.'
+                : 'Nothing in the $_filterLabel matches "$_query".',
             actionLabel: _query.isEmpty && _filter == _JournalFilter.active
-                ? 'Write an entry'
+                ? 'New entry'
                 : null,
             onAction: _query.isEmpty && _filter == _JournalFilter.active
-                ? () => createJournalEntry(context, focusBody: true)
+                ? () => createJournalEntry(
+                      context,
+                      focusBody: true,
+                      createNew: true,
+                    )
                 : null,
           ),
       ],
@@ -193,6 +212,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
             final row = rows[index];
             if (row is String) {
               final day = parseDayKey(row);
+              final count = byDay[row]?.length ?? 0;
               return Padding(
                 padding: const EdgeInsets.only(
                   top: Insets.lg,
@@ -200,18 +220,51 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                   left: Insets.xs,
                 ),
                 child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.baseline,
-                  textBaseline: TextBaseline.alphabetic,
                   children: [
-                    Text(
-                      relativeDayLabel(day),
-                      style: context.text.titleSmall,
+                    Icon(
+                      Icons.folder_outlined,
+                      size: 18,
+                      color: palette.mutedText,
                     ),
                     const SizedBox(width: Insets.sm),
-                    Text(
-                      formatDayHeader(day),
-                      style: context.text.labelSmall?.copyWith(
-                        color: palette.dimText,
+                    Expanded(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.baseline,
+                        textBaseline: TextBaseline.alphabetic,
+                        children: [
+                          Flexible(
+                            flex: 0,
+                            child: Text(
+                              relativeDayLabel(day),
+                              style: context.text.titleSmall,
+                            ),
+                          ),
+                          const SizedBox(width: Insets.sm),
+                          Flexible(
+                            child: Text(
+                              '${formatDayHeader(day)} · $count ${plural(count, 'entry')}',
+                              overflow: TextOverflow.ellipsis,
+                              style: context.text.labelSmall?.copyWith(
+                                color: palette.dimText,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Add entry to this day',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => createJournalEntry(
+                        context,
+                        date: day,
+                        createNew: true,
+                        focusBody: true,
+                      ),
+                      icon: Icon(
+                        Icons.add_circle_outline_rounded,
+                        size: 20,
+                        color: palette.mutedText,
                       ),
                     ),
                   ],

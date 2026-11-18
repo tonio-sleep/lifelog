@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
@@ -153,6 +153,40 @@ class MediaStore {
     return copied;
   }
 
+
+  Future<Uint8List?> readThumbnailBytesIfExists(MediaItem item) async {
+    if (!item.hasThumbnail) return null;
+    final cacheKey = 'thumb:${item.id}';
+    final cached = _cache[cacheKey];
+    if (cached != null) return cached;
+    final file = _thumbFile(item.id);
+    if (!await file.exists()) return null;
+    final envelope = await file.readAsBytes();
+    final clear = await crypto.decryptBytes(envelope, aad: _thumbAad);
+    _remember(cacheKey, clear);
+    return clear;
+  }
+
+  /// Writes clear media bytes into the encrypted vault (used during backup restore).
+  /// This preserves the item's id so archive metadata remains valid.
+  Future<void> writeRestoredItem({
+    required MediaItem item,
+    required Uint8List originalBytes,
+    Uint8List? thumbnailBytes,
+  }) async {
+    await _ensureDirectory();
+    final envelope = await crypto.encryptBytes(originalBytes, aad: _aad);
+    await _originalFile(item.id).writeAsBytes(envelope, flush: true);
+    _cache.remove('full:${item.id}');
+    _cache.remove('thumb:${item.id}');
+    final thumbFile = _thumbFile(item.id);
+    if (thumbnailBytes != null && thumbnailBytes.isNotEmpty) {
+      final thumbEnvelope = await crypto.encryptBytes(thumbnailBytes, aad: _thumbAad);
+      await thumbFile.writeAsBytes(thumbEnvelope, flush: true);
+    } else if (await thumbFile.exists()) {
+      await thumbFile.delete();
+    }
+  }
   Future<void> delete(MediaItem item) async {
     _cache.remove('full:${item.id}');
     _cache.remove('thumb:${item.id}');
@@ -199,3 +233,4 @@ String mimeTypeForFileName(String fileName) {
     _ => 'application/octet-stream',
   };
 }
+

@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,6 +12,7 @@ import '../../domain/models/places.dart';
 import '../../domain/models/timeline.dart';
 import '../../domain/models/trackers.dart';
 import '../app_services.dart';
+import '../../core/backup/backup_service.dart';
 
 final appServicesProvider = Provider<AppServices>((ref) {
   throw UnimplementedError('AppServices must be overridden at bootstrap.');
@@ -99,7 +100,14 @@ class ArchiveController extends Notifier<Archive> {
       updatedAt: DateTime.now(),
       title: entry.title,
       body: entry.body,
+      kind: entry.kind,
+      vocabItems: entry.vocabItems.map((v) => v.copyWith()).toList(),
       mood: entry.mood,
+      energy: entry.energy,
+      sleepHours: entry.sleepHours,
+      steps: entry.steps,
+      meals: entry.meals,
+      highlight: entry.highlight,
       tags: [...entry.tags],
       placeId: entry.placeId,
       placeLabel: entry.placeLabel,
@@ -404,8 +412,27 @@ class ArchiveController extends Notifier<Archive> {
   // Restore and wipe
   // ---------------------------------------------------------------------------
 
-  Future<bool> restoreArchive(Archive restored) async {
+  Future<bool> restoreArchive(
+    Archive restored, {
+    List<BackupMediaFile> mediaFiles = const [],
+  }) async {
     await _services.mediaStore.deleteAll();
+    if (mediaFiles.isNotEmpty) {
+      final byId = {for (final item in restored.media) item.id: item};
+      for (final file in mediaFiles) {
+        final item = byId[file.id];
+        if (item == null) continue;
+        try {
+          await _services.mediaStore.writeRestoredItem(
+            item: item,
+            originalBytes: file.originalBytes,
+            thumbnailBytes: file.thumbnailBytes,
+          );
+        } catch (_) {
+          // Keep archive metadata; missing/unwritable media can be handled gracefully.
+        }
+      }
+    }
     await _persist(restored);
     return true;
   }
@@ -419,3 +446,4 @@ class ArchiveController extends Notifier<Archive> {
   bool _sameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
 }
+

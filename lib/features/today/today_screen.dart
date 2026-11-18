@@ -13,6 +13,7 @@ import '../../domain/models/music.dart';
 import '../../domain/models/timeline.dart';
 import '../journal/journal_widgets.dart';
 import '../memories/calendar.dart';
+import '../memories/day_detail_screen.dart';
 import '../music/music_sync.dart';
 import '../photos/photo_widgets.dart';
 import '../timeline/timeline_widgets.dart';
@@ -143,6 +144,11 @@ class _DayBody extends ConsumerWidget {
     final listening = summary.scrobbles.isEmpty ? null : summary.music;
 
     final dailyEntry = archive.dailyEntryFor(day);
+    final dayEntries = archive.entriesOn(day, includeDrafts: true);
+    final journalEntries = dayEntries
+        .where((e) => e.body.trim().isNotEmpty || e.title.trim().isNotEmpty || e.hasVocabContent)
+        .toList();
+    final entryCount = dayEntries.length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -155,7 +161,24 @@ class _DayBody extends ConsumerWidget {
         JournalWriteCard(
           isToday: isToday,
           entry: dailyEntry,
-          onTap: () => createJournalEntry(context, date: day, focusBody: true),
+          entryCount: entryCount,
+          onTap: () {
+            if (entryCount > 1) {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => DayDetailScreen(day: day),
+                ),
+              );
+            } else {
+              createJournalEntry(context, date: day, focusBody: true);
+            }
+          },
+          onAdd: () => createJournalEntry(
+            context,
+            date: day,
+            focusBody: true,
+            createNew: true,
+          ),
         ),
         if (latest != null) ...[
           const SizedBox(height: Insets.md),

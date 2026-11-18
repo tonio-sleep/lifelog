@@ -1,4 +1,6 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'dart:ui';
+
+import 'package:flutter/material.dart';
 
 import '../../app/theme/app_theme.dart';
 import '../../domain/models/journal.dart';
@@ -19,10 +21,11 @@ class QuietCard extends StatelessWidget {
     this.onLongPress,
     this.padding = const EdgeInsets.all(Insets.lg),
     this.color,
-    this.radius = Radii.lg,
+    this.radius = Radii.xl,
     this.border = true,
     this.margin,
     this.gradient,
+    this.glass = false,
   });
 
   final Widget child;
@@ -35,40 +38,57 @@ class QuietCard extends StatelessWidget {
   final EdgeInsetsGeometry? margin;
   final Gradient? gradient;
 
+  /// Enables a subtle frosted-glass blur effect.
+  final bool glass;
+
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
     final shape = BorderRadius.circular(radius);
-    Widget card = Container(
-      clipBehavior: Clip.antiAlias,
+    final baseColor = color ?? palette.card;
+    final fill = glass
+        ? baseColor.withValues(alpha: palette.isDark ? 0.55 : 0.62)
+        : baseColor;
+
+    Widget surface = Container(
       decoration: BoxDecoration(
-        color: gradient == null ? (color ?? palette.card) : null,
+        color: gradient == null ? fill : null,
         gradient: gradient,
         borderRadius: shape,
-        border: border ? Border.all(color: palette.border) : null,
-        boxShadow: palette.isDark
-            ? null
-            : [
-                BoxShadow(
-                  color: const Color(0xFF1B2140).withValues(alpha: 0.04),
-                  blurRadius: 14,
-                  offset: const Offset(0, 4),
+        border: border
+            ? Border.all(
+                color: palette.border.withValues(
+                  alpha: palette.isDark ? 0.35 : 0.55,
                 ),
-              ],
+              )
+            : null,
       ),
       child: Padding(padding: padding, child: child),
     );
+
+    if (glass) {
+      surface = ClipRRect(
+        borderRadius: shape,
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          child: surface,
+        ),
+      );
+    } else {
+      surface = ClipRRect(borderRadius: shape, child: surface);
+    }
+
     if (onTap != null || onLongPress != null) {
-      card = Pressable(
+      surface = Pressable(
         onTap: onTap,
         onLongPress: onLongPress,
         scale: 0.985,
         borderRadius: shape,
-        child: card,
+        child: surface,
       );
     }
-    if (margin != null) card = Padding(padding: margin!, child: card);
-    return card;
+    if (margin != null) surface = Padding(padding: margin!, child: surface);
+    return surface;
   }
 }
 

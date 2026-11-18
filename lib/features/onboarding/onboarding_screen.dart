@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 
@@ -8,7 +8,7 @@ import '../../app/theme/app_theme.dart';
 import '../../app/widgets/common.dart';
 import '../../domain/models/settings.dart';
 import '../security/pin_dialogs.dart';
-import '../settings/google_drive_actions.dart';
+import '../settings/cloudflare_sync_actions.dart';
 
 class OnboardingScreen extends ConsumerStatefulWidget {
   const OnboardingScreen({super.key});
@@ -89,15 +89,15 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     title: 'Your journal, saved on this device',
                     body:
                         'Keep your day, memories, and check-ins in one private place. '
-                        'Connect Google if you want cloud backup, or continue locally and everything will be saved on this iPhone.',
+                        'Sign in to your Cloudflare Worker if you want encrypted cloud backup and sync, or continue locally and everything will be saved on this device.',
                     children: [
                       _SignInChoiceCard(
-                        icon: Icons.account_circle_outlined,
-                        title: 'Continue with Google',
-                        subtitle: 'Optional: back up and restore with your Google account',
+                        icon: Icons.cloud_outlined,
+                        title: 'Sign in to Cloudflare sync',
+                        subtitle: 'Optional: encrypted backup and restore using your own Cloudflare Worker',
                         primary: true,
                         onTap: () async {
-                          await connectGoogleDrive(context, ref);
+                          await connectCloudflareSync(context, ref);
                           if (!context.mounted) return;
                           _pages.nextPage(
                             duration: const Duration(milliseconds: 280),
@@ -171,10 +171,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                         icon: Icons.touch_app_outlined,
                         text: 'Nothing is added unless you choose to add it.',
                       ),
-                      _FactRow(
-                        icon: Icons.cloud_outlined,
-                        text: 'Google, Last.fm, and Health connections are optional and only used when you enable them.',
-                      ),
+                      _FactRow(\n                        icon: Icons.cloud_outlined,\n                        text: 'Cloudflare sync, Last.fm, and Health connections are optional and only used when you enable them.',\n                      ),
                       _FactRow(
                         icon: Icons.location_on_outlined,
                         text: 'Location is only used when you save a place. Screen Time data is not available on iPhone without special Apple approval.',
@@ -1093,3 +1090,4 @@ class _PermissionCard extends StatelessWidget {
     );
   }
 }
+

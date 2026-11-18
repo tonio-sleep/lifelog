@@ -38,9 +38,9 @@ class Radii {
 class Motion {
   const Motion._();
 
-  static const Duration fast = Duration(milliseconds: 140);
-  static const Duration base = Duration(milliseconds: 240);
-  static const Duration slow = Duration(milliseconds: 420);
+  static const Duration fast = Duration(milliseconds: 160);
+  static const Duration base = Duration(milliseconds: 280);
+  static const Duration slow = Duration(milliseconds: 480);
 
   static const Curve out = Curves.easeOutCubic;
   static const Curve inOut = Curves.easeInOutCubic;
@@ -89,48 +89,48 @@ class AppTheme {
   static ThemeData _build(Brightness brightness) {
     final dark = brightness == Brightness.dark;
 
-    // Surfaces
-    final surface = dark ? const Color(0xFF0C0E15) : const Color(0xFFF5F6FA);
-    final card = dark ? const Color(0xFF141722) : const Color(0xFFFFFFFF);
-    final subtle = dark ? const Color(0xFF1C2030) : const Color(0xFFEDEFF6);
-    final border = dark ? const Color(0xFF262B3C) : const Color(0xFFE2E5EF);
-    final ink = dark ? const Color(0xFFECEEF6) : const Color(0xFF14161F);
+    // Minimal, airy surfaces with a soft glass-like feel.
+    final surface = dark ? const Color(0xFF0A0C12) : const Color(0xFFF4F5F8);
+    final card = dark ? const Color(0xCC171A24) : const Color(0xE6FFFFFF);
+    final subtle = dark ? const Color(0xFF161A26) : const Color(0xFFF0F2F7);
+    final border = dark ? const Color(0x33FFFFFF) : const Color(0x140F172A);
+    final ink = dark ? const Color(0xFFF2F4FA) : const Color(0xFF10131C);
 
-    final primary = dark ? const Color(0xFFA3ABFF) : const Color(0xFF4753D8);
+    final primary = dark ? const Color(0xFFB4BCFF) : const Color(0xFF4C57D8);
 
     final scheme = ColorScheme.fromSeed(seedColor: seed, brightness: brightness)
         .copyWith(
           primary: primary,
-          onPrimary: dark ? const Color(0xFF12163A) : Colors.white,
-          primaryContainer: primary.withValues(alpha: dark ? 0.22 : 0.12),
+          onPrimary: dark ? const Color(0xFF11142E) : Colors.white,
+          primaryContainer: primary.withValues(alpha: dark ? 0.20 : 0.10),
           onPrimaryContainer: primary,
-          secondary: dark ? const Color(0xFFF2C46D) : const Color(0xFFB87710),
-          tertiary: dark ? const Color(0xFF6FD3A8) : const Color(0xFF2B8A66),
+          secondary: dark ? const Color(0xFFF0C978) : const Color(0xFFB7770C),
+          tertiary: dark ? const Color(0xFF78D8B0) : const Color(0xFF238863),
           surface: surface,
           onSurface: ink,
-          onSurfaceVariant: ink.withValues(alpha: 0.62),
+          onSurfaceVariant: ink.withValues(alpha: 0.60),
           surfaceContainerLowest: surface,
           surfaceContainerLow: card,
           surfaceContainer: card,
           surfaceContainerHigh: subtle,
           surfaceContainerHighest: subtle,
-          outline: dark ? const Color(0xFF454B62) : const Color(0xFFB9BECF),
+          outline: dark ? const Color(0xFF4A5068) : const Color(0xFFBCC2D6),
           outlineVariant: border,
-          error: dark ? const Color(0xFFFF8A97) : const Color(0xFFC93C4B),
+          error: dark ? const Color(0xFFFF909B) : const Color(0xFFD03A4A),
         );
 
     final palette = LifelogPalette(
       card: card,
       subtle: subtle,
       border: border,
-      mutedText: ink.withValues(alpha: 0.62),
-      dimText: ink.withValues(alpha: 0.42),
+      mutedText: ink.withValues(alpha: 0.58),
+      dimText: ink.withValues(alpha: 0.38),
       journal: primary,
       tracker: scheme.tertiary,
-      place: dark ? const Color(0xFF6CB8E8) : const Color(0xFF2F86B8),
-      music: dark ? const Color(0xFFBE9BFF) : const Color(0xFF8B5CD6),
-      photo: dark ? const Color(0xFFF0B866) : const Color(0xFFC77D1E),
-      manual: dark ? const Color(0xFFA3AAC8) : const Color(0xFF6B7390),
+      place: dark ? const Color(0xFF76C0EC) : const Color(0xFF2A84B8),
+      music: dark ? const Color(0xFFC6A6FF) : const Color(0xFF8857D8),
+      photo: dark ? const Color(0xFFF2BD72) : const Color(0xFFC87816),
+      manual: dark ? const Color(0xFFAAB1CC) : const Color(0xFF6A7390),
       isDark: dark,
     );
 
@@ -147,20 +147,20 @@ class AppTheme {
       canvasColor: surface,
       textTheme: text,
       extensions: <ThemeExtension<dynamic>>[palette],
-      splashFactory: InkRipple.splashFactory,
-      splashColor: primary.withValues(alpha: 0.08),
+      splashFactory: InkSparkle.splashFactory,
+      splashColor: primary.withValues(alpha: 0.06),
       highlightColor: Colors.transparent,
-      hoverColor: primary.withValues(alpha: 0.05),
+      hoverColor: primary.withValues(alpha: 0.04),
       focusColor: primary.withValues(alpha: 0.10),
       textSelectionTheme: TextSelectionThemeData(
         cursorColor: primary,
-        selectionColor: primary.withValues(alpha: 0.28),
+        selectionColor: primary.withValues(alpha: 0.24),
         selectionHandleColor: primary,
       ),
       appBarTheme: AppBarTheme(
         elevation: 0,
         scrolledUnderElevation: 0,
-        backgroundColor: surface,
+        backgroundColor: Colors.transparent,
         surfaceTintColor: Colors.transparent,
         foregroundColor: ink,
         centerTitle: false,
@@ -169,59 +169,66 @@ class AppTheme {
       dividerTheme: DividerThemeData(color: border, thickness: 1, space: 1),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: subtle,
+        fillColor: dark
+            ? Colors.white.withValues(alpha: 0.05)
+            : Colors.white.withValues(alpha: 0.72),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: Insets.lg,
           vertical: 14,
         ),
-        hintStyle: TextStyle(color: ink.withValues(alpha: 0.42)),
-        labelStyle: TextStyle(color: ink.withValues(alpha: 0.62)),
+        hintStyle: TextStyle(color: ink.withValues(alpha: 0.40)),
+        labelStyle: TextStyle(color: ink.withValues(alpha: 0.58)),
         border: _inputBorder(Colors.transparent),
         enabledBorder: _inputBorder(Colors.transparent),
         disabledBorder: _inputBorder(Colors.transparent),
-        focusedBorder: _inputBorder(primary, width: 1.5),
+        focusedBorder: _inputBorder(primary.withValues(alpha: 0.7), width: 1.4),
         errorBorder: _inputBorder(scheme.error),
-        focusedErrorBorder: _inputBorder(scheme.error, width: 1.5),
+        focusedErrorBorder: _inputBorder(scheme.error, width: 1.4),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          minimumSize: const Size(0, 46),
+          minimumSize: const Size(0, 48),
           padding: const EdgeInsets.symmetric(horizontal: Insets.xl),
           elevation: 0,
-          shape: rounded(Radii.md),
-          textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14.5),
+          shadowColor: Colors.transparent,
+          shape: rounded(Radii.lg),
+          textStyle:
+              const TextStyle(fontWeight: FontWeight.w600, fontSize: 14.5),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          minimumSize: const Size(0, 46),
+          minimumSize: const Size(0, 48),
           padding: const EdgeInsets.symmetric(horizontal: Insets.xl),
           side: BorderSide(color: border),
-          shape: rounded(Radii.md),
-          textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14.5),
+          shape: rounded(Radii.lg),
+          textStyle:
+              const TextStyle(fontWeight: FontWeight.w600, fontSize: 14.5),
         ),
       ),
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
-          shape: rounded(Radii.sm),
-          textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+          shape: rounded(Radii.md),
+          textStyle:
+              const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
         ),
       ),
       segmentedButtonTheme: SegmentedButtonThemeData(
         style: SegmentedButton.styleFrom(
-          shape: rounded(Radii.md),
+          shape: rounded(Radii.lg),
           side: BorderSide(color: border),
-          textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5),
+          textStyle:
+              const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5),
         ),
       ),
       chipTheme: ChipThemeData(
-        backgroundColor: subtle,
-        side: BorderSide.none,
+        backgroundColor: subtle.withValues(alpha: dark ? 0.7 : 0.9),
+        side: BorderSide(color: border),
         shape: const StadiumBorder(),
         labelStyle: TextStyle(
           fontSize: 12.5,
           fontWeight: FontWeight.w500,
-          color: ink.withValues(alpha: 0.8),
+          color: ink.withValues(alpha: 0.82),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
       ),
@@ -229,17 +236,17 @@ class AppTheme {
         trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
         thumbColor: WidgetStateProperty.resolveWith(
           (states) => states.contains(WidgetState.selected)
-              ? scheme.onPrimary
-              : (dark ? const Color(0xFF9AA0B8) : Colors.white),
+              ? Colors.white
+              : (dark ? const Color(0xFFA4AAC0) : Colors.white),
         ),
         trackColor: WidgetStateProperty.resolveWith(
           (states) => states.contains(WidgetState.selected)
               ? primary
-              : (dark ? const Color(0xFF2A2F44) : const Color(0xFFD3D7E4)),
+              : (dark ? const Color(0xFF273043) : const Color(0xFFD7DBE7)),
         ),
       ),
       dialogTheme: DialogThemeData(
-        backgroundColor: card,
+        backgroundColor: dark ? const Color(0xF2161922) : const Color(0xF7FFFFFF),
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         shape: rounded(Radii.xl),
@@ -247,39 +254,43 @@ class AppTheme {
         contentTextStyle: text.bodyMedium,
       ),
       bottomSheetTheme: BottomSheetThemeData(
-        backgroundColor: card,
+        backgroundColor: dark ? const Color(0xF2141720) : const Color(0xF7FFFFFF),
         surfaceTintColor: Colors.transparent,
-        modalBackgroundColor: card,
-        modalBarrierColor: Colors.black.withValues(alpha: dark ? 0.6 : 0.36),
+        modalBackgroundColor:
+            dark ? const Color(0xF2141720) : const Color(0xF7FFFFFF),
+        modalBarrierColor:
+            Colors.black.withValues(alpha: dark ? 0.55 : 0.28),
         showDragHandle: true,
-        dragHandleColor: border,
-        dragHandleSize: const Size(40, 4),
+        dragHandleColor: border.withValues(alpha: dark ? 0.6 : 0.35),
+        dragHandleSize: const Size(38, 4),
         clipBehavior: Clip.antiAlias,
         shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.xl)),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
         ),
       ),
       popupMenuTheme: PopupMenuThemeData(
-        color: card,
+        color: dark ? const Color(0xF21A1E2A) : const Color(0xFAFFFFFF),
         surfaceTintColor: Colors.transparent,
-        elevation: 8,
-        shadowColor: Colors.black.withValues(alpha: 0.25),
-        shape: rounded(Radii.md),
+        elevation: 0,
+        shadowColor: Colors.transparent,
+        shape: rounded(Radii.lg),
         textStyle: text.bodyMedium,
       ),
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
-        backgroundColor: dark ? const Color(0xFF2A2F44) : const Color(0xFF1B1E2B),
-        contentTextStyle: const TextStyle(color: Colors.white, fontSize: 13.5),
-        actionTextColor: const Color(0xFFB7BEFF),
+        backgroundColor:
+            dark ? const Color(0xF22A3042) : const Color(0xF21A1E2A),
+        contentTextStyle:
+            const TextStyle(color: Colors.white, fontSize: 13.5),
+        actionTextColor: const Color(0xFFD6DBFF),
         insetPadding: const EdgeInsets.all(Insets.lg),
-        shape: rounded(Radii.md),
+        shape: rounded(Radii.lg),
       ),
       floatingActionButtonTheme: FloatingActionButtonThemeData(
         backgroundColor: primary,
         foregroundColor: scheme.onPrimary,
-        elevation: 2,
-        shape: rounded(Radii.lg),
+        elevation: 0,
+        shape: rounded(Radii.xl),
       ),
       listTileTheme: const ListTileThemeData(
         contentPadding: EdgeInsets.symmetric(horizontal: Insets.lg),
@@ -293,23 +304,25 @@ class AppTheme {
       tooltipTheme: TooltipThemeData(
         waitDuration: const Duration(milliseconds: 450),
         decoration: BoxDecoration(
-          color: dark ? const Color(0xFF2A2F44) : const Color(0xFF1B1E2B),
-          borderRadius: BorderRadius.circular(Radii.sm),
+          color: dark ? const Color(0xF22A3042) : const Color(0xF21A1E2A),
+          borderRadius: BorderRadius.circular(Radii.md),
         ),
         textStyle: const TextStyle(color: Colors.white, fontSize: 12),
       ),
       scrollbarTheme: ScrollbarThemeData(
-        thickness: const WidgetStatePropertyAll(5),
+        thickness: const WidgetStatePropertyAll(4),
         radius: const Radius.circular(8),
-        thumbColor: WidgetStatePropertyAll(ink.withValues(alpha: 0.18)),
+        thumbColor: WidgetStatePropertyAll(ink.withValues(alpha: 0.14)),
       ),
       datePickerTheme: DatePickerThemeData(
-        backgroundColor: card,
+        backgroundColor:
+            dark ? const Color(0xF2161922) : const Color(0xF7FFFFFF),
         surfaceTintColor: Colors.transparent,
         shape: rounded(Radii.xl),
       ),
       timePickerTheme: TimePickerThemeData(
-        backgroundColor: card,
+        backgroundColor:
+            dark ? const Color(0xF2161922) : const Color(0xF7FFFFFF),
         shape: rounded(Radii.xl),
       ),
       pageTransitionsTheme: const PageTransitionsTheme(

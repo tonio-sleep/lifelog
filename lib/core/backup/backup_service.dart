@@ -1,9 +1,10 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
 import '../../domain/models/archive.dart';
 import '../crypto/crypto_service.dart';
+import '../storage/media_store.dart';
 
 class BackupException implements Exception {
   BackupException(this.message, [this.cause]);
@@ -14,16 +15,30 @@ class BackupException implements Exception {
   String toString() => message;
 }
 
+class BackupMediaFile {
+  BackupMediaFile({
+    required this.id,
+    required this.originalBytes,
+    this.thumbnailBytes,
+  });
+
+  final String id;
+  final Uint8List originalBytes;
+  final Uint8List? thumbnailBytes;
+}
+
 class BackupContents {
   BackupContents({
     required this.archive,
     required this.createdAt,
     required this.includesMedia,
+    this.mediaFiles = const [],
   });
 
   final Archive archive;
   final DateTime createdAt;
   final bool includesMedia;
+  final List<BackupMediaFile> mediaFiles;
 
   Map<String, int> get counts => {
     'journalEntries': archive.entries.length,
@@ -37,15 +52,18 @@ class BackupContents {
   };
 }
 
-/// Versioned, passphrase-encrypted archive exports. The structured archive is
-/// encrypted with a key derived using Argon2id; media bytes are excluded from
-/// this container in the current build and are documented separately.
+/// Versioned, passphrase-encrypted archive exports.
+/// The archive (and included media bytes, when present) is encrypted with a key
+/// derived using Argon2id and AES-256-GCM. Media bytes are decrypted on-device
+/// before being packed into the encrypted backup so restores work across devices
+/// using only the backup passphrase.
 class BackupService {
   const BackupService();
 
   static const format = 'lifelog-backup';
-  static const version = 1;
-  static const _aad = 'lifelog-backup-v1';
+  static const version = 2;
+  static const _aadV1 = 'lifelog-backup-v1';
+  static const _aadV2 = 'lifelog-backup-v2';
 
   static Uint8List _secureSalt() {
     final random = Random.secure();
@@ -55,6 +73,7 @@ class BackupService {
   Future<Uint8List> createBackup({
     required Archive archive,
     required String passphrase,
+    MediaStore? mediaStore,
   }) async {
     if (passphrase.trim().length < 8) {
       throw BackupException('Use a backup passphrase of at least 8 characters.');
@@ -66,23 +85,43 @@ class BackupService {
       salt: salt,
     );
     final crypto = CryptoService(key);
+
+    final mediaFiles = <Map<String, dynamic>>[];
+    if (mediaStore != null && archive.media.isNotEmpty) {
+      for (final item in archive.media) {
+        try {
+          final original = await mediaStore.readOriginal(item);
+          final thumb = await mediaStore.readThumbnailBytesIfExists(item);
+          mediaFiles.add({
+            'id': item.id,
+            'original': base64Encode(original),
+            'thumb': thumb == null ? null : base64Encode(thumb),
+          });
+        } on MediaUnavailableException {
+          // Skip missing vault files but keep metadata in archive.
+        }
+      }
+    }
+    final includesMedia = mediaFiles.isNotEmpty;
+
     final payload = {
       'format': 'lifelog-archive',
-      'version': 1,
+      'version': 2,
       'createdAt': DateTime.now().toUtc().toIso8601String(),
-      'includesMedia': false,
+      'includesMedia': includesMedia,
       'archive': archive.toJson(),
+      'mediaFiles': mediaFiles,
     };
     final encrypted = await crypto.encryptBytes(
       utf8.encode(jsonEncode(payload)),
-      aad: _aad,
+      aad: _aadV2,
     );
 
     final container = {
       'format': format,
       'version': version,
       'createdAt': DateTime.now().toUtc().toIso8601String(),
-      'includesMedia': false,
+      'includesMedia': includesMedia,
       'cipher': 'aes-256-gcm',
       'kdf': {
         'name': 'argon2id',
@@ -110,7 +149,8 @@ class BackupService {
       if (decoded['format'] != format) {
         throw BackupException('This file is not a Lifelog backup.');
       }
-      if (decoded['version'] != version) {
+      final containerVersion = decoded['version'];
+      if (containerVersion != 1 && containerVersion != 2) {
         throw BackupException(
           'This backup uses an unsupported format version.',
         );
@@ -128,9 +168,8 @@ class BackupService {
         parallelism: (kdf['parallelism'] as num?)?.toInt() ?? 1,
       );
       final encrypted = base64Decode(decoded['payload'] as String? ?? '');
-      final clear = await CryptoService(
-        key,
-      ).decryptBytes(encrypted, aad: _aad);
+      final aad = containerVersion == 1 ? _aadV1 : _aadV2;
+      final clear = await CryptoService(key).decryptBytes(encrypted, aad: aad);
       final payload = jsonDecode(utf8.decode(clear));
       if (payload is! Map<String, dynamic>) {
         throw BackupException('The backup contents are invalid.');
@@ -139,12 +178,38 @@ class BackupService {
       if (archiveJson is! Map<String, dynamic>) {
         throw BackupException('The backup does not contain an archive.');
       }
+
+      final mediaFiles = <BackupMediaFile>[];
+      final rawMedia = payload['mediaFiles'];
+      if (rawMedia is List) {
+        for (final entry in rawMedia) {
+          if (entry is! Map) continue;
+          final id = entry['id'] as String?;
+          final originalB64 = entry['original'] as String?;
+          if (id == null || id.isEmpty || originalB64 == null) continue;
+          try {
+            final thumbB64 = entry['thumb'] as String?;
+            mediaFiles.add(BackupMediaFile(
+              id: id,
+              originalBytes: Uint8List.fromList(base64Decode(originalB64)),
+              thumbnailBytes: thumbB64 == null || thumbB64.isEmpty
+                  ? null
+                  : Uint8List.fromList(base64Decode(thumbB64)),
+            ));
+          } catch (_) {
+            // Skip malformed media entries; archive metadata is still restored.
+          }
+        }
+      }
+
       return BackupContents(
         archive: Archive.fromJson(archiveJson),
         createdAt:
             DateTime.tryParse(payload['createdAt'] as String? ?? '') ??
             DateTime.now(),
-        includesMedia: payload['includesMedia'] as bool? ?? false,
+        includesMedia:
+            (payload['includesMedia'] as bool? ?? false) || mediaFiles.isNotEmpty,
+        mediaFiles: mediaFiles,
       );
     } on BackupException {
       rethrow;

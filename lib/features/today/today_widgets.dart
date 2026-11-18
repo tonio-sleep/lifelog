@@ -434,18 +434,37 @@ class JournalWriteCard extends StatelessWidget {
     required this.onTap,
     required this.isToday,
     this.entry,
+    this.entryCount = 0,
+    this.onAdd,
   });
 
   final VoidCallback onTap;
   final bool isToday;
   final JournalEntry? entry;
+  final int entryCount;
+  final VoidCallback? onAdd;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
     final text = context.text;
     final e = entry;
-    final hasWriting = e != null && (e.title.trim().isNotEmpty || e.body.trim().isNotEmpty);
+    final hasWriting = e != null &&
+        (e.title.trim().isNotEmpty ||
+            e.body.trim().isNotEmpty ||
+            e.hasVocabContent);
+    final multiple = entryCount > 1;
+    final title = multiple
+        ? '${isToday ? 'Today' : 'This day'} · $entryCount entries'
+        : hasWriting
+            ? (isToday ? 'Journal' : 'Journal entry')
+            : (isToday ? 'Write about today' : 'Write about this day');
+    final subtitle = multiple
+        ? 'Entries, notes, and vocab lists kept together for this day.'
+        : hasWriting
+            ? (e.excerpt == 'No text' ? e.displayTitle : e.excerpt)
+            : 'Thoughts, notes, or a simple vocab list.';
+
     return QuietCard(
       onTap: onTap,
       padding: const EdgeInsets.all(Insets.md),
@@ -458,7 +477,11 @@ class JournalWriteCard extends StatelessWidget {
               color: palette.journal.withValues(alpha: 0.14),
               shape: BoxShape.circle,
             ),
-            child: Icon(Icons.edit_note_rounded, size: 20, color: palette.journal),
+            child: Icon(
+              multiple ? Icons.folder_outlined : Icons.edit_note_rounded,
+              size: 20,
+              color: palette.journal,
+            ),
           ),
           const SizedBox(width: Insets.md),
           Expanded(
@@ -466,28 +489,39 @@ class JournalWriteCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  hasWriting ? (isToday ? 'Journal' : 'Journal entry') : (isToday ? 'Write about today' : 'Write about this day'),
+                  title,
                   style: AppTheme.serif(text.bodyLarge, size: 16).copyWith(
-                    color: hasWriting ? text.bodyLarge?.color : palette.mutedText,
-                    fontWeight: hasWriting ? FontWeight.w600 : FontWeight.w500,
+                    color: (hasWriting || multiple)
+                        ? text.bodyLarge?.color
+                        : palette.mutedText,
+                    fontWeight: (hasWriting || multiple)
+                        ? FontWeight.w600
+                        : FontWeight.w500,
                   ),
                 ),
-                if (hasWriting)
-                  Text(
-                    e.excerpt == 'No text' ? e.displayTitle : e.excerpt,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: text.bodySmall?.copyWith(color: palette.mutedText, height: 1.4),
-                  )
-                else
-                  Text(
-                    'Thoughts, notes, or anything you want to remember.',
-                    style: text.bodySmall?.copyWith(color: palette.dimText),
+                Text(
+                  subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: text.bodySmall?.copyWith(
+                    color: (hasWriting || multiple)
+                        ? palette.mutedText
+                        : palette.dimText,
+                    height: 1.4,
                   ),
+                ),
               ],
             ),
           ),
-          Icon(Icons.chevron_right_rounded, color: palette.dimText),
+          if (onAdd != null)
+            IconButton(
+              tooltip: 'Add another entry',
+              onPressed: onAdd,
+              icon: Icon(Icons.add_circle_outline_rounded,
+                  color: palette.journal),
+            )
+          else
+            Icon(Icons.chevron_right_rounded, color: palette.dimText),
         ],
       ),
     );

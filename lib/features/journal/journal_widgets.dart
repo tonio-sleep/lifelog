@@ -57,6 +57,14 @@ class JournalEntryCard extends ConsumerWidget {
                 when,
                 style: text.labelMedium?.copyWith(color: palette.mutedText),
               ),
+              if (entry.kind != JournalEntryKind.journal) ...[
+                const SizedBox(width: Insets.sm),
+                SourceChip(
+                  label: entry.kind.label,
+                  dense: true,
+                  color: entry.isVocab ? palette.tracker : palette.place,
+                ),
+              ],
               if (entry.draft) ...[
                 const SizedBox(width: Insets.sm),
                 SourceChip(
@@ -96,7 +104,10 @@ class JournalEntryCard extends ConsumerWidget {
                     size: compact ? 18 : 20,
                   ),
                 ),
-                if (entry.body.trim().isNotEmpty) ...[
+                if (entry.isVocab && entry.hasVocabContent) ...[
+                  const SizedBox(height: Insets.xs),
+                  _VocabPreview(items: entry.vocabItems, compact: compact),
+                ] else if (entry.excerpt != 'No text') ...[
                   const SizedBox(height: Insets.xs),
                   Text(
                     entry.excerpt,
@@ -265,25 +276,32 @@ Future<void> openJournalEntry(BuildContext context, String entryId) async {
   );
 }
 
-/// Opens the day's journal entry (one entry per day). If an entry already
-/// exists for [date] (or today), resumes it instead of creating another.
+/// Opens a journal entry for [date] (or today). Multiple entries per day are
+/// supported and grouped together by day. By default this resumes the day's
+/// primary/check-in entry if one exists; pass [createNew] to always start a new
+/// entry in that day's folder.
 Future<void> createJournalEntry(
   BuildContext context, {
   DateTime? date,
   bool focusBody = false,
+  bool createNew = false,
+  JournalEntryKind kind = JournalEntryKind.journal,
 }) async {
   final targetDay = date ?? DateTime.now();
-  final archive = ProviderScope.containerOf(context).read(archiveProvider);
-  final existing = archive.dailyEntryFor(targetDay);
-  if (existing != null) {
-    await openJournalEntry(context, existing.id);
-    return;
+  if (!createNew) {
+    final archive = ProviderScope.containerOf(context).read(archiveProvider);
+    final existing = archive.dailyEntryFor(targetDay);
+    if (existing != null) {
+      await openJournalEntry(context, existing.id);
+      return;
+    }
   }
   await Navigator.of(context).push(
     MaterialPageRoute<void>(
       builder: (_) => JournalEditorScreen(
         initialDate: targetDay,
         focusBody: focusBody,
+        initialKind: kind,
       ),
     ),
   );
@@ -298,6 +316,55 @@ String _shortText(String text) {
   final t = text.replaceAll(RegExp(r'\s+'), ' ').trim();
   if (t.length <= 28) return t;
   return '${t.substring(0, 27)}...';
+}
+
+class _VocabPreview extends StatelessWidget {
+  const _VocabPreview({required this.items, this.compact = false});
+
+  final List<VocabItem> items;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final text = context.text;
+    final pairs = items.where((v) => !v.isEmpty).take(compact ? 2 : 3).toList();
+    final total = items.where((v) => !v.isEmpty).length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final item in pairs)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.translate_rounded, size: 14, color: palette.tracker),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    item.meaning.trim().isEmpty
+                        ? item.term.trim()
+                        : '${item.term.trim()}  —  ${item.meaning.trim()}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.bodyMedium?.copyWith(
+                      color: palette.mutedText,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        if (total > pairs.length)
+          Text(
+            '+${total - pairs.length} more ${plural(total - pairs.length, 'word')}',
+            style: text.labelSmall?.copyWith(color: palette.dimText),
+          ),
+      ],
+    );
+  }
 }
 
 class _MetaChip extends StatelessWidget {

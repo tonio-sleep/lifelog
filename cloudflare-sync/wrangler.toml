@@ -1,0 +1,16 @@
+﻿name = "lifelog-cloudflare-sync"
+main = "src/index.js"
+compatibility_date = "2026-03-01"
+
+# R2 bucket binding for encrypted backup blobs and account metadata.
+[[r2_buckets]]
+binding = "BACKUP_BUCKET"
+bucket_name = "lifelog-backups"
+
+# Secrets (set with `wrangler secret put TOKEN_SECRET`):
+# - TOKEN_SECRET: long random secret used to sign session tokens (HMAC-SHA256).
+#
+# Security notes:
+# - Never commit secrets or account credentials.
+# - Backups stored in R2 are client-side encrypted by the app before upload.
+# - Use HTTPS endpoints only (Cloudflare provides TLS).

@@ -1,13 +1,13 @@
-import 'dart:io';
+﻿import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../domain/models/archive.dart';
 import '../domain/models/settings.dart';
-import '../integrations/lastfm/lastfm_service.dart';
-import '../integrations/google_drive/google_drive_service.dart';
+import '../integrations/cloudflare/cloudflare_sync_service.dart';
 import '../integrations/health/health_steps_service.dart';
+import '../integrations/lastfm/lastfm_service.dart';
 import '../core/backup/backup_service.dart';
 import '../core/crypto/crypto_service.dart';
 import '../core/storage/archive_store.dart';
@@ -25,7 +25,7 @@ class AppServices {
     required this.settingsStore,
     required this.lastfm,
     required this.backup,
-    required this.googleDrive,
+    required this.cloudflareSync,
     required this.healthSteps,
     required this.archive,
     required this.settings,
@@ -39,7 +39,7 @@ class AppServices {
   final SettingsStore settingsStore;
   final LastfmService lastfm;
   final BackupService backup;
-  final GoogleDriveService googleDrive;
+  final CloudflareSyncService cloudflareSync;
   final HealthStepsService healthSteps;
   final Archive archive;
   final AppSettings settings;
@@ -83,7 +83,7 @@ class AppServices {
       settingsStore: settingsStore,
       lastfm: LastfmService(),
       backup: const BackupService(),
-      googleDrive: GoogleDriveService(),
+      cloudflareSync: CloudflareSyncService(),
       healthSteps: HealthStepsService(),
       archive: archive,
       settings: settings,

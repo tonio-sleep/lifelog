@@ -1,5 +1,5 @@
-name: lifelog
-description: "Lifelog — a private, local-first personal life archive."
+﻿name: lifelog
+description: "Lifelog â€” a private, local-first personal life archive."
 publish_to: 'none'
 
 version: 1.0.0+1
@@ -23,13 +23,8 @@ dependencies:
   image: ^4.13.1
   path: ^1.9.0
   path_provider: ^2.1.6
-  googleapis: ^19.0.0
-  googleapis_auth: ^2.3.7
-  url_launcher: ^6.3.3
-  webview_windows: ^0.4.0
   health: ^13.1.1
   share_plus: ^13.3.1
-  google_sign_in: ^7.2.0
   image_picker: ^1.1.2
 
 dev_dependencies:
@@ -39,3 +34,4 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+

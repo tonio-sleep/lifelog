@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+﻿<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -35,7 +35,9 @@
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Lifelog can save exported media or files you choose.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Lifelog can capture photos you choose to add to your journal and daily records.</string>
+	<string>Lifelog can capture photos and videos you choose to add to your journal and daily records.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Lifelog uses the microphone when you choose to record a video for your journal or daily records.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Lifelog uses your location when you choose to save a place or visit.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
@@ -69,17 +71,6 @@
 			</array>
 		</dict>
 	</dict>
-	<key>CFBundleURLTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleTypeRole</key>
-			<string>Editor</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>com.googleusercontent.apps.55026869756-vvq2phjlgh07dh36e080gi29e2fvjvpq</string>
-			</array>
-		</dict>
-	</array>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

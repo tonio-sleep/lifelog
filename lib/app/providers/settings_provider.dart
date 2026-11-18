@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -126,75 +126,92 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> clearBackupFolderPath() =>
       update((current) => current.copyWith(clearBackupFolderPath: true));
 
-  // --- Google Drive sync ---
+  // --- Reminders (in-app) ---
 
-  static const _googleAuthAad = 'lifelog-google-auth-v1';
+  Future<void> saveReminder(ReminderItem reminder) => update((current) {
+        final list = [...current.reminders];
+        final index = list.indexWhere((r) => r.id == reminder.id);
+        if (index >= 0) {
+          list[index] = reminder;
+        } else {
+          list.add(reminder);
+        }
+        list.sort((a, b) {
+          final at = a.hour * 60 + a.minute;
+          final bt = b.hour * 60 + b.minute;
+          return at.compareTo(bt);
+        });
+        return current.copyWith(reminders: list);
+      });
 
-  Future<void> setGoogleClientConfig({
-    required String clientId,
-    String clientSecret = '',
-  }) => update(
-    (current) => current.copyWith(
-      googleClientId: clientId.trim(),
-      googleClientSecret: clientSecret.trim(),
-    ),
-  );
+  Future<void> toggleReminder(String id, bool enabled) => update((current) {
+        final list = current.reminders
+            .map((r) => r.id == id ? r.copyWith(enabled: enabled) : r)
+            .toList();
+        return current.copyWith(reminders: list);
+      });
 
-  Future<void> saveGoogleAuth({
-    required String accountEmail,
-    required String authJson,
-    String? driveFolderId,
-    String? driveFileId,
+  Future<void> deleteReminder(String id) => update((current) {
+        return current.copyWith(
+          reminders: current.reminders.where((r) => r.id != id).toList(),
+        );
+      });
+
+  // --- Cloudflare sync ---
+
+  static const _cloudflareSessionAad = 'lifelog-cloudflare-session-v1';
+
+  Future<void> setCloudflareWorkerUrl(String url) => update(
+        (current) => current.copyWith(
+          cloudflareWorkerUrl: url.trim(),
+        ),
+      );
+
+  /// Stores an authenticated Cloudflare session (encrypted at rest on device).
+  /// [sessionJson] should contain the session token and minimal metadata.
+  Future<void> saveCloudflareSession({
+    required String workerUrl,
+    required String username,
+    required String sessionJson,
   }) async {
     final cipher = await ref
         .read(appServicesProvider)
         .crypto
-        .encryptString(authJson, aad: _googleAuthAad);
+        .encryptString(sessionJson, aad: _cloudflareSessionAad);
     await update(
       (current) => current.copyWith(
-        googleAccountEmail: accountEmail,
-        googleAuthCipher: cipher,
-        googleConnectedAt: DateTime.now(),
-        googleDriveFolderId: driveFolderId ?? current.googleDriveFolderId,
-        googleDriveFileId: driveFileId ?? current.googleDriveFileId,
+        cloudflareWorkerUrl: workerUrl.trim(),
+        cloudflareUsername: username.trim(),
+        cloudflareSessionCipher: cipher,
+        cloudflareConnectedAt: DateTime.now(),
       ),
     );
   }
 
-  Future<String?> googleAuthJson() async {
-    final cipher = state.googleAuthCipher;
+  Future<String?> cloudflareSessionJson() async {
+    final cipher = state.cloudflareSessionCipher;
     if (cipher == null) return null;
-    return ref
-        .read(appServicesProvider)
-        .crypto
-        .decryptString(cipher, aad: _googleAuthAad);
+    try {
+      return await ref
+          .read(appServicesProvider)
+          .crypto
+          .decryptString(cipher, aad: _cloudflareSessionAad);
+    } catch (_) {
+      return null;
+    }
   }
 
-  Future<void> updateGoogleAuthCipher(String authJson) async {
-    final cipher = await ref
-        .read(appServicesProvider)
-        .crypto
-        .encryptString(authJson, aad: _googleAuthAad);
-    await update((current) => current.copyWith(googleAuthCipher: cipher));
-  }
-
-  Future<void> recordGoogleSync(DateTime at, {String? driveFileId, String? driveFolderId}) =>
-      update(
-        (current) => current.copyWith(
-          googleLastSyncAt: at,
-          googleDriveFileId: driveFileId ?? current.googleDriveFileId,
-          googleDriveFolderId: driveFolderId ?? current.googleDriveFolderId,
-        ),
+  Future<void> recordCloudflareSync(DateTime at) => update(
+        (current) => current.copyWith(cloudflareLastSyncAt: at),
       );
 
-  Future<void> disconnectGoogleDrive() =>
-      update((current) => current.copyWith(clearGoogleAuth: true));
+  Future<void> disconnectCloudflareSync() =>
+      update((current) => current.copyWith(clearCloudflareSession: true));
 
-  Future<void> clearGoogleClientConfig() => update(
+  Future<void> clearCloudflareWorkerUrl() => update(
         (current) => current.copyWith(
-          clearGoogleClientId: true,
-          clearGoogleClientSecret: true,
-          clearGoogleAuth: true,
+          clearCloudflareWorkerUrl: true,
+          clearCloudflareSession: true,
         ),
       );
 

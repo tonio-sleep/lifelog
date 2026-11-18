@@ -53,10 +53,15 @@ class _DayDetailScreenState extends ConsumerState<DayDetailScreen> {
               showTimelineEventEditor(context, ref, initialDate: _day),
         ),
         HeaderButton(
-          icon: Icons.edit_rounded,
-          tooltip: 'Write about this day',
+          icon: Icons.note_add_outlined,
+          tooltip: 'Add entry for this day',
           filled: true,
-          onPressed: () => createJournalEntry(context, date: _day, focusBody: true),
+          onPressed: () => createJournalEntry(
+            context,
+            date: _day,
+            focusBody: true,
+            createNew: true,
+          ),
         ),
       ],
       children: [
@@ -100,9 +105,15 @@ class _DayStory extends ConsumerWidget {
       return EmptyState(
         icon: Icons.nights_stay_outlined,
         title: 'Nothing recorded',
-        message: 'This day is quiet. You can still write about it.',
-        actionLabel: 'Write about this day',
-        onAction: () => createJournalEntry(context, date: day, focusBody: true),
+        message:
+            'This day is quiet. Add a journal entry, note, or vocab list to start its folder.',
+        actionLabel: 'Add entry',
+        onAction: () => createJournalEntry(
+          context,
+          date: day,
+          focusBody: true,
+          createNew: true,
+        ),
       );
     }
 
@@ -120,6 +131,32 @@ class _DayStory extends ConsumerWidget {
                 ),
                 const SizedBox(width: Insets.sm),
                 MoodBadge(mood),
+              ],
+            ),
+          ),
+        if (entries.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: Insets.sm, left: Insets.xs),
+            child: Row(
+              children: [
+                Icon(Icons.folder_outlined, size: 16, color: palette.mutedText),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    '${entries.length} ${plural(entries.length, 'entry')} in this day',
+                    style: text.labelMedium?.copyWith(color: palette.mutedText),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: () => createJournalEntry(
+                    context,
+                    date: day,
+                    focusBody: true,
+                    createNew: true,
+                  ),
+                  icon: const Icon(Icons.add_rounded, size: 18),
+                  label: const Text('Add entry'),
+                ),
               ],
             ),
           ),

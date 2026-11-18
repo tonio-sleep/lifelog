@@ -1,0 +1,57 @@
+PROMPT: Design 10 deep, whole-application GUI layout concepts for "Lifelog", a private local-first personal life archive (Flutter desktop + mobile). Each concept must be a complete application shell, not a single component.
+
+PRODUCT CONTEXT
+- App name: Lifelog. Tagline: private, local-first personal life archive.
+- Features: Today (daily page), Past (history), Journal entries, Trackers/habits, Timeline, Memories (calendar), Photos, Places (map + visits), Music (scrobbles), Insights (charts), Search, Settings.
+- Data is encrypted locally. No accounts, no cloud, no analytics.
+- Auto-tracking: location tracking while app open, new place detection.
+- Tracking everything: entries, habits, photos, music, places, visits, events.
+
+GOALS
+- Make the app nicer and easier to track everything.
+- Reduce sidebar clutter (group destinations).
+- Provide 10 distinct, deep layout concepts for the whole app.
+- No emojis. No decorative gimmicks. Professional, calm, editorial aesthetic.
+- Use a warm neutral palette: background #f5f1e8, card #fcf9f2, text #1f1c18, muted #6a635a, primary #25211d, accent #a84f3a, border #e0d8c9.
+- Typography: serif for large titles (Georgia), sans-serif for body (system-ui). Generous whitespace.
+
+EACH CONCEPT MUST INCLUDE
+1. Name and one-sentence description.
+2. Full application shell mockup (navigation + content + optional detail pane).
+3. Realistic sample data (dates, titles, counts) — not lorem ipsum.
+4. Navigation structure (grouped sections).
+5. At least one interactive region described (hover, selection, tabs).
+6. How it improves tracking (one line).
+
+CONCEPT DIRECTIONS (vary across these)
+- Three-pane workspace (nav + list + inspector)
+- Top bar navigation
+- Collapsible sidebar
+- Mobile drawer + bottom nav
+- Dashboard grid
+- Tabbed workspace
+- Split timeline + inspector
+- Focus mode (minimal chrome)
+- Icon rail + panels
+- Workspace with floating dock
+
+CONSTRAINTS
+- No emojis anywhere.
+- No gradient gimmicks beyond subtle linear gradients for hero cards.
+- No placeholder "vibecoded" decorations; every element must have a purpose.
+- Keep text concise and realistic.
+- Show real navigation labels: Today, Past, Journal, Trackers, Places, Timeline, Memories, Photos, Music, Insights, Search, Settings.
+- Group nav into: Daily, Capture, Track, Find, System.
+
+OUTPUT FORMAT
+For each concept produce:
+- A short title
+- A 1-2 sentence description
+- A structured layout description (regions, sizes, content)
+- A small ASCII or text wireframe of the shell
+- A "Why it helps tracking" line
+
+Then produce a comparison table summarizing all 10 concepts across: space efficiency, browsing speed, mobile suitability, learning curve, and best-for.
+
+TONE
+Calm, precise, product-focused. Avoid marketing language. Prefer concrete measurements (e.g., "220px sidebar", "3-column grid").

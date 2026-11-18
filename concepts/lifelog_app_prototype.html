@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lifelog - Application Shell Prototype</title>
+<style>
+  :root {
+    --bg: #f5f1e8; --card: #fcf9f2; --text: #1f1c18; --muted: #6a635a;
+    --primary: #25211d; --accent: #a84f3a; --border: #e0d8c9;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 14px; line-height: 1.5; overflow: hidden; }
+  h1,h2,h3 { font-family: Georgia, "Times New Roman", serif; color: var(--primary); margin: 0; }
+  button { font: inherit; cursor: pointer; }
+  .app { display: grid; grid-template-columns: 220px 340px 1fr; grid-template-rows: 48px 1fr; height: 100vh; }
+  .topbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: 0 16px; background: var(--card); border-bottom: 1px solid var(--border); }
+  .logo { font-family: Georgia, serif; font-size: 18px; color: var(--primary); font-weight: 600; }
+  .search { flex: 0 0 320px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); }
+  .spacer { flex: 1; }
+  .pill { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg); color: var(--muted); }
+  .iconbtn { width: 32px; height: 32px; border: 1px solid var(--border); background: var(--card); border-radius: 8px; color: var(--primary); display: grid; place-items: center; }
+  .nav { background: var(--card); border-right: 1px solid var(--border); overflow-y: auto; padding: 8px 0; }
+  .group { padding: 4px 0; }
+  .group h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); padding: 8px 16px 4px; font-family: system-ui, sans-serif; font-weight: 600; }
+  .navitem { display: flex; align-items: center; gap: 10px; padding: 8px 16px; color: var(--text); border-left: 3px solid transparent; cursor: pointer; user-select: none; }
+  .navitem:hover { background: #efe9dc; }
+  .navitem.active { border-left-color: var(--accent); background: #f0e9dd; color: var(--primary); font-weight: 600; }
+  .navitem .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-left: auto; }
+  .list { background: var(--bg); border-right: 1px solid var(--border); overflow-y: auto; }
+  .listhead { position: sticky; top: 0; background: var(--bg); padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .listhead h2 { font-size: 16px; }
+  .count { font-size: 12px; color: var(--muted); }
+  .chips { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .chip { font-size: 11px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); color: var(--muted); cursor: pointer; }
+  .chip.active { background: var(--primary); color: var(--card); border-color: var(--primary); }
+  .row { padding: 12px 16px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .row:hover { background: #efe9dc; }
+  .row.selected { background: #f0e9dd; border-left: 3px solid var(--accent); padding-left: 13px; }
+  .row .title { font-weight: 600; color: var(--primary); margin-bottom: 2px; }
+  .row .meta { font-size: 12px; color: var(--muted); display: flex; gap: 8px; }
+  .row .preview { font-size: 13px; color: var(--muted); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .badge { font-size: 10px; padding: 1px 6px; border-radius: 4px; background: #efe9dc; color: var(--muted); border: 1px solid var(--border); }
+  .inspector { background: var(--card); overflow-y: auto; padding: 24px 28px; }
+  .inspector h2 { font-size: 22px; margin-bottom: 4px; }
+  .inspector .meta { font-size: 13px; color: var(--muted); margin-bottom: 16px; }
+  .inspector .body { font-size: 15px; line-height: 1.6; margin-bottom: 20px; white-space: pre-wrap; }
+  .section { margin-bottom: 20px; }
+  .section h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 8px; font-family: system-ui, sans-serif; font-weight: 600; }
+  .kv { display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px; font-size: 13px; }
+  .kv .k { color: var(--muted); }
+  .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tag { font-size: 12px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); }
+  .actions { display: flex; gap: 8px; margin-top: 20px; }
+  .btn { padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--primary); }
+  .btn.primary { background: var(--primary); color: var(--card); border-color: var(--primary); }
+  .btn.danger { color: #8b2f1f; }
+  .empty { color: var(--muted); text-align: center; padding: 40px 20px; }
+  .modal-back { position: fixed; inset: 0; background: rgba(31,28,24,0.35); display: none; align-items: center; justify-content: center; z-index: 50; }
+  .modal-back.open { display: flex; }
+  .modal { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; width: 420px; max-width: 90vw; }
+  .modal h3 { margin-bottom: 12px; }
+  .capture-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .capture-item { padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); text-align: left; }
+  .capture-item:hover { border-color: var(--accent); }
+  @media (max-width: 900px) {
+    .app { grid-template-columns: 64px 1fr; }
+    .list { display: none; }
+    .list.mobile-show { display: block; position: fixed; left: 64px; top: 48px; bottom: 0; width: calc(100vw - 64px); z-index: 20; background: var(--bg); }
+    .inspector { grid-column: 2; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div class="logo">Lifelog</div>
+    <input class="search" id="search" placeholder="Search archive..." />
+    <div class="spacer"></div>
+    <span class="pill" id="sync">Sync: local only</span>
+    <span class="pill" id="track">Tracking: paused</span>
+    <button class="iconbtn" id="qa" title="Quick add">+</button>
+    <button class="iconbtn" title="Settings">*</button>
+  </div>
+
+  <nav class="nav" id="nav"></nav>
+  <div class="list" id="list">
+    <div class="listhead">
+      <div>
+        <h2 id="listtitle">Today</h2>
+        <div class="count" id="listcount"></div>
+      </div>
+      <div class="chips" id="chips"></div>
+    </div>
+    <div id="rows"></div>
+  </div>
+  <main class="inspector" id="inspector"></main>
+</div>
+
+<div class="modal-back" id="modal">
+  <div class="modal">
+    <h3>Quick add</h3>
+    <div class="capture-grid">
+      <button class="capture-item" data-t="Journal entry">Journal entry</button>
+      <button class="capture-item" data-t="Photo or video">Photo or video</button>
+      <button class="capture-item" data-t="Voice note">Voice note</button>
+      <button class="capture-item" data-t="Timeline event">Timeline event</button>
+      <button class="capture-item" data-t="Location or journey">Location or journey</button>
+      <button class="capture-item" data-t="Tracker record">Tracker record</button>
+      <button class="capture-item" data-t="Meal or drink">Meal or drink</button>
+      <button class="capture-item" data-t="Mood">Mood</button>
+      <button class="capture-item" data-t="Sleep record">Sleep record</button>
+      <button class="capture-item" data-t="Music note">Music note</button>
+      <button class="capture-item" data-t="Custom event">Custom event</button>
+    </div>
+    <div class="actions"><button class="btn" id="closemodal">Cancel</button></div>
+  </div>
+</div>
+
+<script>
+const GROUPS = [
+  { name: "Daily", items: ["Today","Past","Timeline"] },
+  { name: "Capture", items: ["Journal","Photos","Music"] },
+  { name: "Track", items: ["Trackers","Places","Memories"] },
+  { name: "Find", items: ["Search","Insights"] },
+  { name: "System", items: ["Settings"] },
+];
+
+const DATA = {
+  "Today": [
+    { id:"t1", title:"Morning walk to the river", meta:"08:48", badge:"Journal", preview:"Crisp air, fog on the water.", body:"Crisp air, fog on the water. Walked the river path for 30 minutes.", tags:["walk","river"], related:["Place: River path","Photo 3"] },
+    { id:"t2", title:"Coffee and reading", meta:"09:50", badge:"Journal", preview:"Quiet cafe, two coffees.", body:"Quiet cafe, two coffees, read 40 pages.", tags:["coffee","reading"], related:["Place: Cafe"] },
+    { id:"t3", title:"Evening note", meta:"21:10", badge:"Journal", preview:"Quiet day overall.", body:"Quiet day overall. Felt steady.", tags:["evening"], related:[] },
+    { id:"t4", title:"Shower", meta:"07:32", badge:"Tracker", preview:"yes", body:"Shower logged at 07:32.", tags:[], related:[] },
+    { id:"t5", title:"Coffee", meta:"09:15", badge:"Tracker", preview:"2", body:"Coffee count: 2.", tags:[], related:[] },
+    { id:"t6", title:"Water", meta:"12:00", badge:"Tracker", preview:"1.2 L", body:"Water intake: 1.2 L.", tags:[], related:[] },
+    { id:"t7", title:"Mood", meta:"20:00", badge:"Tracker", preview:"4/5", body:"Mood rating: 4/5.", tags:[], related:[] },
+    { id:"t8", title:"Home", meta:"07:42-08:10", badge:"Place", preview:"3 visits this week", body:"Home. Arrived 07:42, left 08:10.", tags:["home"], related:[] },
+    { id:"t9", title:"River path", meta:"08:35-09:05", badge:"Place", preview:"12 visits total", body:"River path. Arrived 08:35, left 09:05.", tags:["walk"], related:[] },
+    { id:"t10", title:"Cafe", meta:"09:20-10:05", badge:"Place", preview:"8 visits total", body:"Cafe. Arrived 09:20, left 10:05.", tags:["coffee"], related:[] },
+  ],
+  "Past": [
+    { id:"p1", title:"Saturday, 14 November 2026", meta:"12 records", badge:"Day", preview:"Journal 2, trackers 5, places 3", body:"12 records. Journal 2, trackers 5, places 3, music 31 scrobbles.", tags:[], related:[] },
+    { id:"p2", title:"Friday, 13 November 2026", meta:"9 records", badge:"Day", preview:"Journal 1, trackers 4, places 2", body:"9 records. Journal 1, trackers 4, places 2, music 22 scrobbles.", tags:[], related:[] },
+    { id:"p3", title:"Thursday, 12 November 2026", meta:"15 records", badge:"Day", preview:"Journal 3, trackers 6, places 4", body:"15 records. Journal 3, trackers 6, places 4, music 40 scrobbles.", tags:[], related:[] },
+  ],
+  "Timeline": [
+    { id:"tl1", title:"07:32 Shower", meta:"Tracker", badge:"Tracker", preview:"yes", body:"Shower logged.", tags:[], related:[] },
+    { id:"tl2", title:"07:42 Arrived Home", meta:"Place", badge:"Place", preview:"left 08:10", body:"Arrived at Home.", tags:[], related:[] },
+    { id:"tl3", title:"08:35 Arrived River path", meta:"Place", badge:"Place", preview:"left 09:05", body:"Arrived at River path.", tags:[], related:[] },
+    { id:"tl4", title:"08:48 Morning walk to the river", meta:"Journal", badge:"Journal", preview:"Crisp air...", body:"Crisp air, fog on the water.", tags:["walk"], related:[] },
+    { id:"tl5", title:"09:20 Arrived Cafe", meta:"Place", badge:"Place", preview:"left 10:05", body:"Arrived at Cafe.", tags:[], related:[] },
+    { id:"tl6", title:"09:50 Coffee and reading", meta:"Journal", badge:"Journal", preview:"Quiet cafe...", body:"Quiet cafe, two coffees.", tags:["coffee"], related:[] },
+    { id:"tl7", title:"20:00 Mood 4/5", meta:"Tracker", badge:"Tracker", preview:"4/5", body:"Mood rating.", tags:[], related:[] },
+    { id:"tl8", title:"21:10 Evening note", meta:"Journal", badge:"Journal", preview:"Quiet day...", body:"Quiet day overall.", tags:[], related:[] },
+  ],
+  "Journal": [
+    { id:"j1", title:"Morning walk to the river", meta:"15 Nov 2026 08:48", badge:"Entry", preview:"Crisp air, fog on the water.", body:"Crisp air, fog on the water. Walked the river path for 30 minutes.", tags:["walk","river"], related:["Place: River path","Photo 3"] },
+    { id:"j2", title:"Coffee and reading", meta:"15 Nov 2026 09:50", badge:"Entry", preview:"Quiet cafe, two coffees.", body:"Quiet cafe, two coffees, read 40 pages.", tags:["coffee","reading"], related:["Place: Cafe"] },
+    { id:"j3", title:"Evening note", meta:"15 Nov 2026 21:10", badge:"Entry", preview:"Quiet day overall.", body:"Quiet day overall. Felt steady.", tags:["evening"], related:[] },
+  ],
+  "Photos": [
+    { id:"ph1", title:"Photo 1", meta:"08:50", badge:"Photo", preview:"River path", body:"Captured at River path.", tags:["walk"], related:["Journal: Morning walk"] },
+    { id:"ph2", title:"Photo 2", meta:"08:52", badge:"Photo", preview:"River path", body:"Captured at River path.", tags:["walk"], related:[] },
+    { id:"ph3", title:"Photo 3", meta:"08:55", badge:"Photo", preview:"River path", body:"Captured at River path.", tags:["walk","favourite"], related:["Journal: Morning walk"] },
+    { id:"ph4", title:"Photo 4", meta:"09:30", badge:"Photo", preview:"Cafe", body:"Captured at Cafe.", tags:["coffee"], related:[] },
+    { id:"ph5", title:"Photo 5", meta:"09:35", badge:"Photo", preview:"Cafe", body:"Captured at Cafe.", tags:[], related:[] },
+    { id:"ph6", title:"Photo 6", meta:"20:30", badge:"Photo", preview:"Home", body:"Captured at Home.", tags:["evening"], related:[] },
+  ],
+  "Music": [
+    { id:"m1", title:"Midnight", meta:"The xx", badge:"Track", preview:"scrobbled 08:40", body:"Artist: The xx. Album: xx. Scrobbled 08:40.", tags:[], related:[] },
+    { id:"m2", title:"Holocene", meta:"Bon Iver", badge:"Track", preview:"scrobbled 09:10", body:"Artist: Bon Iver. Album: Bon Iver. Scrobbled 09:10.", tags:[], related:[] },
+    { id:"m3", title:"Top artist", meta:"The xx", badge:"Stat", preview:"12 plays today", body:"Top artist today: The xx (12 plays).", tags:[], related:[] },
+    { id:"m4", title:"Daily total", meta:"47 scrobbles", badge:"Stat", preview:"31 unique tracks", body:"47 scrobbles, 31 unique tracks.", tags:[], related:[] },
+  ],
+  "Trackers": [
+    { id:"tr1", title:"Shower", meta:"07:32", badge:"Yes/No", preview:"yes", body:"Shower: yes at 07:32.", tags:[], related:[] },
+    { id:"tr2", title:"Brushed teeth", meta:"07:35", badge:"Yes/No", preview:"yes", body:"Brushed teeth: yes.", tags:[], related:[] },
+    { id:"tr3", title:"Coffee", meta:"09:15", badge:"Count", preview:"2", body:"Coffee count: 2.", tags:[], related:[] },
+    { id:"tr4", title:"Water", meta:"12:00", badge:"Number", preview:"1.2 L", body:"Water: 1.2 L.", tags:[], related:[] },
+    { id:"tr5", title:"Reading", meta:"09:50", badge:"Duration", preview:"45 min", body:"Reading: 45 min.", tags:[], related:[] },
+    { id:"tr6", title:"Mood", meta:"20:00", badge:"Rating", preview:"4/5", body:"Mood: 4/5.", tags:[], related:[] },
+  ],
+  "Places": [
+    { id:"pl1", title:"Home", meta:"07:42-08:10", badge:"Place", preview:"12 visits", body:"Home. 12 visits total.", tags:["home"], related:[] },
+    { id:"pl2", title:"River path", meta:"08:35-09:05", badge:"Place", preview:"8 visits", body:"River path. 8 visits total.", tags:["walk"], related:["Journal: Morning walk"] },
+    { id:"pl3", title:"Cafe", meta:"09:20-10:05", badge:"Place", preview:"5 visits", body:"Cafe. 5 visits total.", tags:["coffee"], related:["Journal: Coffee and reading"] },
+  ],
+  "Memories": [
+    { id:"me1", title:"On this day, 2025", meta:"15 Nov", badge:"Memory", preview:"Visited River path, 18 scrobbles", body:"One year ago: visited River path, listened to 18 tracks, 2 journal entries.", tags:[], related:[] },
+    { id:"me2", title:"On this day, 2024", meta:"15 Nov", badge:"Memory", preview:"Cafe, 24 scrobbles", body:"Two years ago: visited Cafe, 24 scrobbles.", tags:[], related:[] },
+  ],
+  "Search": [
+    { id:"s1", title:"Where did I go last Friday?", meta:"Results", badge:"Query", preview:"2 places", body:"Friday 13 Nov: Home, Cafe.", tags:[], related:[] },
+    { id:"s2", title:"What song was playing when I got home?", meta:"Results", badge:"Query", preview:"Midnight - The xx", body:"08:40: Midnight by The xx.", tags:[], related:[] },
+  ],
+  "Insights": [
+    { id:"in1", title:"Shower frequency", meta:"This month", badge:"Stat", preview:"22 / 30 days", body:"Showered 22 of 30 days.", tags:[], related:[] },
+    { id:"in2", title:"Top places", meta:"This month", badge:"Stat", preview:"Home, Cafe, River", body:"Most visited: Home (40), Cafe (12), River path (8).", tags:[], related:[] },
+    { id:"in3", title:"Music totals", meta:"This month", badge:"Stat", preview:"1,240 scrobbles", body:"1,240 scrobbles, 412 unique tracks.", tags:[], related:[] },
+  ],
+  "Settings": [
+    { id:"st1", title:"Appearance", meta:"Light", badge:"Setting", preview:"Light theme", body:"Theme: light. Text size: default.", tags:[], related:[] },
+    { id:"st2", title:"Week start", meta:"Monday", badge:"Setting", preview:"Monday", body:"Week starts on Monday.", tags:[], related:[] },
+    { id:"st3", title:"PIN lock", meta:"Enabled", badge:"Setting", preview:"Auto-lock 5 min", body:"PIN lock enabled. Auto-lock after 5 minutes.", tags:[], related:[] },
+    { id:"st4", title:"Backup", meta:"Last: 14 Nov", badge:"Setting", preview:"Encrypted export", body:"Last backup 14 Nov 2026.", tags:[], related:[] },
+    { id:"st5", title:"Last.fm", meta:"Connected", badge:"Setting", preview:"user: example", body:"Last.fm connected.", tags:[], related:[] },
+  ],
+};
+
+let currentSection = "Today";
+let selectedId = null;
+let filter = "all";
+
+const navEl = document.getElementById("nav");
+const rowsEl = document.getElementById("rows");
+const listTitle = document.getElementById("listtitle");
+const listCount = document.getElementById("listcount");
+const chipsEl = document.getElementById("chips");
+const inspector = document.getElementById("inspector");
+const searchInput = document.getElementById("search");
+
+function renderNav() {
+  navEl.innerHTML = "";
+  GROUPS.forEach(g => {
+    const group = document.createElement("div");
+    group.className = "group";
+    const h = document.createElement("h3");
+    h.textContent = g.name;
+    group.appendChild(h);
+    g.items.forEach(name => {
+      const item = document.createElement("div");
+      item.className = "navitem" + (name === currentSection ? " active" : "");
+      item.textContent = name;
+      item.dataset.section = name;
+      if (DATA[name] && DATA[name].length) {
+        const dot = document.createElement("span");
+        dot.className = "dot";
+        item.appendChild(dot);
+      }
+      item.addEventListener("click", () => { currentSection = name; selectedId = null; filter="all"; render(); });
+      group.appendChild(item);
+    });
+    navEl.appendChild(group);
+  });
+}
+
+function getItems() {
+  const items = DATA[currentSection] || [];
+  const q = searchInput.value.trim().toLowerCase();
+  return items.filter(it => {
+    if (q && !(it.title.toLowerCase().includes(q) || (it.preview||"").toLowerCase().includes(q) || (it.body||"").toLowerCase().includes(q))) return false;
+    if (filter !== "all" && it.badge !== filter) return false;
+    return true;
+  });
+}
+
+function renderList() {
+  listTitle.textContent = currentSection;
+  const items = getItems();
+  listCount.textContent = items.length + " records";
+  rowsEl.innerHTML = "";
+  if (!items.length) { rowsEl.innerHTML = '<div class="empty">No records.</div>'; return; }
+  items.forEach(it => {
+    const row = document.createElement("div");
+    row.className = "row" + (it.id === selectedId ? " selected" : "");
+    row.innerHTML = `<div class="title">${esc(it.title)}</div><div class="meta"><span>${esc(it.meta)}</span><span class="badge">${esc(it.badge)}</span></div><div class="preview">${esc(it.preview||"")}</div>`;
+    row.addEventListener("click", () => { selectedId = it.id; renderList(); renderInspector(); });
+    rowsEl.appendChild(row);
+  });
+  // chips from badges
+  const badges = [...new Set((DATA[currentSection]||[]).map(x=>x.badge))];
+  chipsEl.innerHTML = "";
+  const allChip = document.createElement("div");
+  allChip.className = "chip" + (filter==="all"?" active":"");
+  allChip.textContent = "All";
+  allChip.addEventListener("click", ()=>{ filter="all"; renderList(); });
+  chipsEl.appendChild(allChip);
+  badges.forEach(b => {
+    const c = document.createElement("div");
+    c.className = "chip" + (filter===b?" active":"");
+    c.textContent = b;
+    c.addEventListener("click", ()=>{ filter=b; renderList(); });
+    chipsEl.appendChild(c);
+  });
+}
+
+function renderInspector() {
+  const items = DATA[currentSection] || [];
+  const item = items.find(x=>x.id===selectedId);
+  if (!item) {
+    inspector.innerHTML = '<div class="empty">Select a record to inspect.</div>';
+    return;
+  }
+  inspector.innerHTML = `
+    <h2>${esc(item.title)}</h2>
+    <div class="meta">${esc(item.meta)} &middot; ${esc(item.badge)}</div>
+    <div class="body">${esc(item.body)}</div>
+    <div class="section"><h3>Tags</h3><div class="tags">${(item.tags||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join("") || '<span class="muted">none</span>'}</div></div>
+    <div class="section"><h3>Related</h3><div class="kv">${(item.related||[]).map(r=>`<div class="k">link</div><div>${esc(r)}</div>`).join("") || '<div class="k">-</div><div>none</div>'}</div></div>
+    <div class="section"><h3>Details</h3><div class="kv">
+      <div class="k">Section</div><div>${esc(currentSection)}</div>
+      <div class="k">Source</div><div>${esc(item.badge)}</div>
+      <div class="k">ID</div><div>${esc(item.id)}</div>
+    </div></div>
+    <div class="actions">
+      <button class="btn primary">Edit</button>
+      <button class="btn">Duplicate</button>
+      <button class="btn danger">Delete</button>
+    </div>
+  `;
+}
+
+function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+function render(){ renderNav(); renderList(); renderInspector(); }
+
+searchInput.addEventListener("input", renderList);
+
+// keyboard nav
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") { document.getElementById("modal").classList.remove("open"); return; }
+  const items = getItems();
+  if (!items.length) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const idx = items.findIndex(x=>x.id===selectedId);
+    const next = e.key === "ArrowDown" ? Math.min(items.length-1, idx+1) : Math.max(0, idx-1);
+    if (idx === -1) selectedId = items[0].id; else selectedId = items[next].id;
+    renderList(); renderInspector();
+    const sel = rowsEl.querySelector(".selected");
+    if (sel) sel.scrollIntoView({block:"nearest"});
+  }
+  if (e.key === "Enter" && selectedId) {
+    // open editor placeholder
+  }
+  if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==="k") {
+    e.preventDefault();
+    searchInput.focus();
+  }
+});
+
+// quick add
+document.getElementById("qa").addEventListener("click", ()=> document.getElementById("modal").classList.add("open"));
+document.getElementById("closemodal").addEventListener("click", ()=> document.getElementById("modal").classList.remove("open"));
+document.getElementById("modal").addEventListener("click", e => { if (e.target.id==="modal") e.target.classList.remove("open"); });
+document.querySelectorAll(".capture-item").forEach(b => b.addEventListener("click", ()=> { document.getElementById("modal").classList.remove("open"); }));
+
+// default selection
+selectedId = (DATA["Today"]||[])[0]?.id || null;
+render();
+</script>
+</body>
+</html>

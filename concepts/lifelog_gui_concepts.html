@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lifelog - 10 Whole-Application GUI Layout Concepts</title>
+<style>
+  :root {
+    --bg: #f5f1e8;
+    --card: #fcf9f2;
+    --text: #1f1c18;
+    --muted: #6a635a;
+    --primary: #25211d;
+    --accent: #a84f3a;
+    --border: #e0d8c9;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3 { font-family: Georgia, "Times New Roman", serif; color: var(--primary); margin: 0 0 8px; }
+  h1 { font-size: 34px; letter-spacing: -0.01em; }
+  h2 { font-size: 24px; margin-top: 40px; }
+  h3 { font-size: 18px; margin-top: 24px; }
+  p { margin: 0 0 12px; }
+  .container { max-width: 1180px; margin: 0 auto; padding: 40px 32px 80px; }
+  .hero { padding: 32px 0 24px; border-bottom: 1px solid var(--border); }
+  .hero p { color: var(--muted); max-width: 760px; }
+  .tokens { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 20px 0 8px; }
+  .token { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+  .token .swatch { width: 24px; height: 24px; border-radius: 6px; border: 1px solid var(--border); display: inline-block; vertical-align: middle; margin-right: 8px; }
+  .token .name { font-size: 12px; color: var(--muted); }
+  .token .val { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  .nav-index { display: flex; flex-wrap: wrap; gap: 8px; margin: 24px 0 8px; }
+  .nav-index a { text-decoration: none; color: var(--primary); background: var(--card); border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px; font-size: 13px; }
+  .nav-index a:hover { border-color: var(--accent); color: var(--accent); }
+  .concept { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 28px 32px; margin: 24px 0; }
+  .concept .desc { font-size: 16px; color: var(--text); margin-bottom: 16px; }
+  .concept .label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 16px 0 6px; font-weight: 600; }
+  ul.clean { margin: 0 0 12px 20px; padding: 0; }
+  ul.clean li { margin: 4px 0; }
+  pre.wire {
+    background: #efe9dc;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    overflow-x: auto;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.35;
+    color: var(--primary);
+    margin: 8px 0 4px;
+  }
+  .why { background: #f0e9dd; border-left: 3px solid var(--accent); padding: 10px 14px; border-radius: 6px; font-size: 14px; }
+  table.cmp { width: 100%; border-collapse: collapse; margin: 16px 0; background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  table.cmp th, table.cmp td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13px; }
+  table.cmp th { background: #efe9dc; color: var(--primary); font-weight: 600; }
+  table.cmp tr:last-child td { border-bottom: none; }
+  .footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--border); }
+  @media (max-width: 720px) { .container { padding: 24px 18px 60px; } .concept { padding: 20px 18px; } }
+</style>
+</head>
+<body>
+<div class="container">
+  <header class="hero">
+    <h1>Lifelog - 10 Whole-Application GUI Layout Concepts</h1>
+    <p>Private, local-first personal life archive. Flutter desktop + mobile. Each concept is a complete application shell, not a single component. No emojis, no decorative gimmicks. Calm, editorial aesthetic.</p>
+  </header>
+
+  <h2>Design tokens</h2>
+  <div class="tokens">
+    <div class="token"><span class="swatch" style="background:#f5f1e8"></span><span class="val">#f5f1e8</span><div class="name">background</div></div>
+    <div class="token"><span class="swatch" style="background:#fcf9f2"></span><span class="val">#fcf9f2</span><div class="name">card</div></div>
+    <div class="token"><span class="swatch" style="background:#1f1c18"></span><span class="val">#1f1c18</span><div class="name">text</div></div>
+    <div class="token"><span class="swatch" style="background:#6a635a"></span><span class="val">#6a635a</span><div class="name">muted</div></div>
+    <div class="token"><span class="swatch" style="background:#25211d"></span><span class="val">#25211d</span><div class="name">primary</div></div>
+    <div class="token"><span class="swatch" style="background:#a84f3a"></span><span class="val">#a84f3a</span><div class="name">accent</div></div>
+    <div class="token"><span class="swatch" style="background:#e0d8c9"></span><span class="val">#e0d8c9</span><div class="name">border</div></div>
+  </div>
+  <p style="color:var(--muted);font-size:13px;">Typography: Georgia serif for large titles, system-ui sans-serif for body. Spacing base 8px, card radius 12px. Subtle linear gradients only on hero cards.</p>
+  <p style="color:var(--muted);font-size:13px;">Navigation labels: Today, Past, Journal, Trackers, Places, Timeline, Memories, Photos, Music, Insights, Search, Settings. Groups: Daily (Today, Past, Timeline), Capture (Journal, Photos, Music), Track (Trackers, Places, Memories), Find (Search, Insights), System (Settings).</p>
+  <p style="color:var(--muted);font-size:13px;">Sample "today": Sunday, 15 November 2026. Sample records: journal entries "Morning walk to the river" (08:48), "Coffee and reading" (09:50), "Evening note" (21:10); tracker records Shower (07:32), Coffee 2, Water 1.2 L, Mood 4/5, Reading 45 min; places Home (07:42-08:10), River path (08:35-09:05), Cafe (09:20-10:05); music 47 scrobbles, top artist "The xx"; photos 6 captured.</p>
+
+  <div class="nav-index">
+    <a href="#c1">1. Three-Pane Archive</a>
+    <a href="#c2">2. Top Bar Atlas</a>
+    <a href="#c3">3. Collapsible Ledger</a>
+    <a href="#c4">4. Mobile Drawer + Bottom Nav</a>
+    <a href="#c5">5. Dashboard Grid</a>
+    <a href="#c6">6. Tabbed Workspace</a>
+    <a href="#c7">7. Split Timeline + Inspector</a>
+    <a href="#c8">8. Focus Mode</a>
+    <a href="#c9">9. Icon Rail + Panels</a>
+    <a href="#c10">10. Floating Dock Workspace</a>
+    <a href="#cmp">Comparison</a>
+  </div>
+
+  <!-- 1 -->
+  <section id="c1" class="concept">
+    <h2>1. Three-Pane Archive</h2>
+    <p class="desc">Fixed left navigation, a scrollable record list in the middle, and a live inspector on the right. The list and inspector stay in sync with selection, so browsing never loses context.</p>
+    <div class="label">Shell layout</div>
+    <ul class="clean">
+      <li>Left nav: 220px fixed, groups collapsible, active row highlighted with accent left border.</li>
+      <li>Middle list: 340px, virtualised, shows date, title, source badge, and 2-line preview.</li>
+      <li>Right inspector: flex (min 420px), renders the selected record in full.</li>
+      <li>Top bar: 48px, breadcrumb + global search input (320px) + sync status pill.</li>
+      <li>Breakpoints: &gt;=1100px three panes; 900-1099px two panes (list + inspector, nav collapses to 64px icon rail); &lt;900px single pane with bottom nav and full-screen detail pushed on selection.</li>
+    </ul>
+    <div class="label">Regions and content</div>
+    <ul class="clean">
+      <li>Nav group "Daily" expanded by default; others collapsed.</li>
+      <li>Middle list header shows section title, count, and sort/filter chips.</li>
+      <li>Inspector shows record fields, attachments, related records, and edit/delete actions in a 16px-spaced column.</li>
+      <li>Empty state: centred muted text plus a single primary "Add" button.</li>
+    </ul>
+    <div class="label">Interactive regions</div>
+    <ul class="clean">
+      <li>Hover a list row: reveals quick actions (open, pin, delete) and a 200ms thumbnail preview for photos.</li>
+      <li>Selection: clicking a row updates inspector without route change; arrow keys move selection; Enter opens full editor.</li>
+      <li>Tabs inside inspector: Details, Related, History.</li>
+    </ul>
+    <div class="label">Wireframe</div>
+    <pre class="wire">+------------------------------------------------------------------+
+| Lifelog          Search...                Sync OK    [Settings]   |
++----------+----------------+---------------------------------------+
+| Daily    | Today (12)     |  Inspector                            |
+|  Today   | 08:48 Morning  |  Morning walk to the river            |
+|  Past    |      walk...   |  08:48  River path                    |
+|  Timeline| 09:50 Coffee   |  Body: Crisp air, fog on the water...  |
+| Capture  |      and...    |  Tags: walk, river                    |
+|  Journal | 21:10 Evening  |  Related: Place River path, Photo 3    |
+|  Photos  |      note      |  [Edit] [Delete]                      |
+|  Music   |                |                                       |
+| Track    |                |                                       |
+|  Trackers|                |                                       |
+|  Places  |                |                                       |
+|  Memories|                |                                       |
+| Find     |                |                                       |
+|  Search  |                |                                       |
+|  Insights|                |                                       |
+| System   |                |                                       |
+|  Settings|                |                                       |
++----------+----------------+---------------------------------------+</pre>
+    <div class="why">Why it helps tracking: keeps the list visible while inspecting, so cross-checking a tracker value against a journal entry takes one click instead of two screens.</div>
+  </section>
+
+  <!-- 2 -->
+  <section id="c2" class="concept">
+    <h2>2. Top Bar Atlas</h2>
+    <p class="desc">All navigation lives in a 56px top bar with grouped dropdowns. Content gets the full window width; an optional 380px detail drawer slides in from the right when a record is selected.</p>
+    <div class="label">Shell layout</div>
+    <ul class="clean">
+      <li>Top bar: 56px, logo (left), grouped nav dropdowns (Daily, Capture, Track, Find), search (280px), settings and lock icons (right).</li>
+      <li>Content: full width, max content width 1280px centred, 24px gutters.</li>
+      <li>Detail drawer: 380px, slides over content with scrim on mobile, pushes content on desktop &gt;=1280px.</li>
+      <li>Mobile: top bar collapses to 48px with hamburger; nav becomes a full-screen drawer.</li>
+    </ul>
+    <div class="label">Regions and content</div>
+    <ul class="clean">
+      <li>Section pages render as a 12-column responsive grid of cards.</li>
+      <li>Today page: hero date card (full width), then 3 columns: timeline preview, tracker summary, places visited; below: music summary and daily recap.</li>
+      <li>Dropdown menus list destinations with keyboard shortcuts (Cmd/Ctrl+1..9).</li>
+    </ul>
+    <div class="label">Interactive regions</div>
+    <ul class="clean">
+      <li>Hover a nav group: dropdown opens after 120ms; arrow keys navigate.</li>
+      <li>Selecting any record opens the detail drawer; Esc closes it and restores focus to the triggering card.</li>
+      <li>Drawer tabs: Details, Related, Edit.</li>
+    </ul>
+    <div class="label">Wireframe</div>
+    <pre class="wire">+------------------------------------------------------------------+
+| Lifelog  Daily v  Capture v  Track v  Find v     [Search 280px]    |
++------------------------------------------------------------------+
+| Sunday, 15 November 2026                                         |
+| +-------------------+ +-------------------+ +-------------------+  |
+| | Timeline preview  | | Trackers          | | Places visited    |  |
+| | 08:48 Morning...  | | Shower yes        | | Home 07:42-08:10  |  |
+| | 09:50 Coffee...   | | Coffee 2          | | River 08:35-09:05 |  |
+| +-------------------+ +-------------------+ +-------------------+  |
+| +-------------------+ +---------------------------------------+  |
+| | Music: 47 scrob.  | | Daily recap: 3 entries, 6 photos       |  |
+| +-------------------+ +---------------------------------------+  |
++------------------------------------------------------------------+</pre>
+    <div class="why">Why it helps tracking: full-width grids fit more of a day on one screen, so a daily review needs less scrolling.</div>
+  </section>
+
+  <!-- 3 -->
+  <section id="c3" class="concept">
+    <h2>3. Collapsible Ledger</h2>
+    <p class="desc">A sidebar that is either 240px expanded or 64px collapsed, with a toggle in the header. The rest of the window is a two-column content area: a 40% list pane and a 60% detail pane that can be hidden.</p>
+    <div class="label">Shell layout</div>
+    <ul class="clean">
+      <li>Sidebar: 240px expanded / 64px collapsed, transition 180ms, state persisted.</li>
+      <li>Content split: 40% / 60% when detail is open; single column at 100% when collapsed via toggle.</li>
+      <li>Top of content: 40px section title row with view switcher (List / Grid / Calendar).</li>
+      <li>Mobile: sidebar becomes a bottom sheet; content is single column with a sticky bottom "View details" bar.</li>
+    </ul>
+    <div class="label">Regions and content</div>
+    <ul class="clean">
+      <li>Collapsed sidebar shows icons only with tooltips; group headers become small caps labels.</li>
+      <li>List pane: compact rows with 8px vertical padding, source icon, title, timestamp.</li>
+      <li>Detail pane: sticky header with title and actions; scrollable body.</li>
+    </ul>
+    <div class="label">Interactive regions</div>
+    <ul class="clean">
+      <li>Hover sidebar icon in collapsed state: tooltip with label and shortcut.</li>
+      <li>Drag the split divider (desktop) between 30% and 70% to resize; double-click resets to 40/60.</li>
+      <li>Pin a record: keeps detail pane open while navigating sections.</li>
+    </ul>
+    <div class="label">Wireframe</div>
+    <pre class="wire">+----+--------------------------------+------------------------------+
+| L  | Today                          | Detail                       |
+| 240| 08:48 Morning walk to the river| Morning walk to the river    |
+|    | 09:50 Coffee and reading       | 08:48  River path            |
+| D  | 21:10 Evening note             | Body text...                 |
+| C  | --- Trackers ---               | Related: Place, Photo 3      |
+| T  | Shower 07:32  yes              |                              |
+| F  | Coffee 2                       |                              |
+| S  | Water 1.2 L                    |                              |
++----+--------------------------------+------------------------------+</pre>
+    <div class="why">Why it helps tracking: the resizable split lets a long journal entry and its related tracker records share one screen without either being cramped.</div>
+  </section>
+
+  <!-- 4 -->
+  <section id="c4" class="concept">
+    <h2>4. Mobile Drawer + Bottom Nav</h2>
+    <p class="desc">Mobile-first shell: a 56px app bar, a 4-item bottom navigation bar for the most-used destinations, and a drawer holding all twelve. On desktop it scales to a 220px sidebar with the same drawer contents.</p>
+    <div class="label">Shell layout</div>
+    <ul class="clean">
+      <li>Mobile: app bar 56px (title + search icon + settings icon); bottom nav 64px with 4 tabs (Today, Timeline, Journal, Search) plus a central 56px quick-add FAB.</li>
+      <li>Drawer: 280px, grouped destinations, account/lock footer.</li>
+      <li>Desktop (&gt;=900px): sidebar 220px replaces drawer; bottom nav hidden; FAB becomes a 40px button in the top bar.</li>
+      <li>Tablet (600-899px): navigation rail 72px with labels on selection; drawer available via hamburger.</li>
+    </ul>
+    <div class="label">Regions and content</div>
+    <ul class="clean">
+      <li>Today page is a single scrollable column: date header, then stacked cards (timeline preview, trackers, places, music).</li>
+      <li>Detail screens push full screen with a back arrow; swipe from left edge goes back.</li>
+      <li>Quick-add FAB opens a bottom sheet with the 11 capture types in a 2-column grid.</li>
+    </ul>
+    <div class="label">Interactive regions</div>
+    <ul class="clean">
+      <li>Long-press bottom nav tab: shows a 4-item recent-records popover.</li>
+      <li>Swipe a list row left to reveal edit/delete; swipe right to pin.</li>
+      <li>Pull to refresh on Today re-runs the daily summary.</li>
+    </ul>
+    <div class="label">Wireframe</div>
+    <pre class="wire">Mobile:
++----------------------------------+
+| Lifelog            [search][set] |
++----------------------------------+
+| Sunday, 15 November 2026         |
+| +------------------------------+ |
+| | Timeline preview             | |
+| | 08:48 Morning walk...       | |
+| +------------------------------+ |
+| | Trackers                    | |
+| | Shower yes  Coffee 2        | |
+| +------------------------------+ |
++----------------------------------+
+| [Today][Timeline][Journal][Search]  (+) |
++----------------------------------+</pre>
+    <div class="why">Why it helps tracking: the FAB and 4-tab bar put capture and the daily view one tap away on a phone, which is where most logging happens.</div>
+  </section>
+
+  <!-- 5 -->
+  <section id="c5" class="concept">
+    <h2>5. Dashboard Grid</h2>
+    <p class="desc">An icon rail on the left and a bento-style 12-column grid on the right. Each destination is a live card on Today, and any card can be expanded into its full view in place.</p>
+    <div class="label">Shell layout</div>
+    <ul class="clean">
+      <li>Icon rail: 72px, icons with labels below, grouped by small caps headers.</li>
+      <li>Main: 12-column grid, 24px gutters, cards span 3, 4, 6, or 12 columns.</li>
+      <li>Today layout: hero card (12 col) "Sunday, 15 November 2026"; timeline (6), trackers (3), places (3); music (4), photos (4), recap (4).</li>
+      <li>Detail view replaces the grid with a single 10-column content column plus a 2-column mini-map/related rail.</li>
+    </ul>
+    <div class="label">Regions and content</div>
+    <ul class="clean">
+      <li>Cards show live counts and the top 3 items; "Open" link in card footer.</li>
+      <li>Hovering a card lifts it 2px and shows a subtle border in accent.</li>
+      <li>Insights cards render a 7-day sparkline.</li>
+    </ul>
+    <div class="label">Interactive regions</div>
+    <ul class="clean">
+      <li>Click card title: expands card to full section in place with a 200ms morph.</li>
+      <li>Drag cards (desktop) to reorder the dashboard; layout persisted per device.</li>
+      <li>Right-click a card: pin to top, hide, or change size.</li>
+    </ul>
+    <div class="label">Wireframe</div>
+    <pre class="wire">+--+--------------------------------------------------------------+
+|  | Sunday, 15 November 2026                                      |
+|D | +-------------------------------+ +-----------+ +-----------+ |
+|a | | Timeline preview              | | Trackers  | | Places    | |
+|i | | 08:48 Morning walk...         | | Shower yes| | Home      | |
+|l | | 09:50 Coffee and reading      | | Coffee 2  | | River     | |
+|y | +-------------------------------+ +-----------+ +-----------+ |
+|  | +-----------+ +-----------+ +--------------------------------+ |
+|C | | Music 47  | | Photos 6  | | Daily recap: 3 entries...      | |
+|a | +-----------+ +-----------+ +--------------------------------+ |
++--+--------------------------------------------------------------+</pre>
+    <div class="why">Why it helps tracking: the at-a-glance counts (shower yes, coffee 2, 6 photos) make gaps in a day visible without opening any section.</div>
+  </section>
+
+  <!-- 6 -->
+  <section id="c6" class="concept">
+    <h2>6. Tabbed Workspace</h2>
+    <p class="desc">A browser-style tab strip across the top holds open records and sections. The left sidebar is collapsed by default to 64px and expands on hover, maximising horizontal space for tabs and content.</p>
+    <div class="label">Shell layout</div>
+    <ul class="clean">
+      <li>Tab strip: 40px, scrollable, closable tabs with section icon + title + dirty dot; "+" opens a new tab with a destination picker.</li>
+      <li>Sidebar: 64px collapsed, expands to 220px on hover or pin; transition 150ms.</li>
+      <li>Content: tab body fills remaining space; each tab keeps its own scroll position and form state.</li>
+      <li>Mobile: tabs become a horizontal scrollable chip row under the app bar; sidebar is a drawer.</li>
+    </ul>
+    <div class="label">Regions and content</div>
+    <ul class="clean">
+      <li>Tab types: section tabs (Today, Timeline...) and record tabs (a specific journal entry or place).</li>
+      <li>A tab can be pinned; pinned tabs show only an icon.</li>
+      <li>Overflow menu lists all open tabs with search.</li>
+    </ul>
+    <div class="label">Interactive regions</div>
+    <ul class="clean">
+      <li>Middle-click or Ctrl+click a nav item: opens in a new tab.</li>
+      <li>Drag tabs to reorder; drop on another tab to split into two columns (desktop).</li>
+      <li>Hover sidebar: expands; moving away collapses unless pinned.</li>
+    </ul>
+    <div class="label">Wireframe</div>
+    <pre class="wire">+------------------------------------------------------------------+
+| [Today x] [Journal: Morning walk x] [Place: River path x]  [+]   |
++--+---------------------------------------------------------------+
+|  | Morning walk to the river                                     |
+|64| 08:48  River path                                            |
+|  | Body: Crisp air, fog on the water...                          |
+|  | Related places: River path   Related photos: 3                |
+|  | [Edit] [Duplicate] [Delete]                                    |
++--+---------------------------------------------------------------+</pre>
+    <div class="why">Why it helps tracking: keeping a journal entry open beside its related place or tracker record removes navigation round-trips during review.</div>
+  </section>
+
+  <!-- 7 -->
+  <section id="c7" class="concept">
+    <h2>7. Split Timeline + Inspector</h2>
+    <p class="desc">The screen is split vertically: a chronological timeline on the left (45%) and a contextual inspector on the right (55%). A filter bar sits above both. Built for the Timeline destination but reusable for any day.</p>
+    <div class="label">Shell layout</div>
+    <ul class="clean">
+      <li>Filter bar: 48px, date picker, source toggles (Journal, Tracker, Place, Music, Photo, Manual), search input.</li>
+      <li>Left pane: 45%, virtualised timeline grouped by hour with sticky hour headers.</li>
+      <li>Right pane: 55%, inspector showing the selected event's source record and neighbours.</li>
+      <li>Bottom (mobile): timeline full screen; inspector is a bottom sheet at 40% height, draggable to 90%.</li>
+      <li>Desktop split divider draggable between 35% and 60%.</li>
+    </ul>
+    <div class="label">Regions and content</div>
+    <ul class="clean">
+      <li>Timeline rows: time, icon, title, source label, confidence badge for inferred events.</li>
+      <li>Inspector: "What happened around this time" list (events within +/-30 min) plus the full source record.</li>
+      <li>Hover a timeline row: highlights corresponding item in inspector's neighbour list.</li>
+    </ul>
+    <div class="label">Interactive regions</div>
+    <ul class="clean">
+      <li>Selection: clicking an event updates inspector and scrolls neighbour list; j/k move selection.</li>
+      <li>Toggle a source filter: timeline re-flows with a 120ms fade; counts update in filter bar.</li>
+      <li>Double-click an event: opens its editor in a modal.</li>
+    </ul>
+    <div class="label">Wireframe</div>
+    <pre class="wire">+------------------------------------------------------------------+
+| Date: 15 Nov 2026   [Journal][Tracker][Place][Music][Photo]  Q    |
++---------------------------+--------------------------------------+
+| 08:35  Arrived River path | Selected: 08:48 Morning walk          |
+| 08:48  Morning walk (J)   | Journal entry                         |
+| 09:20  Arrived Cafe       | Body: Crisp air...                    |
+| 09:50  Coffee and reading | Related: River path, Photo 3          |
+| 10:05  Left Cafe          | Nearby: 08:35 arrived, 09:20 left     |
++---------------------------+--------------------------------------+</pre>
+    <div class="why">Why it helps tracking: seeing an event next to everything else that happened within 30 minutes makes reconstructing a day far faster than opening each record alone.</div>
+  </section>
+
+  <!-- 8 -->
+  <section id="c8" class="concept">
+    <h2>8. Focus Mode</h2>
+    <p class="desc">Minimal chrome: the selected record or day fills the window. Navigation is a floating command bar summoned with Cmd/Ctrl+K or a swipe from the left edge. Designed for writing and reviewing without distraction.</p>
+    <div class="label">Shell layout</div>
+    <ul class="clean">
+      <li>Content: 100% of window, max text width 720px centred for reading/writing; media grids use up to 1120px.</li>
+      <li>Floating command bar: 48px pill, bottom-centre, contains search, quick-add, section switcher, and lock.</li>
+      <li>Hidden nav: slides in as a 260px overlay from the left on gesture/shortcut; scrim dismisses.</li>
+      <li>Status: a 24px top strip shows date, sync status, and tracking status; auto-hides after 3s of inactivity.</li>
+    </ul>
+    <div class="label">Regions and content</div>
+    <ul class="clean">
+      <li>Today in focus mode: a single vertical narrative of the day, entries and events interleaved, with inline tracker chips.</li>
+      <li>Journal editor: full-screen, autosave indicator top-right, word count bottom-left.</li>
+      <li>All destructive actions require the command bar's "..." menu.</li>
+    </ul>
+    <div class="label">Interactive regions</div>
+    <ul class="clean">
+      <li>Cmd/Ctrl+K: opens command palette with fuzzy search across sections and records.</li>
+      <li>Swipe from left edge (mobile) or press Esc: closes overlays and returns to content.</li>
+      <li>Hover bottom 8px: reveals the floating command bar if hidden.</li>
+    </ul>
+    <div class="label">Wireframe</div>
+    <pre class="wire">+------------------------------------------------------------------+
+| (status strip auto-hides)                                         |
+|                                                                   |
+|        Sunday, 15 November 2026                                   |
+|                                                                   |
+|        08:48  Morning walk to the river                            |
+|        Crisp air, fog on the water.                                |
+|        [Photo 1] [Photo 2] [Photo 3]                              |
+|                                                                   |
+|        09:50  Coffee and reading                                   |
+|        ...                                                        |
+|                                                                   |
+|                   ( ) search  (+) add  (sec) sections  (lock)      |
++------------------------------------------------------------------+</pre>
+    <div class="why">Why it helps tracking: removing sidebars and counts reduces friction when capturing a quick entry, which is the moment tracking usually fails.</div>
+  </section>
+
+  <!-- 9 -->
+  <section id="c9" class="concept">
+    <h2>9. Icon Rail + Panels</h2>
+    <p class="desc">A 56px icon rail on the far left. Sections open as slide-over panels (320px) from the right or left, layering over a persistent main view. The main view defaults to Today and never fully disappears.</p>
+    <div class="label">Shell layout</div>
+    <ul class="clean">
+      <li>Icon rail: 56px, icons only, tooltips on hover, grouped by 4px dividers.</li>
+      <li>Main view: fills remaining space, defaults to Today summary.</li>
+      <li>Panel: 320px slide-over from the right for section lists; a second panel can stack (640px total) for detail.</li>
+      <li>Mobile: icon rail becomes a bottom bar of 5 icons (Today, Timeline, Journal, Search, More); panels become full-screen pushes.</li>
+    </ul>
+    <div class="label">Regions and content</div>
+    <ul class="clean">
+      <li>Selecting a nav icon opens or focuses its panel; selecting again closes it.</li>
+      <li>Panels are independently scrollable and keep state when closed.</li>
+      <li>Main view dims slightly (opacity 0.88) when a panel is open on desktop &lt;1280px.</li>
+    </ul>
+    <div class="label">Interactive regions</div>
+    <ul class="clean">
+      <li>Hover icon: tooltip with label and unread/changed dot.</li>
+      <li>Drag panel edge to resize between 280px and 480px.</li>
+      <li>Clicking outside a panel closes the topmost panel; Esc closes all.</li>
+    </ul>
+    <div class="label">Wireframe</div>
+    <pre class="wire">+--+------------------------------------------+------------------+
+|  | Today (persistent)                       | Journal panel    |
+|56| Sunday, 15 November 2026                  | Morning walk...  |
+|  | 3 entries, 4 tracker records              | Coffee and...    |
+|  | 2 places, 47 scrobbles                    | Evening note     |
+|  |                                          | [+ New entry]    |
++--+------------------------------------------+------------------+</pre>
+    <div class="why">Why it helps tracking: the persistent Today view underneath means a quick capture never loses the day's context.</div>
+  </section>
+
+  <!-- 10 -->
+  <section id="c10" class="concept">
+    <h2>10. Floating Dock Workspace</h2>
+    <p class="desc">No fixed sidebars. Content fills the window. A floating dock at the bottom holds grouped destination icons; section content opens in floating, draggable, resizable windows over the base Today view.</p>
+    <div class="label">Shell layout</div>
+    <ul class="clean">
+      <li>Base view: Today summary fills the window.</li>
+      <li>Dock: 64px tall pill, bottom-centre, 12 icons in 4 groups separated by 8px gaps; auto-hides after 4s of inactivity, reappears on mouse move.</li>
+      <li>Windows: 480x640 default, draggable, resizable (min 320x400), snap to grid; multiple can be open and tiled.</li>
+      <li>Mobile: dock becomes a 56px bottom bar with 5 icons and a "More" sheet; windows become full-screen sheets.</li>
+    </ul>
+    <div class="label">Regions and content</div>
+    <ul class="clean">
+      <li>Each window has a title bar with section name, pin, minimise, close.</li>
+      <li>Today base view remains visible behind windows at 80% opacity when a window is focused.</li>
+      <li>A window manager menu (dock long-press) lists open windows and layouts.</li>
+    </ul>
+    <div class="label">Interactive regions</div>
+    <ul class="clean">
+      <li>Drag dock icons onto the canvas to open a window at that position.</li>
+      <li>Double-click a window title bar to maximise; drag to a screen edge to snap (desktop).</li>
+      <li>Right-click dock: save current window layout as a named workspace.</li>
+    </ul>
+    <div class="label">Wireframe</div>
+    <pre class="wire">+------------------------------------------------------------------+
+|                                                                   |
+|   Today base view: Sunday, 15 November 2026                       |
+|                                                                   |
+|        +-------------------+   +-------------------+              |
+|        | Timeline window   |   | Journal window    |              |
+|        | 08:48 Morning...  |   | Morning walk...   |              |
+|        | 09:50 Coffee...   |   | ...               |              |
+|        +-------------------+   +-------------------+              |
+|                                                                   |
+|              [D]  [C]  [T]  [F]  [S]  (floating dock)             |
++------------------------------------------------------------------+</pre>
+    <div class="why">Why it helps tracking: arranging a map, a timeline, and a journal entry side by side supports cross-referencing a single day without tab switching.</div>
+  </section>
+
+  <!-- comparison -->
+  <section id="cmp" class="concept">
+    <h2>Comparison</h2>
+    <table class="cmp">
+      <thead>
+        <tr><th>Concept</th><th>Space efficiency</th><th>Browsing speed</th><th>Mobile suitability</th><th>Learning curve</th><th>Best for</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1. Three-Pane Archive</td><td>High (desktop)</td><td>High</td><td>Low</td><td>Low</td><td>Desktop-heavy reviewers</td></tr>
+        <tr><td>2. Top Bar Atlas</td><td>High</td><td>Medium</td><td>Medium</td><td>Low</td><td>Dashboard-style daily review</td></tr>
+        <tr><td>3. Collapsible Ledger</td><td>High</td><td>High</td><td>Medium</td><td>Medium</td><td>Resizable reading + detail</td></tr>
+        <tr><td>4. Mobile Drawer + Bottom Nav</td><td>Medium</td><td>High (mobile)</td><td>High</td><td>Low</td><td>Phone-first capture</td></tr>
+        <tr><td>5. Dashboard Grid</td><td>Medium</td><td>Medium</td><td>Medium</td><td>Low</td><td>At-a-glance day status</td></tr>
+        <tr><td>6. Tabbed Workspace</td><td>High</td><td>High</td><td>Low</td><td>Medium</td><td>Multi-record comparison</td></tr>
+        <tr><td>7. Split Timeline + Inspector</td><td>Medium</td><td>High</td><td>Medium</td><td>Low</td><td>Timeline reconstruction</td></tr>
+        <tr><td>8. Focus Mode</td><td>Very high</td><td>Medium</td><td>High</td><td>Low</td><td>Distraction-free capture</td></tr>
+        <tr><td>9. Icon Rail + Panels</td><td>High</td><td>Medium</td><td>Medium</td><td>Medium</td><td>Keeping Today visible</td></tr>
+        <tr><td>10. Floating Dock Workspace</td><td>Medium</td><td>High</td><td>Low</td><td>High</td><td>Power users, multi-window</td></tr>
+      </tbody>
+    </table>
+    <p style="color:var(--muted);font-size:13px;">Space efficiency measures how much content is visible without scrolling on a 1440x900 window. Browsing speed measures clicks to move between records. Mobile suitability reflects how naturally the shell adapts below 900px. Learning curve reflects how much discovery is needed before productive use.</p>
+  </section>
+
+  <div class="footer">Lifelog GUI layout concepts. No emojis. Palette: #f5f1e8 / #fcf9f2 / #1f1c18 / #6a635a / #25211d / #a84f3a / #e0d8c9.</div>
+</div>
+</body>
+</html>

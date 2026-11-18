@@ -1,0 +1,39 @@
+name: lifelog
+description: "Lifelog — a private, local-first personal life archive."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.3
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  flutter_riverpod: ^3.5.0
+  cryptography: ^2.9.0
+  flutter_secure_storage: ^11.2.0
+  intl: ^0.20.3
+  uuid: ^4.6.0
+  file_selector: ^1.1.0
+  http: ^1.6.0
+  geolocator: ^14.1.2
+  image: ^4.13.1
+  path: ^1.9.0
+  path_provider: ^2.1.6
+  googleapis: ^19.0.0
+  googleapis_auth: ^2.3.7
+  url_launcher: ^6.3.3
+  webview_windows: ^0.4.0
+  health: ^13.1.1
+  share_plus: ^13.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

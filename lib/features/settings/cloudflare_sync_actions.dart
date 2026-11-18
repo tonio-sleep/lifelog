@@ -10,6 +10,7 @@ import '../../app/theme/app_theme.dart';
 import '../../app/widgets/common.dart';
 import '../../app/widgets/components.dart';
 import '../../core/util/dates.dart';
+import '../../domain/models/settings.dart';
 import '../../integrations/cloudflare/cloudflare_sync_service.dart';
 
 Future<void> connectCloudflareSync(BuildContext context, WidgetRef ref) async {
@@ -378,7 +379,7 @@ class _CloudflareConnectSheetState extends State<_CloudflareConnectSheet> {
         const SizedBox(height: Insets.md),
         TextField(
           controller: _url,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: 'Worker URL',
             hintText: AppSettings.defaultCloudflareWorkerUrl,
           ),

@@ -1,5 +1,7 @@
-﻿import 'dart:typed_data';
+﻿import 'dart:io' show Platform;
+import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -11,16 +13,27 @@ import '../../app/widgets/components.dart';
 import '../../core/util/dates.dart';
 import 'google_sign_in_flow.dart';
 
+const _defaultGoogleOAuthClientId =
+    '55026869756-vvq2phjlgh07dh36e080gi29e2fvjvpq.apps.googleusercontent.com';
+
+String _effectiveDefaultGoogleClientId() {
+  // Default iOS OAuth client provided for this app build.
+  if (!kIsWeb && Platform.isIOS) return _defaultGoogleOAuthClientId;
+  return '';
+}
+
 Future<void> connectGoogleDrive(BuildContext context, WidgetRef ref) async {
   final existing = ref.read(settingsProvider);
   final savedId = (existing.googleClientId ?? '').trim();
   final savedSecret = (existing.googleClientSecret ?? '').trim();
+  final defaultId = _effectiveDefaultGoogleClientId();
+  final initialId = savedId.isNotEmpty ? savedId : defaultId;
 
   final config = await _showGoogleConnectSheet(
     context,
-    initialId: savedId,
+    initialId: initialId,
     initialSecret: savedSecret,
-    hasSavedConfig: savedId.isNotEmpty,
+    hasSavedConfig: savedId.isNotEmpty || defaultId.isNotEmpty,
   );
   if (config == null || !context.mounted) return;
 

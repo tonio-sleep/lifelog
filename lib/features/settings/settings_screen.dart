@@ -271,7 +271,9 @@ class SettingsScreen extends ConsumerWidget {
                 icon: Icons.cloud_done_outlined,
                 iconColor: palette.tracker,
                 title: settings.cloudflareUsername ?? 'Cloudflare sync',
-                subtitle: settings.cloudflareWorkerUrl ?? 'Connected',
+                subtitle: (settings.cloudflareWorkerUrl?.trim().isNotEmpty ?? false)
+                    ? settings.cloudflareWorkerUrl!.trim()
+                    : AppSettings.defaultCloudflareWorkerUrl,
               ),
               ListRow(
                 icon: Icons.cloud_upload_outlined,

@@ -14,10 +14,13 @@ import '../../integrations/cloudflare/cloudflare_sync_service.dart';
 
 Future<void> connectCloudflareSync(BuildContext context, WidgetRef ref) async {
   final settings = ref.read(settingsProvider);
+  final initialUrl = (settings.cloudflareWorkerUrl ?? '').trim().isEmpty
+      ? AppSettings.defaultCloudflareWorkerUrl
+      : settings.cloudflareWorkerUrl!.trim();
   final result = await showLifelogSheet<_CloudflareAuthResult>(
     context,
     builder: (_) => _CloudflareConnectSheet(
-      initialUrl: settings.cloudflareWorkerUrl ?? '',
+      initialUrl: initialUrl,
       initialUsername: settings.cloudflareUsername ?? '',
     ),
   );
@@ -369,14 +372,15 @@ class _CloudflareConnectSheetState extends State<_CloudflareConnectSheet> {
         const SizedBox(height: Insets.sm),
         _InfoLine(
           icon: Icons.shield_outlined,
-          text: 'Use a strong, unique account password. Session tokens are stored encrypted on this device. HTTPS Worker URLs are required.',
+          text:
+              'Use a strong, unique account password. Session tokens are stored encrypted on this device. The default Worker URL is preconfigured and can be changed if needed.',
         ),
         const SizedBox(height: Insets.md),
         TextField(
           controller: _url,
           decoration: const InputDecoration(
             labelText: 'Worker URL',
-            hintText: 'https://your-worker.workers.dev',
+            hintText: AppSettings.defaultCloudflareWorkerUrl,
           ),
           keyboardType: TextInputType.url,
           autocorrect: false,

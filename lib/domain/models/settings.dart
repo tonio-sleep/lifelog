@@ -150,6 +150,9 @@ enum TodaySection {
 }
 
 class AppSettings {
+  static const String defaultCloudflareWorkerUrl =
+      'https://lifelog-cloudflare-sync.logginglife.workers.dev';
+
   const AppSettings({
     this.onboardingComplete = false,
     this.themeMode = AppThemeMode.system,
@@ -168,7 +171,7 @@ class AppSettings {
     this.todaySections = const [],
     this.showArtwork = true,
     this.backupFolderPath,
-    this.cloudflareWorkerUrl,
+    this.cloudflareWorkerUrl = defaultCloudflareWorkerUrl,
     this.cloudflareUsername,
     this.cloudflareSessionCipher,
     this.cloudflareConnectedAt,
@@ -374,7 +377,13 @@ class AppSettings {
           const [],
       showArtwork: json['showArtwork'] as bool? ?? true,
       backupFolderPath: json['backupFolderPath'] as String?,
-      cloudflareWorkerUrl: json['cloudflareWorkerUrl'] as String?,
+      cloudflareWorkerUrl: (() {
+        final value = (json['cloudflareWorkerUrl'] as String?)?.trim();
+        if (value == null || value.isEmpty) {
+          return AppSettings.defaultCloudflareWorkerUrl;
+        }
+        return value;
+      })(),
       cloudflareUsername: json['cloudflareUsername'] as String?,
       cloudflareSessionCipher: json['cloudflareSessionCipher'] as String?,
       cloudflareConnectedAt:

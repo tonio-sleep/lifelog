@@ -85,36 +85,78 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   _PageFrame(
                     wide: wide,
                     illustration: const _SignInArt(),
-                    eyebrow: 'Welcome',
-                    title: 'Your journal, saved on this device',
+                    eyebrow: 'Account required',
+                    title: 'Sign in to continue',
                     body:
-                        'Keep your day, memories, and check-ins in one private place. '
-                        'Sign in to your Cloudflare Worker if you want encrypted cloud backup and sync, or continue locally and everything will be saved on this device.',
+                        'A Cloudflare sync account is required to use Lifelog. '
+                        'Sign in or create an account to continue. Your journal stays on this device and encrypted; cloud sync stores encrypted backups only.',
                     children: [
-                      _SignInChoiceCard(
-                        icon: Icons.cloud_outlined,
-                        title: 'Sign in to Cloudflare sync',
-                        subtitle: 'Optional: encrypted backup and restore using your own Cloudflare Worker',
-                        primary: true,
-                        onTap: () async {
-                          await connectCloudflareSync(context, ref);
-                          if (!context.mounted) return;
-                          _pages.nextPage(
-                            duration: const Duration(milliseconds: 280),
-                            curve: Curves.easeOutCubic,
-                          );
-                        },
-                      ),
-                      const SizedBox(height: Insets.md),
-                      _SignInChoiceCard(
-                        icon: Icons.phone_iphone_rounded,
-                        title: 'Continue on this device',
-                        subtitle: 'No sign-in needed. Your data stays local and encrypted',
-                        onTap: () => _pages.nextPage(
-                          duration: const Duration(milliseconds: 280),
-                          curve: Curves.easeOutCubic,
+                      if (settings.cloudflareConnected)
+                        QuietCard(
+                          glass: true,
+                          padding: const EdgeInsets.all(Insets.md),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.verified_user_outlined,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                              const SizedBox(width: Insets.sm),
+                              Expanded(
+                                child: Text(
+                                  'Signed in as ${settings.cloudflareUsername ?? 'your account'}. You can continue setup.',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodySmall
+                                      ?.copyWith(
+                                        color: LifelogPalette.of(context)
+                                            .mutedText,
+                                      ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      else ...[
+                        _SignInChoiceCard(
+                          icon: Icons.login_rounded,
+                          title: 'Sign in',
+                          subtitle:
+                              'Use your existing Cloudflare sync account',
+                          primary: true,
+                          onTap: () async {
+                            await connectCloudflareSync(context, ref);
+                            if (!context.mounted) return;
+                            if (ref.read(settingsProvider).cloudflareConnected) {
+                              _pages.nextPage(
+                                duration: const Duration(milliseconds: 280),
+                                curve: Curves.easeOutCubic,
+                              );
+                            }
+                          },
                         ),
-                      ),
+                        const SizedBox(height: Insets.md),
+                        _SignInChoiceCard(
+                          icon: Icons.person_add_alt_1_rounded,
+                          title: 'Create account',
+                          subtitle:
+                              'First-time setup for your personal Cloudflare Worker (built-in URL preconfigured)',
+                          onTap: () async {
+                            await connectCloudflareSync(
+                              context,
+                              ref,
+                              initialCreateAccount: true,
+                            );
+                            if (!context.mounted) return;
+                            if (ref.read(settingsProvider).cloudflareConnected) {
+                              _pages.nextPage(
+                                duration: const Duration(milliseconds: 280),
+                                curve: Curves.easeOutCubic,
+                              );
+                            }
+                          },
+                        ),
+                      ],
                     ],
                   ),
                   _PageFrame(
@@ -392,7 +434,18 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                       ],
                     ),
                     const SizedBox(width: Insets.xl),
-                    if (_page != 0)
+                    if (_page == 0)
+                      FilledButton.icon(
+                        onPressed: settings.cloudflareConnected
+                            ? () => _pages.nextPage(
+                                  duration: const Duration(milliseconds: 280),
+                                  curve: Curves.easeOutCubic,
+                                )
+                            : null,
+                        icon: const Icon(Icons.arrow_forward_rounded, size: 17),
+                        label: const Text('Continue'),
+                      )
+                    else
                       FilledButton.icon(
                         onPressed: _finishing ? null : _advance,
                         icon: Icon(

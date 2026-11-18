@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../app/providers/settings_provider.dart';
 import '../domain/models/settings.dart';
+import '../features/cloudflare/cloudflare_required_auth_screen.dart';
 import '../features/onboarding/onboarding_screen.dart';
 import '../features/security/lock_screen.dart';
 import '../integrations/cloudflare/cloudflare_sync.dart';
@@ -28,9 +29,11 @@ class LifelogApp extends ConsumerWidget {
         AppThemeMode.light => ThemeMode.light,
         AppThemeMode.dark => ThemeMode.dark,
       },
-      home: settings.onboardingComplete
-          ? const LockGate(child: _StartupSync(child: AppShell()))
-          : const OnboardingScreen(),
+      home: !settings.onboardingComplete
+          ? const OnboardingScreen()
+          : !settings.cloudflareConnected
+              ? const CloudflareRequiredAuthScreen()
+              : const LockGate(child: _StartupSync(child: AppShell())),
     );
   }
 }

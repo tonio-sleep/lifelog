@@ -164,7 +164,7 @@ Future<void> syncToCloudflare(BuildContext context, WidgetRef ref) async {
     context,
     title: 'Backup passphrase',
     subtitle:
-        'Enter the passphrase to encrypt this cloud backup (including media). This is different from your Cloudflare account password. '\n        'You will need this passphrase to restore on another device.',
+        'Enter the passphrase to encrypt this cloud backup (including media). This is different from your Cloudflare account password.\nYou will need this passphrase to restore on another device.',
     confirm: true,
   );
   if (passphrase == null || !context.mounted) return;
@@ -172,7 +172,11 @@ Future<void> syncToCloudflare(BuildContext context, WidgetRef ref) async {
   final services = ref.read(appServicesProvider);
   final bytes = await guard<Uint8List>(
     context,
-    services.backup.createBackup(\n      archive: ref.read(archiveProvider),\n      passphrase: passphrase,\n      mediaStore: services.mediaStore,\n    ),
+    services.backup.createBackup(
+      archive: ref.read(archiveProvider),
+      passphrase: passphrase,
+      mediaStore: services.mediaStore,
+    ),
     errorPrefix: 'Could not create backup',
   );
   if (bytes == null || !context.mounted) return;

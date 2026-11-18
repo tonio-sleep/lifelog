@@ -18,7 +18,8 @@ const _backupTypes = <XTypeGroup>[
   XTypeGroup(label: 'Lifelog backup', extensions: <String>['lifelog']),
 ];
 
-/// Creates a passphrase-encrypted backup (including media) and lets the user choose\n/// where to save it. Everything in the backup is encrypted with the passphrase.
+/// Creates a passphrase-encrypted backup (including media) and lets the user choose
+/// where to save it. Everything in the backup is encrypted with the passphrase.
 Future<void> exportBackup(BuildContext context, WidgetRef ref) async {
   final services = ref.read(appServicesProvider);
   final passphrase = await _askBackupPassphrase(context);
@@ -27,7 +28,11 @@ Future<void> exportBackup(BuildContext context, WidgetRef ref) async {
 
   final bytes = await guard(
     context,
-    services.backup.createBackup(\n      archive: ref.read(archiveProvider),\n      passphrase: passphrase,\n      mediaStore: services.mediaStore,\n    ),
+    services.backup.createBackup(
+      archive: ref.read(archiveProvider),
+      passphrase: passphrase,
+      mediaStore: services.mediaStore,
+    ),
     errorPrefix: 'Could not create the backup',
   );
   if (bytes == null) return;
@@ -152,7 +157,11 @@ Future<void> saveBackupToLinkedFolder(BuildContext context, WidgetRef ref) async
 
   final bytes = await guard(
     context,
-    services.backup.createBackup(\n      archive: ref.read(archiveProvider),\n      passphrase: passphrase,\n      mediaStore: services.mediaStore,\n    ),
+    services.backup.createBackup(
+      archive: ref.read(archiveProvider),
+      passphrase: passphrase,
+      mediaStore: services.mediaStore,
+    ),
     errorPrefix: 'Could not create the backup',
   );
   if (bytes == null) return;

@@ -171,7 +171,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                         icon: Icons.touch_app_outlined,
                         text: 'Nothing is added unless you choose to add it.',
                       ),
-                      _FactRow(\n                        icon: Icons.cloud_outlined,\n                        text: 'Cloudflare sync, Last.fm, and Health connections are optional and only used when you enable them.',\n                      ),
+                      _FactRow(
+                        icon: Icons.cloud_outlined,
+                        text:
+                            'Cloudflare sync, Last.fm, and Health connections are optional and only used when you enable them.',
+                      ),
                       _FactRow(
                         icon: Icons.location_on_outlined,
                         text: 'Location is only used when you save a place. Screen Time data is not available on iPhone without special Apple approval.',

@@ -7,8 +7,9 @@ export default {
     try {
       return await handle(request, env);
     } catch (err) {
+      console.error("Unhandled worker error", err);
       // Avoid leaking internal details.
-      return json({ error: "Internal server error" }, 500);
+      return json({ error: "Internal server error" }, 500, request);
     }
   },
 };

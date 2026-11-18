@@ -1,5 +1,6 @@
 ﻿const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
-const PBKDF2_ITERATIONS = 310000;
+// Cloudflare Workers WebCrypto currently supports PBKDF2 iteration counts up to 100000.
+const PBKDF2_ITERATIONS = 100000;
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
 export default {

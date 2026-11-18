@@ -37,11 +37,15 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Lifelog can capture photos you choose to add to your journal and daily records.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Lifelog uses your location only when you choose to save a place or visit.</string>
+	<string>Lifelog uses your location when you choose to save a place or visit.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Lifelog uses your location to help you save places and visits. You can choose Always access in Settings for the best experience.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Lifelog uses your location to help you save places and visits when you allow Always access.</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Lifelog can read your step count from Apple Health if you choose to connect it for daily wellbeing tracking.</string>
+	<string>Lifelog can read your sleep and step data from Apple Health, if you choose, to automatically fill your daily check-in. This access is read-only.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>Lifelog does not write health data; this permission may be requested by the system.</string>
+	<string>Lifelog does not write health data to Apple Health.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>UIApplicationSceneManifest</key>

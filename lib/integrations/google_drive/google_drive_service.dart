@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:google_sign_in/google_sign_in.dart' as gsi;
 import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:googleapis_auth/auth_io.dart' as auth;
 import 'package:http/http.dart' as http;
@@ -55,6 +58,7 @@ class GoogleDriveService {
   }
 
   /// Signs in with Google via system browser and returns serialized credentials.
+  /// Uses loopback on desktop where supported; on mobile platforms prefer [signInNative].
   Future<GoogleDriveAuthResult> signIn({
     required String clientId,
     required String clientSecret,
@@ -74,9 +78,87 @@ class GoogleDriveService {
     } on GoogleDriveException {
       rethrow;
     } catch (e) {
+      final msg = '$e';
+      if (msg.contains('loopback') || msg.contains('invalid_request')) {
+        throw GoogleDriveException(
+          'Google sign-in could not be completed with this method on this device. '
+          'On iPhone/iPad/Android, use the app\'s native Google sign-in flow. '
+          'On desktop, use a compatible Google OAuth client configuration.',
+          e,
+        );
+      }
       throw GoogleDriveException('Google sign-in failed: $e', e);
     } finally {
       baseClient.close();
+    }
+  }
+
+  /// Native Google sign-in (iOS/Android/macOS) using the google_sign_in plugin.
+  /// Avoids loopback redirect URIs which are blocked for mobile OAuth clients.
+  Future<GoogleDriveAuthResult> signInNative({
+    required String clientId,
+  }) async {
+    if (kIsWeb || !(Platform.isIOS || Platform.isAndroid || Platform.isMacOS)) {
+      throw GoogleDriveException('Native Google sign-in is not available on this platform.');
+    }
+    if (clientId.trim().isEmpty) {
+      throw GoogleDriveException('Google OAuth Client ID is required.');
+    }
+    final signIn = gsi.GoogleSignIn.instance;
+    try {
+      // Initialize with the app's OAuth client ID (iOS client on iOS).
+      try {
+        await signIn.initialize(clientId: clientId.trim());
+      } catch (_) {
+        // May already be initialized; continue with existing initialization.
+      }
+
+      // Ensure a clean interactive sign-in attempt.
+      try {
+        await signIn.disconnect();
+      } catch (_) {
+        try {
+          await signIn.signOut();
+        } catch (_) {}
+      }
+
+      final account = await signIn.authenticate();
+      // Request Drive scopes and obtain an access token.
+      final authorization = await account.authorizationClient.authorizeScopes(_scopes);
+      final accessToken = authorization.accessToken;
+      if (accessToken.isEmpty) {
+        throw GoogleDriveException('No access token returned by Google sign-in.');
+      }
+
+      String? idToken;
+      try {
+        idToken = account.authentication.idToken;
+      } catch (_) {}
+
+      final email = account.email.trim().isNotEmpty ? account.email.trim() : 'Google account';
+      final credentials = auth.AccessCredentials(
+        auth.AccessToken(
+          'Bearer',
+          accessToken,
+          DateTime.now().toUtc().add(const Duration(minutes: 55)),
+        ),
+        null, // no refresh token from this native flow; reconnect if the session expires
+        _scopes,
+        idToken: idToken,
+      );
+      return GoogleDriveAuthResult(
+        accountEmail: email,
+        authJson: jsonEncode(_credentialsToJson(credentials)),
+      );
+    } on gsi.GoogleSignInException catch (e) {
+      if (e.code == gsi.GoogleSignInExceptionCode.canceled) {
+        throw GoogleDriveException('Google sign-in was cancelled.');
+      }
+      throw GoogleDriveException('Google sign-in failed: ${e.description ?? e.code.name}', e);
+    } on GoogleDriveException {
+      rethrow;
+    } catch (e) {
+      throw GoogleDriveException('Google sign-in failed: $e', e);
     }
   }
 
@@ -222,7 +304,7 @@ class GoogleDriveService {
     try {
       if (creds.accessToken.expiry.isBefore(DateTime.now().toUtc().add(const Duration(minutes: 2)))) {
         if (creds.refreshToken == null) {
-          throw GoogleDriveException('Google session expired. Please sign in again.');
+          throw GoogleDriveException('Google session expired. Please reconnect your Google account and try again.');
         }
         creds = await auth.refreshCredentials(id, creds, base);
         await onRefreshed(jsonEncode(_credentialsToJson(creds)));

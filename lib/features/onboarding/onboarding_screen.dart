@@ -192,10 +192,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                       _PermissionCard(
                         icon: Icons.location_on_outlined,
                         title: 'Location',
-                        subtitle: _locationPermission == LocationPermission.always ||
-                                _locationPermission == LocationPermission.whileInUse
-                            ? 'Location access is enabled for saving places and visits.'
-                            : 'Used only when you choose to save a place or visit.',
+                        subtitle: _locationPermission == LocationPermission.always
+                            ? 'Always access is enabled for saving places and visits.'
+                            : _locationPermission == LocationPermission.whileInUse
+                                ? 'Currently While Using. You can change this to Always in Settings.'
+                                : 'Allow Always so location features work reliably when saving places and visits.',
                         actionLabel: _requestingLocation ? '...' : _locationStatusLabel(),
                         onTap: _requestingLocation
                             ? () {}
@@ -206,8 +207,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                         icon: Icons.favorite_border_rounded,
                         title: 'Health, sleep & steps',
                         subtitle: _healthGranted == true
-                            ? 'Read-only access enabled to sync sleep and steps automatically.'
-                            : 'Read-only access to automatically sync sleep and steps.',
+                            ? 'Access requested. Apple may not confirm read access; allow Steps and Sleep for Lifelog in Health if syncing does not work.'
+                            : 'Read-only access to automatically sync sleep and steps from Apple Health / Health Connect.',
                         actionLabel: _requestingHealth ? '...' : _healthStatusLabel(),
                         onTap: _requestingHealth
                             ? () {}
@@ -220,11 +221,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(Icons.info_outline_rounded, size: 17, color: LifelogPalette.of(context).mutedText),
+                            Icon(Icons.hourglass_top_rounded, size: 17, color: LifelogPalette.of(context).mutedText),
                             const SizedBox(width: Insets.sm),
                             Expanded(
                               child: Text(
-                                'Screen Time and app usage data cannot be accessed by regular iPhone apps without special Apple entitlements (Family Controls approval), so it cannot be retrieved in this app.',
+                                'Screen Time/app usage data is not accessible to regular iPhone apps. It requires Apple Family Controls entitlement and approval (Screen Time API: Family Controls, ManagedSettings, DeviceActivity), so Lifelog cannot retrieve it automatically. See Settings > Permissions > Screen Time (advanced) for details.',
                                 style: Theme.of(context).textTheme.bodySmall?.copyWith(color: LifelogPalette.of(context).mutedText),
                               ),
                             ),
@@ -446,16 +447,15 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   String _locationStatusLabel() {
     final p = _locationPermission;
     if (p == null) return 'Check access';
-    if (p == LocationPermission.always || p == LocationPermission.whileInUse) {
-      return 'Allowed';
-    }
+    if (p == LocationPermission.always) return 'Always allowed';
+    if (p == LocationPermission.whileInUse) return 'Set to Always';
     if (p == LocationPermission.deniedForever) return 'Open Settings';
-    if (p == LocationPermission.denied) return 'Allow';
-    return 'Allow';
+    if (p == LocationPermission.denied) return 'Allow Always';
+    return 'Allow Always';
   }
 
   String _healthStatusLabel() {
-    if (_healthGranted == true) return 'Allowed';
+    if (_healthGranted == true) return 'Requested';
     if (_healthGranted == false) return 'Allow';
     return 'Allow';
   }
@@ -466,23 +466,35 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     try {
       var permission = _locationPermission ?? await Geolocator.checkPermission();
       if (permission == LocationPermission.deniedForever) {
+        if (context.mounted) {
+          showSnack(context, 'Location is turned off. Open Settings and set Lifelog location to Always.');
+        }
         await Geolocator.openAppSettings();
       } else {
         final serviceEnabled = await Geolocator.isLocationServiceEnabled();
         if (!serviceEnabled && context.mounted) {
-          showSnack(context, 'Turn on Location Services in device settings to use location.');
+          showSnack(context, 'Turn on Location Services, then set Lifelog location access to Always.');
         }
-        permission = await Geolocator.requestPermission();
-      }
-      if (!context.mounted) return;
-      setState(() => _locationPermission = permission);
-      if (permission == LocationPermission.deniedForever) {
-        showSnack(context, 'Location permission is off. You can enable it in device Settings.');
-      } else if (permission == LocationPermission.whileInUse ||
-          permission == LocationPermission.always) {
-        showSnack(context, 'Location access enabled.');
-      } else {
-        showSnack(context, 'Location access not granted.');
+        if (permission == LocationPermission.denied) {
+          permission = await Geolocator.requestPermission();
+        }
+        // Request/upgrade to Always where the platform allows.
+        if (permission == LocationPermission.whileInUse) {
+          permission = await Geolocator.requestPermission();
+        }
+        if (!context.mounted) return;
+        setState(() => _locationPermission = permission);
+        if (permission == LocationPermission.always) {
+          showSnack(context, 'Location access set to Always.');
+        } else if (permission == LocationPermission.whileInUse) {
+          showSnack(context, 'Location is While Using. Open Settings > Lifelog > Location and choose Always.');
+          await Geolocator.openAppSettings();
+        } else if (permission == LocationPermission.deniedForever) {
+          showSnack(context, 'Location permission is off. Open Settings and set Lifelog location to Always.');
+          await Geolocator.openAppSettings();
+        } else {
+          showSnack(context, 'Location access was not granted. You can allow Always in Settings.');
+        }
       }
     } catch (e) {
       if (context.mounted) {
@@ -501,7 +513,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       final services = ref.read(appServicesProvider);
       if (!services.healthSteps.isSupported) {
         if (context.mounted) {
-          showSnack(context, 'Health access is available on supported devices.');
+          showSnack(context, 'Health access is available on supported devices (iPhone/Apple Health or Android/Health Connect).');
         }
         return;
       }
@@ -510,9 +522,16 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       if (!context.mounted) return;
       setState(() => _healthGranted = status ?? ok);
       if (ok || status == true) {
-        showSnack(context, 'Health access enabled. Sleep and steps can sync automatically.');
+        showSnack(context, 'Health access requested. If sleep or steps do not sync, allow Steps and Sleep for Lifelog in the Health app or device Settings.');
       } else {
-        showSnack(context, 'Health access was not granted. You can enable it in device settings.');
+        final isApple = Theme.of(context).platform == TargetPlatform.iOS ||
+            Theme.of(context).platform == TargetPlatform.macOS;
+        if (isApple) {
+          showSnack(context, 'Could not enable Health access. Open iPhone Settings > Privacy & Security > Health (or Health app > Apps > Lifelog) and allow Steps and Sleep.');
+        } else {
+          showSnack(context, 'Could not enable Health access. Open Health Connect and allow Lifelog to read Steps and Sleep.');
+        }
+        await Geolocator.openAppSettings();
       }
     } catch (e) {
       if (context.mounted) {

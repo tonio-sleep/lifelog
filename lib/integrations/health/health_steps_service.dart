@@ -38,19 +38,27 @@ class HealthStepsService {
     }
   }
 
+  Future<void> configureIfNeeded() async {
+    if (!isSupported) return;
+    try {
+      await _health.configure();
+    } catch (_) {
+      // Best effort; some platforms/configurations may not require or support this.
+    }
+  }
+
   Future<bool> requestPermission() async {
     if (!isSupported) return false;
     try {
-      // Configure Health Connect on Android when applicable.
-      if (Platform.isAndroid) {
-        try {
-          await _health.configure();
-        } catch (_) {}
-      }
-      return await _health.requestAuthorization(
+      await configureIfNeeded();
+      final granted = await _health.requestAuthorization(
         _types,
         permissions: _permissions,
       );
+      if (granted) return true;
+      // iOS read permissions are privacy-restricted; hasPermissions may be null.
+      final status = await hasPermission();
+      return status == true;
     } catch (_) {
       return false;
     }

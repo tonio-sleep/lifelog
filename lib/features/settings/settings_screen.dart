@@ -165,7 +165,7 @@ class SettingsScreen extends ConsumerWidget {
         ),
         ListGroup(
           title: 'Permissions',
-          footer: 'Location is used only when you choose to save a place. '
+          footer: 'Location is used when you save places or visits. You can set access to Always in device Settings. '
               'Health access is read-only and lets Lifelog sync sleep and steps automatically. '
               'Screen Time/app usage is not available to regular iPhone apps without special Apple Family Controls entitlement and approval.',
           children: [
@@ -173,7 +173,7 @@ class SettingsScreen extends ConsumerWidget {
               icon: Icons.location_on_outlined,
               iconColor: palette.place,
               title: 'Location access',
-              subtitle: 'Allow location when saving places or visits',
+              subtitle: 'Allow Always location for saving places and visits',
               chevron: true,
               onTap: () => _requestLocationPermission(context),
             ),
@@ -182,15 +182,17 @@ class SettingsScreen extends ConsumerWidget {
                 icon: Icons.favorite_border_rounded,
                 iconColor: palette.tracker,
                 title: 'Health access',
-                subtitle: 'Allow read-only access to sync sleep and steps',
+                subtitle: 'Allow read-only access to sync sleep and steps from Apple Health / Health Connect',
                 chevron: true,
                 onTap: () => _requestHealthAccess(context, ref),
               ),
             ListRow(
-              icon: Icons.hourglass_disabled_rounded,
-              iconColor: palette.mutedText,
-              title: 'Screen Time',
-              subtitle: 'Not available on iPhone without special Apple approval',
+              icon: Icons.hourglass_top_rounded,
+              iconColor: palette.music,
+              title: 'Screen Time (advanced)',
+              subtitle: 'iPhone Screen Time/app usage access requires Apple Family Controls entitlement and approval',
+              chevron: true,
+              onTap: () => _showScreenTimeInfo(context),
             ),
           ],
         ),
@@ -440,30 +442,31 @@ class SettingsScreen extends ConsumerWidget {
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled && context.mounted) {
-        showSnack(context, 'Location services are turned off. You can enable them in device Settings.');
+        showSnack(context, 'Location services are turned off. Enable Location Services in device Settings.');
       }
       var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.deniedForever) {
-        if (context.mounted) {
-          showSnack(context, 'Location permission is turned off. Opening device Settings...');
-        }
-        await Geolocator.openAppSettings();
-        return;
-      }
+
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
       }
+      // Try to upgrade to Always (iOS may show an upgrade prompt after While Using is granted).
+      if (permission == LocationPermission.whileInUse) {
+        permission = await Geolocator.requestPermission();
+      }
+
       if (!context.mounted) return;
       if (permission == LocationPermission.deniedForever) {
-        showSnack(context, 'Location permission is turned off. Opening device Settings...');
+        showSnack(context, 'Location permission is turned off. Open device Settings and set Lifelog location access to Always.');
         await Geolocator.openAppSettings();
         return;
       }
-      if (permission == LocationPermission.whileInUse ||
-          permission == LocationPermission.always) {
-        showSnack(context, 'Location access is enabled.');
+      if (permission == LocationPermission.always) {
+        showSnack(context, 'Location access is set to Always.');
+      } else if (permission == LocationPermission.whileInUse) {
+        showSnack(context, 'Location access is currently While Using. Set it to Always in Settings > Lifelog > Location for the best experience.');
+        await Geolocator.openAppSettings();
       } else {
-        showSnack(context, 'Location access was not granted.');
+        showSnack(context, 'Location access was not granted. You can allow Always in device Settings.');
       }
     } catch (error) {
       if (context.mounted) {
@@ -475,7 +478,7 @@ class SettingsScreen extends ConsumerWidget {
   Future<void> _requestHealthAccess(BuildContext context, WidgetRef ref) async {
     final services = ref.read(appServicesProvider);
     if (!services.healthSteps.isSupported) {
-      showSnack(context, 'Health access is available on supported devices.');
+      showSnack(context, 'Health access is available on supported devices (iPhone/Apple Health or Android/Health Connect).');
       return;
     }
     final granted = await guard<bool>(
@@ -486,10 +489,117 @@ class SettingsScreen extends ConsumerWidget {
     final has = await services.healthSteps.hasPermission();
     if (!context.mounted) return;
     if (granted == true || has == true) {
-      showSnack(context, 'Health access enabled. Sleep and steps can sync automatically.');
-    } else {
-      showSnack(context, 'Health access was not granted. You can enable it in device Settings.');
+      showSnack(
+        context,
+        'Health access requested. If sleep or steps do not sync, allow Steps and Sleep for Lifelog in the Health app or device Settings.',
+      );
+      return;
     }
+    await _showHealthAccessHelp(context);
+  }
+
+  Future<void> _showHealthAccessHelp(BuildContext context) {
+    final isApple = Theme.of(context).platform == TargetPlatform.iOS ||
+        Theme.of(context).platform == TargetPlatform.macOS;
+    return showLifelogSheet<void>(
+      context,
+      builder: (sheetContext) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SheetTitle(
+            title: 'Enable Health access',
+            subtitle: 'Read-only access for sleep and steps',
+          ),
+          if (isApple) ...const [
+            _PrivacyPoint(
+              icon: Icons.health_and_safety_outlined,
+              title: 'Allow in Apple Health',
+              body: 'Open Health > Browse > Sleep/Steps (or Profile > Apps > Lifelog) and turn on Steps and Sleep for Lifelog. '
+                  'You can also go to iPhone Settings > Privacy & Security > Health > Lifelog.',
+            ),
+            _PrivacyPoint(
+              icon: Icons.visibility_off_outlined,
+              title: 'Privacy note',
+              body: 'Apple does not tell apps whether read access was granted. If sync shows no data after allowing access, check Health permissions and make sure sleep/step data exists in Health.',
+            ),
+          ] else ...const [
+            _PrivacyPoint(
+              icon: Icons.health_and_safety_outlined,
+              title: 'Allow in Health Connect',
+              body: 'Open Health Connect and allow Lifelog to read Steps and Sleep. Make sure Health Connect is installed/enabled on your device.',
+            ),
+          ],
+          const SizedBox(height: Insets.sm),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.of(sheetContext).pop(),
+                  child: const Text('Close'),
+                ),
+              ),
+              const SizedBox(width: Insets.sm),
+              Expanded(
+                child: FilledButton(
+                  onPressed: () async {
+                    Navigator.of(sheetContext).pop();
+                    await Geolocator.openAppSettings();
+                  },
+                  child: const Text('Open Settings'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showScreenTimeInfo(BuildContext context) {
+    showLifelogSheet<void>(
+      context,
+      builder: (sheetContext) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SheetTitle(
+            title: 'Screen Time (advanced)',
+            subtitle: 'Why app usage data is restricted on iPhone',
+          ),
+          const _PrivacyPoint(
+            icon: Icons.phone_iphone_rounded,
+            title: 'What Screen Time data includes',
+            body: 'Screen Time and app usage can include device pickups, app/category usage time, notifications, and related activity. On iPhone this data is protected by Apple.',
+          ),
+          const _PrivacyPoint(
+            icon: Icons.extension_outlined,
+            title: 'Apple frameworks involved',
+            body: 'Access is provided through Family Controls, ManagedSettings, and DeviceActivity (Screen Time API). These are designed for approved use cases such as parental controls and certain wellbeing/focus experiences, not general-purpose data export.',
+          ),
+          const _PrivacyPoint(
+            icon: Icons.verified_user_outlined,
+            title: 'Entitlement and approval required',
+            body: 'Apps must request the Family Controls entitlement (com.apple.developer.family-controls) and receive Apple approval before distributing Screen Time features. Users must also explicitly grant Family Controls authorization on device.',
+          ),
+          const _PrivacyPoint(
+            icon: Icons.build_circle_outlined,
+            title: 'Implementation constraints',
+            body: 'Even with approval, integrations typically require additional capabilities/configuration (for example Device Activity report/monitor extensions and app groups) and must follow Apple privacy and use-case requirements. A regular journaling app cannot read Screen Time stats the way it can read Health steps.',
+          ),
+          const _PrivacyPoint(
+            icon: Icons.block_outlined,
+            title: 'Current status in Lifelog',
+            body: 'This build does not have Apple Family Controls entitlement or approval, so it cannot retrieve Screen Time or per-app usage data automatically.',
+          ),
+          const _PrivacyPoint(
+            icon: Icons.lightbulb_outline_rounded,
+            title: 'What you can do now',
+            body: 'View your usage in iPhone Settings > Screen Time. If helpful, you can manually record a daily note or tracker entry in Lifelog based on what you see there.',
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _syncTodayFromHealth(BuildContext context, WidgetRef ref) async {
@@ -711,7 +821,7 @@ class _LimitationsSheet extends StatelessWidget {
         for (final item in const <String>[
           'Data is saved locally on this device. Google Drive sync is optional and stores an encrypted backup (records and text; media files are not included).',
           'No automatic multi-device merge. Restoring from a backup replaces local data on that device.',
-          'Screen Time data cannot be read by this app on iPhone without special Apple entitlements; this is not currently available.',
+          'Screen Time/app usage data cannot be read by this app on iPhone without Apple Family Controls entitlement and approval (Family Controls, ManagedSettings, DeviceActivity). This is not currently available in this build.',
           'Automatic steps require Health access on supported devices. Other step sources are not imported automatically.',
           'Backups exclude media file bytes. Keep your media vault separately if needed.',
           'No background location tracking or automatic visit detection. Location is only used when you choose to save a place or visit.',

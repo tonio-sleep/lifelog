@@ -394,7 +394,8 @@ Future<_GoogleConnectConfig?> _showGoogleConnectSheet(
             _InfoLine(
               icon: Icons.open_in_new_rounded,
               text:
-                  'A secure Google sign-in screen will open so you can choose your account and approve access.',
+                  'A secure Google sign-in screen will open so you can choose your account and approve access. '
+                  'On iPhone/iPad, sign-in uses your device\'s Google account flow (no loopback redirect).',
             ),
             const SizedBox(height: Insets.lg),
             if (canSignIn)

@@ -17,7 +17,7 @@ export default {
 async function handle(request, env) {
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, "") || "/";
-  const method = request.method.toUpper();
+  const method = (request.method || "GET").toUpperCase();
 
   if (method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders(request) });

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/providers/providers.dart';
@@ -22,12 +22,12 @@ class TrackerDetailScreen extends ConsumerWidget {
     final tracker = archive.trackerById(trackerId);
     if (tracker == null) {
       return ScreenFrame(
-        title: 'Habit',
+        title: 'Activity',
         children: const [
           EmptyState(
             icon: Icons.task_alt_rounded,
             title: 'Removed',
-            message: 'This habit no longer exists.',
+            message: 'This activity no longer exists.',
           ),
         ],
       );
@@ -59,7 +59,7 @@ class TrackerDetailScreen extends ConsumerWidget {
       actions: [
         HeaderButton(
           icon: Icons.tune_rounded,
-          tooltip: 'Edit habit',
+          tooltip: 'Edit activity',
           onPressed: () => showTrackerEditor(context, ref, existing: tracker),
         ),
         PopupMenuButton<String>(
@@ -72,7 +72,7 @@ class TrackerDetailScreen extends ConsumerWidget {
                 ref.read(archiveProvider.notifier).saveTracker(
                   tracker.copyWith(active: !tracker.active),
                 ),
-                errorPrefix: 'Could not update habit',
+                errorPrefix: 'Could not update activity',
               );
             } else if (value == 'delete') {
               await _delete(context, ref, tracker, records.length);
@@ -81,9 +81,9 @@ class TrackerDetailScreen extends ConsumerWidget {
           itemBuilder: (context) => [
             PopupMenuItem(
               value: 'pause',
-              child: Text(tracker.active ? 'Pause habit' : 'Resume habit'),
+              child: Text(tracker.active ? 'Pause activity' : 'Resume activity'),
             ),
-            const PopupMenuItem(value: 'delete', child: Text('Delete habit and records')),
+            const PopupMenuItem(value: 'delete', child: Text('Delete activity and records')),
           ],
         ),
       ],
@@ -175,7 +175,7 @@ class TrackerDetailScreen extends ConsumerWidget {
           const EmptyState(
             icon: Icons.history_rounded,
             title: 'No records yet',
-            message: 'Tap Log, or use this habit from Today.',
+            message: 'Tap Log, or add this activity from Today.',
             compact: true,
           )
         else
@@ -259,7 +259,7 @@ class TrackerDetailScreen extends ConsumerWidget {
       case TrackerType.duration:
         return formatDurationMinutes(total);
       case TrackerType.rating:
-        return total == 0 ? '—' : total.toStringAsFixed(1);
+        return total == 0 ? '-' : total.toStringAsFixed(1);
       case TrackerType.text:
         return '${total.round()} notes';
       case TrackerType.count:
@@ -280,18 +280,17 @@ class TrackerDetailScreen extends ConsumerWidget {
   ) async {
     final ok = await confirm(
       context,
-      title: 'Delete “${tracker.name}”?',
+      title: 'Delete ${tracker.name}?',
       message:
-          'This removes the tracker and its $recordCount '
-          '${recordCount == 1 ? 'record' : 'records'}. Other data is not '
-          'affected. Consider archiving later if you want to keep history.',
+          'This removes the activity and its $recordCount '
+          '${recordCount == 1 ? 'record' : 'records'}. Other data is not affected.',
     );
     if (!ok) return;
     if (!context.mounted) return;
     await guard(
       context,
       ref.read(archiveProvider.notifier).deleteTracker(tracker.id),
-      errorPrefix: 'Could not delete tracker',
+      errorPrefix: 'Could not delete activity',
     );
     if (context.mounted) Navigator.of(context).pop();
   }

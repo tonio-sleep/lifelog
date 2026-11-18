@@ -55,21 +55,58 @@ Future<void> habitPrimaryAction(
     case TrackerType.count:
     case TrackerType.event:
       HapticFeedback.lightImpact();
+      final controller = ref.read(archiveProvider.notifier);
+      final archive = ref.read(archiveProvider);
+      final existing = archive.trackerRecordsOn(day).where(
+        (r) =>
+            r.trackerId == tracker.id &&
+            (r.startedAt == null && r.endedAt == null && r.note.trim().isEmpty),
+      );
       final record = await guard(
         context,
-        controller.logTracker(tracker, value: 1, at: momentForDay(day)),
-        errorPrefix: 'Could not log habit',
+        () async {
+          if (existing.isNotEmpty) {
+            final base = existing.last;
+            final updated = base.copyWith(
+              value: (base.value ?? 0) + 1,
+              recordedAt: momentForDay(day),
+            );
+            await controller.updateRecord(updated);
+            return updated;
+          }
+          return controller.logTracker(tracker, value: 1, at: momentForDay(day));
+        }(),
+        errorPrefix: 'Could not log activity',
       );
       if (record != null && context.mounted) {
+        final total = TrackerMath.totalOn(
+          ref.read(archiveProvider).trackerRecords,
+          tracker.id,
+          day,
+        );
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(
             SnackBar(
               duration: const Duration(seconds: 3),
-              content: Text('${tracker.name} +1'),
+              content: Text('${tracker.name}: ${formatCompactNumber(total)}'),
               action: SnackBarAction(
                 label: 'Undo',
-                onPressed: () => controller.deleteRecord(record.id),
+                onPressed: () async {
+                  final latest = ref
+                      .read(archiveProvider)
+                      .trackerRecordsOn(day)
+                      .where((r) => r.id == record.id)
+                      .toList();
+                  if (latest.isEmpty) return;
+                  final current = latest.first;
+                  final v = (current.value ?? 1) - 1;
+                  if (v <= 0) {
+                    await controller.deleteRecord(current.id);
+                  } else {
+                    await controller.updateRecord(current.copyWith(value: v));
+                  }
+                },
               ),
             ),
           );
@@ -306,7 +343,7 @@ class HabitRow extends ConsumerWidget {
   }
 }
 
-/// The compact habit strip shown on Today: one row of orbs, no descriptions.
+/// The compact activity strip shown on Today: one row of orbs, no descriptions.
 class TodayHabits extends ConsumerWidget {
   const TodayHabits({super.key, required this.day, this.onSeeAll});
 
@@ -332,7 +369,7 @@ class TodayHabits extends ConsumerWidget {
             ),
             const SizedBox(width: Insets.md),
             Expanded(
-              child: Text('Start a habit', style: context.text.titleSmall),
+              child: Text('Add an activity', style: context.text.titleSmall),
             ),
             Icon(Icons.add_rounded, color: palette.dimText),
           ],
@@ -341,7 +378,7 @@ class TodayHabits extends ConsumerWidget {
     }
 
     final done = trackers
-        .where((t) => HabitHistory(t, archive.trackerRecords).doneOn(day))
+        .where((t) => HabitHistory(t, archive.trackerRecords).loggedOn(day))
         .length;
     final shown = trackers.take(12).toList();
     return QuietCard(
@@ -351,10 +388,10 @@ class TodayHabits extends ConsumerWidget {
         children: [
           Row(
             children: [
-              Text('Habits', style: context.text.titleMedium),
+              Text('Activities', style: context.text.titleMedium),
               const SizedBox(width: Insets.sm),
               Text(
-                '$done of ${trackers.length}',
+                done == 0 ? 'Optional' : '$done logged',
                 style: context.text.labelMedium?.copyWith(
                   color: palette.mutedText,
                   fontFeatures: tabularFigures,

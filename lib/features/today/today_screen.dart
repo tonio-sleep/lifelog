@@ -142,12 +142,19 @@ class _DayBody extends ConsumerWidget {
     }
     final listening = summary.scrobbles.isEmpty ? null : summary.music;
 
+    final dailyEntry = archive.dailyEntryFor(day);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ComposerCard(
           isToday: isToday,
-          entry: archive.dailyEntryFor(day),
+          entry: dailyEntry,
+          onTap: () => showDailyCheckinSheet(context, ref, day),
+        ),
+        const SizedBox(height: Insets.md),
+        JournalWriteCard(
+          isToday: isToday,
+          entry: dailyEntry,
           onTap: () => createJournalEntry(context, date: day, focusBody: true),
         ),
         if (latest != null) ...[
@@ -184,7 +191,7 @@ class _DayBody extends ConsumerWidget {
             TimelineSource.manual,
           },
           emptyMessage: isToday
-              ? 'Nothing yet. Write a line, log a habit or add a photo.'
+              ? 'Nothing yet. Add a check-in, log an activity, write, or add a photo.'
               : 'Nothing was recorded on this day.',
         ),
       ],

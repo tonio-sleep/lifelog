@@ -148,6 +148,7 @@ class AppSettings {
     String? lastfmUsername,
     bool clearLastfmUsername = false,
     String? lastfmApiKeyCipher,
+    bool clearLastfmApiKeyCipher = false,
     bool clearLastfmCredentials = false,
     DateTime? lastfmConnectedAt,
     DateTime? lastfmLastSync,
@@ -185,7 +186,7 @@ class AppSettings {
       lastfmUsername: clearLastfmCredentials || clearLastfmUsername
           ? null
           : (lastfmUsername ?? this.lastfmUsername),
-      lastfmApiKeyCipher: clearLastfmCredentials
+      lastfmApiKeyCipher: clearLastfmCredentials || clearLastfmApiKeyCipher
           ? null
           : (lastfmApiKeyCipher ?? this.lastfmApiKeyCipher),
       lastfmConnectedAt: clearLastfmCredentials

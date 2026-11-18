@@ -5,36 +5,44 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/providers/providers.dart';
 import '../../app/providers/settings_provider.dart';
+import '../../app/theme/app_theme.dart';
 import '../../app/widgets/common.dart';
+import '../../app/widgets/components.dart';
 import '../../core/util/dates.dart';
 import 'google_sign_in_flow.dart';
 
 Future<void> connectGoogleDrive(BuildContext context, WidgetRef ref) async {
   final existing = ref.read(settingsProvider);
-  final config = await _askGoogleClientConfig(
-    context,
-    initialId: existing.googleClientId ?? '',
-    initialSecret: existing.googleClientSecret ?? '',
-  );
-  if (config == null) return;
-  if (!context.mounted) return;
+  String clientId = (existing.googleClientId ?? '').trim();
+  String clientSecret = (existing.googleClientSecret ?? '').trim();
 
-  await guard(
-    context,
-    ref.read(settingsProvider.notifier).setGoogleClientConfig(
-          clientId: config.$1,
-          clientSecret: config.$2,
-        ),
-    errorPrefix: 'Could not save Google settings',
-  );
-  if (!context.mounted) return;
+  if (clientId.isEmpty) {
+    final config = await _askGoogleClientConfig(
+      context,
+      initialId: clientId,
+      initialSecret: clientSecret,
+    );
+    if (config == null) return;
+    clientId = config.$1;
+    clientSecret = config.$2;
+    if (!context.mounted) return;
+    await guard(
+      context,
+      ref.read(settingsProvider.notifier).setGoogleClientConfig(
+            clientId: clientId,
+            clientSecret: clientSecret,
+          ),
+      errorPrefix: 'Could not save Google settings',
+    );
+    if (!context.mounted) return;
+  }
 
   final services = ref.read(appServicesProvider);
   final result = await signInWithGoogle(
     context,
     service: services.googleDrive,
-    clientId: config.$1,
-    clientSecret: config.$2,
+    clientId: clientId,
+    clientSecret: clientSecret,
   );
   if (result == null || !context.mounted) return;
 
@@ -48,35 +56,56 @@ Future<void> connectGoogleDrive(BuildContext context, WidgetRef ref) async {
   );
   if (!context.mounted) return;
 
-  showSnack(context, 'Connected to Google Drive as ${result.accountEmail}.');
+  showSnack(context, 'Connected as ${result.accountEmail}.');
 
-  // If there's a remote backup, offer to restore (retrieve data).
   final settings = ref.read(settingsProvider);
   final authJson = await ref.read(settingsProvider.notifier).googleAuthJson();
   if (authJson == null || !context.mounted) return;
   final remote = await guard(
     context,
     services.googleDrive.findRemoteBackup(
-      clientId: settings.googleClientId ?? config.$1,
-      clientSecret: settings.googleClientSecret ?? config.$2,
+      clientId: settings.googleClientId ?? clientId,
+      clientSecret: settings.googleClientSecret ?? clientSecret,
       authJson: authJson,
       onRefreshed: (j) => ref.read(settingsProvider.notifier).updateGoogleAuthCipher(j),
     ),
     errorPrefix: 'Could not check Google Drive',
   );
   if (remote != null && context.mounted) {
-    final doRestore = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Backup found in Google Drive'),
-        content: Text(
-          remote.modifiedTime != null
-              ? 'A synced backup was found (updated ${formatDayLong(remote.modifiedTime!)} ${formatTime(remote.modifiedTime!)}). Restore it to this device? This replaces local data with the cloud backup.'
-              : 'A synced backup was found in your Google Drive. Restore it to this device? This replaces local data with the cloud backup.',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Not now')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Restore')),
+    final doRestore = await showLifelogSheet<bool>(
+      context,
+      builder: (ctx) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SheetTitle(
+            title: 'Backup found in Google Drive',
+            subtitle: 'Restore your data to this device?',
+          ),
+          Text(
+            remote.modifiedTime != null
+                ? 'A synced backup was found (updated ${formatDayLong(remote.modifiedTime!)} ${formatTime(remote.modifiedTime!)}). Restoring replaces local data on this device with the cloud backup.'
+                : 'A synced backup was found in your Google Drive. Restoring replaces local data on this device with the cloud backup.',
+            style: ctx.text.bodyMedium?.copyWith(color: ctx.palette.mutedText),
+          ),
+          const SizedBox(height: Insets.xl),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Not now'),
+                ),
+              ),
+              const SizedBox(width: Insets.md),
+              Expanded(
+                child: FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('Restore'),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -263,53 +292,72 @@ Future<(String, String)?> _askGoogleClientConfig(
 }) async {
   final idController = TextEditingController(text: initialId);
   final secretController = TextEditingController(text: initialSecret);
-  return showDialog<(String, String)>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      title: const Text('Google Drive setup'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+  String? error;
+  return showLifelogSheet<(String, String)>(
+    context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setModalState) {
+        final text = ctx.text;
+        final palette = ctx.palette;
+        return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'To sync with your Google Drive account, create an OAuth 2.0 Client ID '
-              '(Desktop app) in Google Cloud Console and enable the Google Drive API. '
-              'Enter the credentials below.',
-              style: TextStyle(fontSize: 13),
+            const SheetTitle(
+              title: 'Connect Google Drive',
+              subtitle: 'One-time setup to sign in and sync your data',
             ),
-            const SizedBox(height: 12),
+            Text(
+              'Lifelog uses Google Drive (app data) to back up and restore your encrypted data. '
+              'To sign in, enter your Google OAuth Client ID once. You can create a "Desktop app" client in Google Cloud Console with the Drive API enabled.',
+              style: text.bodySmall?.copyWith(color: palette.mutedText),
+            ),
+            const SizedBox(height: Insets.lg),
             TextField(
               controller: idController,
-              decoration: const InputDecoration(
+              autocorrect: false,
+              decoration: InputDecoration(
                 labelText: 'OAuth Client ID',
                 hintText: 'xxxx.apps.googleusercontent.com',
+                errorText: error,
               ),
-              autofocus: true,
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: Insets.md),
             TextField(
               controller: secretController,
-              decoration: const InputDecoration(
-                labelText: 'Client Secret (if provided)',
-                hintText: 'Optional for some client types',
-              ),
               obscureText: true,
+              autocorrect: false,
+              decoration: const InputDecoration(
+                labelText: 'Client secret (optional)',
+                hintText: 'If your client type provides one',
+              ),
+            ),
+            const SizedBox(height: Insets.xl),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: () {
+                  final id = idController.text.trim();
+                  if (id.isEmpty) {
+                    setModalState(() => error = 'Enter your OAuth Client ID to continue.');
+                    return;
+                  }
+                  Navigator.pop(ctx, (id, secretController.text.trim()));
+                },
+                icon: const Icon(Icons.login_rounded, size: 18),
+                label: const Text('Continue to Google'),
+              ),
+            ),
+            const SizedBox(height: Insets.sm),
+            Center(
+              child: TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
             ),
           ],
-        ),
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-        FilledButton(
-          onPressed: () {
-            final id = idController.text.trim();
-            if (id.isEmpty) return;
-            Navigator.pop(ctx, (id, secretController.text.trim()));
-          },
-          child: const Text('Continue'),
-        ),
-      ],
+        );
+      },
     ),
   );
 }

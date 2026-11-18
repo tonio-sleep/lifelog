@@ -191,7 +191,11 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
   late final TextEditingController _valueController;
   late final TextEditingController _textController;
   late final TextEditingController _noteController;
+  late final TextEditingController _durationController;
+  late final TextEditingController _countController;
   late DateTime _when;
+  DateTime? _startedAt;
+  DateTime? _endedAt;
   late int _rating;
   bool _boolValue = true;
   bool _busy = false;
@@ -211,6 +215,8 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
           now.hour,
           now.minute,
         );
+    _startedAt = editing?.startedAt;
+    _endedAt = editing?.endedAt;
     _rating = (editing?.value ?? 3).round().clamp(1, 5);
     if (editing != null && widget.tracker.type == TrackerType.boolean) {
       _boolValue = (editing.value ?? 0) > 0;
@@ -222,7 +228,18 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
     );
     _textController = TextEditingController(text: editing?.text ?? '');
     _noteController = TextEditingController(text: editing?.note ?? '');
-    _more = (editing?.note ?? '').isNotEmpty;
+    final dur = editing?.durationMinutes ?? editing?.effectiveDurationMinutes;
+    _durationController = TextEditingController(
+      text: dur == null ? '' : formatCompactNumber(dur),
+    );
+    _countController = TextEditingController(
+      text: editing?.count == null ? '' : formatCompactNumber(editing!.count!),
+    );
+    _more = (editing?.note ?? '').isNotEmpty ||
+        editing?.startedAt != null ||
+        editing?.endedAt != null ||
+        (editing?.durationMinutes != null) ||
+        (editing?.count != null);
   }
 
   @override
@@ -230,6 +247,8 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
     _valueController.dispose();
     _textController.dispose();
     _noteController.dispose();
+    _durationController.dispose();
+    _countController.dispose();
     super.dispose();
   }
 
@@ -418,6 +437,62 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
               : Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (tracker.type != TrackerType.count && tracker.type != TrackerType.event)
+                      TextField(
+                        controller: _countController,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]')),
+                        ],
+                        decoration: const InputDecoration(
+                          labelText: 'Count/times (optional)',
+                          hintText: 'e.g. 2',
+                          prefixIcon: Icon(Icons.tag_rounded, size: 18),
+                        ),
+                      ),
+                    if (tracker.type != TrackerType.count && tracker.type != TrackerType.event)
+                      const SizedBox(height: Insets.sm),
+                    if (tracker.type != TrackerType.duration)
+                      TextField(
+                        controller: _durationController,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]')),
+                        ],
+                        decoration: const InputDecoration(
+                          labelText: 'Duration (minutes, optional)',
+                          hintText: 'e.g. 30',
+                          prefixIcon: Icon(Icons.timer_outlined, size: 18),
+                        ),
+                      ),
+                    if (tracker.type != TrackerType.duration)
+                      const SizedBox(height: Insets.sm),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _TimePickButton(
+                            label: 'From',
+                            value: _startedAt,
+                            onTap: () => _pickRangeTime(isStart: true),
+                            onClear: _startedAt == null
+                                ? null
+                                : () => setState(() => _startedAt = null),
+                          ),
+                        ),
+                        const SizedBox(width: Insets.sm),
+                        Expanded(
+                          child: _TimePickButton(
+                            label: 'To',
+                            value: _endedAt,
+                            onTap: () => _pickRangeTime(isStart: false),
+                            onClear: _endedAt == null
+                                ? null
+                                : () => setState(() => _endedAt = null),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: Insets.sm),
                     TextField(
                       controller: _noteController,
                       minLines: 1,
@@ -449,7 +524,7 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
                             ),
                             const Spacer(),
                             Text(
-                              'Change',
+                              'Logged time',
                               style: text.labelMedium?.copyWith(
                                 color: context.scheme.primary,
                               ),
@@ -503,6 +578,36 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
     });
   }
 
+  Future<void> _pickRangeTime({required bool isStart}) async {
+    final base = (isStart ? _startedAt : _endedAt) ?? _when;
+    final date = await showDatePicker(
+      context: context,
+      initialDate: base,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(base),
+    );
+    if (time == null || !mounted) return;
+    final picked = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    setState(() {
+      if (isStart) {
+        _startedAt = picked;
+      } else {
+        _endedAt = picked;
+      }
+      if (_startedAt != null && _endedAt != null) {
+        final diff = _endedAt!.difference(_startedAt!).inMinutes;
+        if (diff >= 0 && widget.tracker.type != TrackerType.duration) {
+          _durationController.text = '$diff';
+        }
+      }
+    });
+  }
+
   Future<void> _save() async {
     final tracker = widget.tracker;
     double? value;
@@ -522,24 +627,55 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
       case TrackerType.number:
       case TrackerType.duration:
       case TrackerType.event:
-        value = double.tryParse(_valueController.text.trim());
+        value = double.tryParse(_valueController.text.trim().replaceAll(',', '.'));
         if (value == null) {
           showSnack(context, 'Enter a valid number.');
           return;
         }
     }
 
+    final note = _noteController.text.trim();
+    final durText = _durationController.text.trim().replaceAll(',', '.');
+    double? durationMinutes = durText.isEmpty ? null : double.tryParse(durText);
+    final countText = _countController.text.trim().replaceAll(',', '.');
+    double? count = countText.isEmpty ? null : double.tryParse(countText);
+    if (countText.isNotEmpty && count == null) {
+      showSnack(context, 'Enter a valid count.');
+      return;
+    }
+    DateTime? startedAt = _startedAt;
+    DateTime? endedAt = _endedAt;
+    if (startedAt != null && endedAt != null) {
+      final diff = endedAt.difference(startedAt).inMinutes.toDouble();
+      if (diff < 0) {
+        showSnack(context, 'End time must be after start time.');
+        return;
+      }
+      durationMinutes ??= diff;
+    }
+    if (tracker.type == TrackerType.duration) {
+      durationMinutes = value;
+    }
+    final recordedAt = startedAt ?? _when;
+
     setState(() => _busy = true);
     final controller = ref.read(archiveProvider.notifier);
-    final note = _noteController.text.trim();
     try {
       if (widget.editing != null) {
         await controller.updateRecord(
           widget.editing!.copyWith(
-            recordedAt: _when,
+            recordedAt: recordedAt,
             value: value,
             text: text,
             note: note,
+            startedAt: startedAt,
+            clearStartedAt: startedAt == null,
+            endedAt: endedAt,
+            clearEndedAt: endedAt == null,
+            durationMinutes: durationMinutes,
+            clearDurationMinutes: durationMinutes == null,
+            count: count,
+            clearCount: count == null,
           ),
         );
       } else {
@@ -548,7 +684,11 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
           value: value,
           text: text,
           note: note,
-          at: _when,
+          at: recordedAt,
+          startedAt: startedAt,
+          endedAt: endedAt,
+          durationMinutes: durationMinutes,
+          count: count,
         );
       }
       if (mounted) Navigator.of(context).pop();
@@ -558,6 +698,47 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
         setState(() => _busy = false);
       }
     }
+  }
+}
+
+class _TimePickButton extends StatelessWidget {
+  const _TimePickButton({
+    required this.label,
+    required this.value,
+    required this.onTap,
+    this.onClear,
+  });
+
+  final String label;
+  final DateTime? value;
+  final VoidCallback onTap;
+  final VoidCallback? onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return OutlinedButton(
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: Insets.sm, vertical: 10),
+        alignment: Alignment.centerLeft,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              value == null ? '$label: --:--' : '$label: ${formatTime(value!)}',
+              style: context.text.bodySmall,
+            ),
+          ),
+          if (onClear != null)
+            GestureDetector(
+              onTap: onClear,
+              child: Icon(Icons.close_rounded, size: 16, color: palette.mutedText),
+            ),
+        ],
+      ),
+    );
   }
 }
 
@@ -668,7 +849,7 @@ class _TrackerEditorSheetState extends ConsumerState<_TrackerEditorSheet> {
       mainAxisSize: MainAxisSize.min,
       children: [
         SheetTitle(
-          title: widget.existing == null ? 'New habit' : 'Edit habit',
+          title: widget.existing == null ? 'New activity' : 'Edit activity',
           leading: IconBadge(
             icon: trackerIcon(_icon),
             color: accent,
@@ -680,7 +861,7 @@ class _TrackerEditorSheetState extends ConsumerState<_TrackerEditorSheet> {
           controller: _nameController,
           autofocus: widget.existing == null,
           textCapitalization: TextCapitalization.sentences,
-          decoration: const InputDecoration(hintText: 'Read, stretch, water'),
+          decoration: const InputDecoration(hintText: 'Shower, reading, workout, water'),
         ),
         label('Track as'),
         Wrap(
@@ -820,7 +1001,8 @@ class _TrackerEditorSheetState extends ConsumerState<_TrackerEditorSheet> {
                       value: _multiplePerDay,
                       onChanged: (value) =>
                           setState(() => _multiplePerDay = value),
-                      title: const Text('More than once a day'),
+                      title: const Text('Log more than once a day'),
+                      subtitle: const Text('Each log can have its own time or duration.'),
                     ),
                   ],
                 ),
@@ -830,7 +1012,7 @@ class _TrackerEditorSheetState extends ConsumerState<_TrackerEditorSheet> {
           width: double.infinity,
           child: FilledButton(
             onPressed: _save,
-            child: Text(widget.existing == null ? 'Create habit' : 'Save'),
+            child: Text(widget.existing == null ? 'Add activity' : 'Save'),
           ),
         ),
       ],
@@ -840,7 +1022,7 @@ class _TrackerEditorSheetState extends ConsumerState<_TrackerEditorSheet> {
   void _save() {
     final name = _nameController.text.trim();
     if (name.isEmpty) {
-      showSnack(context, 'Give the habit a name.');
+      showSnack(context, 'Give the activity a name.');
       return;
     }
     final targetText = _targetController.text.trim();

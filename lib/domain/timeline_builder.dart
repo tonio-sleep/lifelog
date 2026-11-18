@@ -1,4 +1,4 @@
-import '../core/util/dates.dart';
+﻿import '../core/util/dates.dart';
 import 'models/archive.dart';
 import 'models/music.dart';
 import 'models/timeline.dart';
@@ -60,13 +60,12 @@ List<TimelineItem> buildTimelineForDay(
     final tracker = archive.trackerById(record.trackerId);
     if (tracker == null) continue;
     final value = TrackerMath.recordLabel(tracker, record);
-    final subtitle = record.note.trim().isEmpty
-        ? value
-        : '$value · ${record.note.trim()}';
+    final note = record.note.trim();
+    final subtitle = note.isEmpty ? value : '$value · $note';
     items.add(
       TimelineItem(
         id: 'tracker:${record.id}',
-        at: record.recordedAt,
+        at: record.startedAt ?? record.recordedAt,
         title: tracker.name,
         subtitle: subtitle,
         source: TimelineSource.tracker,
@@ -126,8 +125,8 @@ List<TimelineItem> buildTimelineForDay(
         subtitle: media.caption.trim().isEmpty
             ? '${media.kindLabel} added'
             : media.tags.isEmpty
-            ? media.kindLabel
-            : media.tags.map((t) => '#$t').join(' '),
+                ? media.kindLabel
+                : media.tags.map((t) => '#$t').join(' '),
         source: TimelineSource.photo,
         confidence: TimelineConfidence.confirmed,
         derived: true,
@@ -154,14 +153,12 @@ List<TimelineItem> _musicSessions(List<MusicScrobble> scrobbles) {
   if (scrobbles.isEmpty) return const [];
   final plays = [...scrobbles]..sort((a, b) => a.playedAt.compareTo(b.playedAt));
   final summary = MusicDaySummary.fromScrobbles(plays);
-  final artistNames = summary.topArtists
-      .take(3)
-      .map((a) => a.name)
-      .join(', ');
+  final artistNames = summary.topArtists.take(3).map((a) => a.name).join(' · ');
   var artwork = '';
   for (final play in plays) {
-    if (play.artworkUrl != null) {
-      artwork = play.artworkUrl!;
+    final url = play.artworkUrl;
+    if (url != null && url.trim().isNotEmpty) {
+      artwork = url;
       break;
     }
   }

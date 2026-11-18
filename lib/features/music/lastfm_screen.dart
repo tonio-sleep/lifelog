@@ -85,7 +85,7 @@ class _LastfmScreenState extends ConsumerState<LastfmScreen> {
                                 ? 'Never synced'
                                 : 'Synced ${relativeDayLabel(settings.lastfmLastSync!).toLowerCase()}, '
                                       '${formatTime(settings.lastfmLastSync!)}')
-                          : 'Add your username and API key',
+                          : 'Add your username to import listening history',
                       style: text.bodySmall?.copyWith(color: palette.mutedText),
                     ),
                   ],
@@ -111,10 +111,19 @@ class _LastfmScreenState extends ConsumerState<LastfmScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        Text(
+                          'Connect your Last.fm profile to import your listening history.',
+                          style: text.bodySmall?.copyWith(color: palette.mutedText),
+                        ),
+                        const SizedBox(height: Insets.lg),
                         TextField(
                           controller: _username,
                           autocorrect: false,
-                          decoration: const InputDecoration(labelText: 'Username'),
+                          textInputAction: TextInputAction.next,
+                          decoration: const InputDecoration(
+                            labelText: 'Last.fm username',
+                            hintText: 'Your username',
+                          ),
                         ),
                         const SizedBox(height: Insets.md),
                         TextField(
@@ -122,13 +131,15 @@ class _LastfmScreenState extends ConsumerState<LastfmScreen> {
                           obscureText: true,
                           autocorrect: false,
                           decoration: InputDecoration(
-                            labelText: 'API key',
-                            hintText: connected ? 'Leave blank to keep the saved key' : null,
+                            labelText: 'API key (optional)',
+                            hintText: connected
+                                ? 'Leave blank to keep the saved key'
+                                : 'Only needed if sync requires it',
                           ),
                         ),
-                        const SizedBox(height: Insets.sm),
+                        const SizedBox(height: Insets.xs),
                         Text(
-                          'Create a free key at last.fm/api. It is stored encrypted on this device.',
+                          'Usually your username is enough. If Last.fm asks for a key, you can add one later (stored encrypted on this device).',
                           style: text.bodySmall?.copyWith(color: palette.dimText),
                         ),
                         const SizedBox(height: Insets.lg),
@@ -136,7 +147,7 @@ class _LastfmScreenState extends ConsumerState<LastfmScreen> {
                           width: double.infinity,
                           child: FilledButton(
                             onPressed: _busy ? null : _connect,
-                            child: Text(connected ? 'Save' : 'Connect'),
+                            child: Text(connected ? 'Save' : 'Continue'),
                           ),
                         ),
                       ],
@@ -255,16 +266,10 @@ class _LastfmScreenState extends ConsumerState<LastfmScreen> {
   Future<void> _connect() async {
     final username = _username.text.trim();
     final typedKey = _apiKey.text.trim();
-    final existingKey = await ref
-        .read(settingsProvider.notifier)
-        .lastfmApiKey();
-    final key = typedKey.isEmpty ? existingKey : typedKey;
+    final existingKey = await ref.read(settingsProvider.notifier).lastfmApiKey();
+    final key = typedKey.isNotEmpty ? typedKey : (existingKey ?? '');
     if (username.isEmpty) {
       setState(() => _error = 'Enter your Last.fm username.');
-      return;
-    }
-    if (key == null || key.isEmpty) {
-      setState(() => _error = 'Enter your Last.fm API key.');
       return;
     }
     setState(() {
@@ -279,10 +284,11 @@ class _LastfmScreenState extends ConsumerState<LastfmScreen> {
       _apiKey.clear();
       if (!mounted) return;
       setState(() {
-        _status = 'Credentials saved. Press Sync now to import tracks.';
+        _editing = false;
+        _status = 'Saved. Tap Sync now to import your recent listening.';
       });
     } catch (error) {
-      if (mounted) setState(() => _error = 'Could not save credentials: $error');
+      if (mounted) setState(() => _error = 'Could not save: $error');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -290,11 +296,9 @@ class _LastfmScreenState extends ConsumerState<LastfmScreen> {
 
   Future<void> _sync() async {
     final settings = ref.read(settingsProvider);
-    final apiKey = await ref
-        .read(settingsProvider.notifier)
-        .lastfmApiKey();
+    final apiKey = await ref.read(settingsProvider.notifier).lastfmApiKey();
     final username = settings.lastfmUsername;
-    if (username == null || apiKey == null) {
+    if (username == null || username.trim().isEmpty) {
       setState(() => _error = 'Connect Last.fm first.');
       return;
     }
@@ -306,27 +310,24 @@ class _LastfmScreenState extends ConsumerState<LastfmScreen> {
     try {
       final now = DateTime.now();
       final from = now.subtract(Duration(days: _syncDays));
-      final tracks = await ref.read(appServicesProvider).lastfm
-          .fetchRecentTracks(
+      final tracks = await ref.read(appServicesProvider).lastfm.fetchRecentTracks(
             username: username,
-            apiKey: apiKey,
+            apiKey: apiKey ?? '',
             from: from,
             to: now,
             maxPages: 12,
           );
       if (!mounted) return;
-      final added = await ref
-          .read(archiveProvider.notifier)
-          .importScrobbles(tracks);
-      await ref
-          .read(settingsProvider.notifier)
-          .recordLastfmSync(now, tracks.isEmpty ? null : tracks.first.playedAt);
+      final added = await ref.read(archiveProvider.notifier).importScrobbles(tracks);
+      await ref.read(settingsProvider.notifier).recordLastfmSync(
+            now,
+            tracks.isEmpty ? null : tracks.first.playedAt,
+          );
       if (!mounted) return;
       setState(() {
         _status = tracks.isEmpty
-            ? 'Last.fm returned no scrobbles in this range.'
-            : '$added new ${added == 1 ? 'scrobble' : 'scrobbles'} imported '
-                  '(${tracks.length} received).';
+            ? 'No scrobbles found in this range.'
+            : '$added new ${added == 1 ? 'scrobble' : 'scrobbles'} imported (${tracks.length} received).';
       });
     } on LastfmException catch (error) {
       if (mounted) setState(() => _error = error.message);

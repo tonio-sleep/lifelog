@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 
+import '../../app/providers/providers.dart';
 import '../../app/providers/settings_provider.dart';
 import '../../app/theme/app_theme.dart';
 import '../../app/widgets/common.dart';
@@ -84,15 +86,15 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     wide: wide,
                     illustration: const _SignInArt(),
                     eyebrow: 'Welcome',
-                    title: 'Sign up, log in, or continue',
+                    title: 'Your journal, saved on this device',
                     body:
-                        'Create or connect your Google account to sync and restore your data across devices, '
-                        'or continue without an account to keep everything saved locally on this device.',
+                        'Keep your day, memories, and check-ins in one private place. '
+                        'Connect Google if you want cloud backup, or continue locally and everything will be saved on this iPhone.',
                     children: [
                       _SignInChoiceCard(
                         icon: Icons.account_circle_outlined,
-                        title: 'Sign up / Log in with Google',
-                        subtitle: 'Securely sync and retrieve your encrypted backup with Google Drive',
+                        title: 'Continue with Google',
+                        subtitle: 'Optional: back up and restore with your Google account',
                         primary: true,
                         onTap: () async {
                           await connectGoogleDrive(context, ref);
@@ -106,8 +108,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                       const SizedBox(height: Insets.md),
                       _SignInChoiceCard(
                         icon: Icons.phone_iphone_rounded,
-                        title: 'Continue without signing in',
-                        subtitle: 'No account needed. Everything is saved locally on this device (you can connect Google later).',
+                        title: 'Continue on this device',
+                        subtitle: 'No sign-in needed. Your data stays local and encrypted',
                         onTap: () => _pages.nextPage(
                           duration: const Duration(milliseconds: 280),
                           curve: Curves.easeOutCubic,
@@ -156,42 +158,69 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   _PageFrame(
                     wide: wide,
                     illustration: const _PrivacyArt(),
-                    eyebrow: 'The honest privacy model',
-                    title: 'Protected, with limits stated',
+                    eyebrow: 'Privacy',
+                    title: 'Private by design',
                     body:
-                        'Lifelog can make strong claims about what it stores '
-                        'and what it sends. It cannot make claims it cannot '
-                        'keep.',
+                        'Your data is encrypted on this device. You choose what to connect and what to share.',
                     children: const [
                       _FactRow(
                         icon: Icons.enhanced_encryption_outlined,
-                        text:
-                            'The whole structured archive is encrypted, not '
-                            'only individual fields.',
+                        text: 'Your journal and records are encrypted on this device.',
                       ),
                       _FactRow(
-                        icon: Icons.key_outlined,
-                        text:
-                            'The key lives in platform secure storage, with a '
-                            'documented local-file fallback.',
+                        icon: Icons.touch_app_outlined,
+                        text: 'Nothing is added unless you choose to add it.',
                       ),
                       _FactRow(
-                        icon: Icons.gps_off_rounded,
-                        text:
-                            'No background location tracking. Visits are '
-                            'manual.',
+                        icon: Icons.cloud_outlined,
+                        text: 'Google, Last.fm, and Health connections are optional and only used when you enable them.',
                       ),
                       _FactRow(
-                        icon: Icons.travel_explore_outlined,
-                        text:
-                            'The map is schematic: no tiles, no coordinates '
-                            'sent to a provider.',
+                        icon: Icons.location_on_outlined,
+                        text: 'Location is only used when you save a place. Screen Time data is not available on iPhone without special Apple approval.',
                       ),
-                      _FactRow(
-                        icon: Icons.graphic_eq_rounded,
-                        text:
-                            'Last.fm is optional, read-only and uses your own '
-                            'API key.',
+                    ],
+                  ),
+                  _PageFrame(
+                    wide: wide,
+                    illustration: const _SetupArt(),
+                    eyebrow: 'Permissions',
+                    title: 'Allow access you want to use',
+                    body:
+                        'You can allow these now or later in Settings. If you skip them, the app still works and saves everything locally.',
+                    children: [
+                      _PermissionCard(
+                        icon: Icons.location_on_outlined,
+                        title: 'Location',
+                        subtitle: 'Used only when you choose to save a place or visit',
+                        actionLabel: 'Allow',
+                        onTap: () => _requestLocationPermission(context),
+                      ),
+                      const SizedBox(height: Insets.md),
+                      _PermissionCard(
+                        icon: Icons.favorite_border_rounded,
+                        title: 'Health & steps',
+                        subtitle: 'Read-only access to import your daily step count',
+                        actionLabel: 'Allow',
+                        onTap: () => _requestHealthPermission(context),
+                      ),
+                      const SizedBox(height: Insets.md),
+                      QuietCard(
+                        padding: const EdgeInsets.all(Insets.md),
+                        color: LifelogPalette.of(context).subtle.withValues(alpha: 0.7),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(Icons.info_outline_rounded, size: 17, color: LifelogPalette.of(context).mutedText),
+                            const SizedBox(width: Insets.sm),
+                            Expanded(
+                              child: Text(
+                                'Screen Time and app usage data cannot be accessed by regular iPhone apps without special Apple entitlements, so it cannot be imported here.',
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: LifelogPalette.of(context).mutedText),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -375,7 +404,42 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     );
   }
 
-  static const _pagesInitialised = 5;
+  static const _pagesInitialised = 6;
+
+  Future<void> _requestLocationPermission(BuildContext context) async {
+    try {
+      await Geolocator.isLocationServiceEnabled();
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (!context.mounted) return;
+      if (permission == LocationPermission.deniedForever) {
+        showSnack(context, 'Location permission is off. You can enable it in Settings.');
+      } else if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
+        showSnack(context, 'Location access enabled.');
+      } else {
+        showSnack(context, 'Location access not granted.');
+      }
+    } catch (_) {
+      if (context.mounted) showSnack(context, 'Could not request location access right now.');
+    }
+  }
+
+  Future<void> _requestHealthPermission(BuildContext context) async {
+    try {
+      final services = ref.read(appServicesProvider);
+      if (!services.healthSteps.isSupported) {
+        if (context.mounted) showSnack(context, 'Health steps are available on supported devices.');
+        return;
+      }
+      final ok = await services.healthSteps.requestPermission();
+      if (!context.mounted) return;
+      showSnack(context, ok ? 'Health access enabled.' : 'Health access not granted.');
+    } catch (_) {
+      if (context.mounted) showSnack(context, 'Could not request Health access right now.');
+    }
+  }
 
   Future<void> _advance() async {
     if (_page < _pagesInitialised - 1) {
@@ -831,29 +895,43 @@ class _SignInChoiceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = LifelogPalette.of(context);
     final scheme = Theme.of(context).colorScheme;
-    final bg = primary ? scheme.primary.withValues(alpha: 0.08) : palette.subtle.withValues(alpha: 0.5);
-    final border = primary ? scheme.primary.withValues(alpha: 0.25) : palette.border;
+    final bg = primary
+        ? scheme.primary.withValues(alpha: palette.isDark ? 0.18 : 0.10)
+        : palette.card;
+    final border = primary ? scheme.primary.withValues(alpha: 0.28) : palette.border;
     return Pressable(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(Radii.lg),
+      borderRadius: BorderRadius.circular(Radii.xl),
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.all(Insets.lg),
         decoration: BoxDecoration(
           color: bg,
-          borderRadius: BorderRadius.circular(Radii.lg),
+          borderRadius: BorderRadius.circular(Radii.xl),
           border: Border.all(color: border),
+          boxShadow: palette.isDark
+              ? null
+              : [
+                  BoxShadow(
+                    color: scheme.primary.withValues(alpha: primary ? 0.08 : 0.03),
+                    blurRadius: 18,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
         ),
         child: Row(
           children: [
-            IconBadge(icon: icon, size: 40, iconSize: 20, color: primary ? scheme.primary : null),
+            IconBadge(icon: icon, size: 44, iconSize: 22, color: primary ? scheme.primary : null),
             const SizedBox(width: Insets.md),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 2),
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 4),
                   Text(
                     subtitle,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(color: palette.mutedText),
@@ -861,9 +939,54 @@ class _SignInChoiceCard extends StatelessWidget {
                 ],
               ),
             ),
-            Icon(Icons.chevron_right_rounded, color: palette.dimText),
+            Icon(Icons.arrow_forward_rounded, size: 18, color: primary ? scheme.primary : palette.dimText),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _PermissionCard extends StatelessWidget {
+  const _PermissionCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.actionLabel,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String actionLabel;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = LifelogPalette.of(context);
+    return QuietCard(
+      padding: const EdgeInsets.all(Insets.md),
+      child: Row(
+        children: [
+          IconBadge(icon: icon, size: 40, iconSize: 20),
+          const SizedBox(width: Insets.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 2),
+                Text(subtitle, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: palette.mutedText)),
+              ],
+            ),
+          ),
+          const SizedBox(width: Insets.sm),
+          FilledButton.tonal(
+            onPressed: onTap,
+            child: Text(actionLabel),
+          ),
+        ],
       ),
     );
   }

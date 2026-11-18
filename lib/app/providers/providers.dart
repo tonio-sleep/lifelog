@@ -199,6 +199,10 @@ class ArchiveController extends Notifier<Archive> {
     String text = '',
     String note = '',
     DateTime? at,
+    DateTime? startedAt,
+    DateTime? endedAt,
+    double? durationMinutes,
+    double? count,
   }) async {
     final record = TrackerRecord(
       id: const Uuid().v4(),
@@ -207,6 +211,10 @@ class ArchiveController extends Notifier<Archive> {
       value: value,
       text: text,
       note: note,
+      startedAt: startedAt,
+      endedAt: endedAt,
+      durationMinutes: durationMinutes,
+      count: count,
     );
     final next = state.copy()..trackerRecords.add(record);
     await _persist(next);

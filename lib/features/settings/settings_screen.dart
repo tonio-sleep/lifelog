@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 
 import '../../app/providers/providers.dart';
 import '../../app/providers/session_provider.dart';
@@ -162,16 +163,25 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ],
         ),
-        if (services.healthSteps.isSupported)
-          ListGroup(
-            title: 'Health & steps',
-            footer: 'Connect Apple Health / Health Connect to import your step count into your daily check-in. Read-only access; nothing is written to Health.',
-            children: [
+        ListGroup(
+          title: 'Permissions',
+          footer: 'Location is used only when you choose to save a place. Health access is read-only for step counts. '
+              'Screen Time data is not available on iPhone without special Apple entitlements.',
+          children: [
+            ListRow(
+              icon: Icons.location_on_outlined,
+              iconColor: palette.place,
+              title: 'Location access',
+              subtitle: 'Allow location when saving places or visits',
+              chevron: true,
+              onTap: () => _requestLocationPermission(context),
+            ),
+            if (services.healthSteps.isSupported)
               ListRow(
                 icon: Icons.favorite_border_rounded,
-                iconColor: palette.place,
-                title: 'Connect steps (Health)',
-                subtitle: 'Allow access to read daily steps',
+                iconColor: palette.tracker,
+                title: 'Health access (steps)',
+                subtitle: 'Allow read-only access to daily step counts',
                 chevron: true,
                 onTap: () async {
                   final ok = await guard<bool>(
@@ -180,12 +190,25 @@ class SettingsScreen extends ConsumerWidget {
                     errorPrefix: 'Could not connect to Health',
                   );
                   if (ok == true && context.mounted) {
-                    showSnack(context, 'Health access granted. You can import steps in your daily check-in.');
+                    showSnack(context, 'Health access granted.');
                   } else if (ok == false && context.mounted) {
                     showSnack(context, 'Health access was not granted.');
                   }
                 },
               ),
+            ListRow(
+              icon: Icons.hourglass_disabled_rounded,
+              iconColor: palette.mutedText,
+              title: 'Screen Time',
+              subtitle: 'Not available on iPhone without special Apple approval',
+            ),
+          ],
+        ),
+        if (services.healthSteps.isSupported)
+          ListGroup(
+            title: 'Steps',
+            footer: 'Import your daily step count into your check-in. Read-only; nothing is written to Health.',
+            children: [
               ListRow(
                 icon: Icons.directions_walk_rounded,
                 iconColor: palette.place,
@@ -197,42 +220,46 @@ class SettingsScreen extends ConsumerWidget {
             ],
           ),
         ListGroup(
-          title: 'Google Drive',
+          title: 'Google account',
           footer: settings.googleDriveConnected
-              ? 'Signed in as ${settings.googleAccountEmail}. ${settings.googleLastSyncAt == null ? 'Not synced yet.' : 'Last sync ${formatDayLong(settings.googleLastSyncAt!)}, ${formatTime(settings.googleLastSyncAt!)}.'} Cloud sync uses an encrypted backup (structured data; media files not included).'
-              : 'Sign in with your Google account to sync and retrieve your data via Google Drive (app data). You will need a Google OAuth Client ID (Desktop app).',
+              ? 'Signed in as ${settings.googleAccountEmail}. ${settings.googleLastSyncAt == null ? 'Not synced yet.' : 'Last sync ${formatDayLong(settings.googleLastSyncAt!)}, ${formatTime(settings.googleLastSyncAt!)}.'} Sync stores an encrypted backup (records and text; media files not included).'
+              : 'Connect your Google account to back up and restore your encrypted data with Google Drive. Your data stays on this device unless you sync.',
           children: [
             if (!settings.googleDriveConnected)
               ListRow(
-                icon: Icons.login_rounded,
-                title: 'Connect Google Drive',
-                subtitle: 'Sign in and enable cloud sync',
+                icon: Icons.account_circle_outlined,
+                iconColor: context.scheme.primary,
+                title: 'Connect Google account',
+                subtitle: (settings.googleClientId ?? '').trim().isEmpty
+                    ? 'Sign in to sync and restore your data'
+                    : 'Continue with your Google account',
                 chevron: true,
                 onTap: () => connectGoogleDrive(context, ref),
               ),
             if (settings.googleDriveConnected) ...[
               ListRow(
                 icon: Icons.cloud_done_outlined,
-                title: 'Account',
-                subtitle: settings.googleAccountEmail,
+                iconColor: palette.tracker,
+                title: settings.googleAccountEmail ?? 'Google account',
+                subtitle: 'Connected for Drive sync',
               ),
               ListRow(
                 icon: Icons.cloud_upload_outlined,
-                title: 'Sync to Google Drive',
-                subtitle: 'Upload encrypted backup to your Drive',
+                title: 'Back up now',
+                subtitle: 'Upload an encrypted backup to Google Drive',
                 chevron: true,
                 onTap: () => syncToGoogleDrive(context, ref),
               ),
               ListRow(
                 icon: Icons.cloud_download_outlined,
-                title: 'Restore from Google Drive',
-                subtitle: 'Retrieve and replace local data from cloud backup',
+                title: 'Restore from cloud',
+                subtitle: 'Replace this device’s data with your cloud backup',
                 chevron: true,
                 onTap: () => restoreFromGoogleDrive(context, ref),
               ),
               ListRow(
                 icon: Icons.logout_rounded,
-                title: 'Disconnect Google Drive',
+                title: 'Disconnect account',
                 destructive: true,
                 onTap: () => disconnectGoogleDrive(context, ref),
               ),
@@ -315,7 +342,7 @@ class SettingsScreen extends ConsumerWidget {
         ),
         ListGroup(
           title: 'About',
-          footer: 'Lifelog 1.0.0. No account, no analytics, no cloud sync.',
+          footer: 'Lifelog 1.0.0. No account required and no analytics. Your data is stored locally and encrypted on this device.',
           children: [
             ListRow(
               icon: Icons.info_outline_rounded,
@@ -419,10 +446,36 @@ class SettingsScreen extends ConsumerWidget {
     if (context.mounted) showSnack(context, 'PIN changed.');
   }
 
+  Future<void> _requestLocationPermission(BuildContext context) async {
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled && context.mounted) {
+        showSnack(context, 'Location services are turned off. Enable them in Settings to save places with your location.');
+      }
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (!context.mounted) return;
+      if (permission == LocationPermission.deniedForever) {
+        showSnack(context, 'Location permission is denied. You can enable it in your device Settings.');
+        await Geolocator.openAppSettings();
+        return;
+      }
+      if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
+        showSnack(context, 'Location access is enabled.');
+      } else {
+        showSnack(context, 'Location access was not granted.');
+      }
+    } catch (error) {
+      if (context.mounted) showSnack(context, 'Could not request location access: $error');
+    }
+  }
+
   Future<void> _importTodaySteps(BuildContext context, WidgetRef ref) async {
     final services = ref.read(appServicesProvider);
     if (!services.healthSteps.isSupported) {
-      showSnack(context, 'Health steps are available on iPhone/Android.');
+      showSnack(context, 'Steps import is available on supported devices with Health access.');
       return;
     }
     final granted = await guard<bool>(
@@ -537,11 +590,10 @@ class SettingsScreen extends ConsumerWidget {
                 'Argon2id. Media is excluded in this build.',
           ),
           const _PrivacyPoint(
-            icon: Icons.cloud_off_outlined,
+            icon: Icons.cloud_outlined,
             title: 'Network use',
-            body: 'No analytics or crash reporting. Optional: Google Drive sign-in/sync (encrypted backup to your Drive app data), '
-                'read-only Last.fm sync when you connect it, album artwork from Last.fm while "Show album artwork" is on, '
-                'and optional Apple Health/Health Connect step import on supported devices (read-only).',
+            body: 'No analytics or crash reporting. Optional connections you control: Google Drive backup/sync (encrypted), '
+                'read-only Last.fm import, album artwork from Last.fm when enabled, and read-only Health/Health Connect step import on supported devices.',
           ),
           const _PrivacyPoint(
             icon: Icons.folder_outlined,
@@ -551,9 +603,9 @@ class SettingsScreen extends ConsumerWidget {
           ),
           const _PrivacyPoint(
             icon: Icons.gps_off_outlined,
-            title: 'No background location',
-            body: 'A position is only read when you press the button in the '
-                'place editor.',
+            title: 'Location & permissions',
+            body: 'Location is only read when you choose to use it (for example, saving a place). '
+                'Screen Time/usage data is not accessible on iPhone without special Apple entitlements.',
           ),
           const _PrivacyPoint(
             icon: Icons.warning_amber_rounded,
@@ -626,14 +678,14 @@ class _LimitationsSheet extends StatelessWidget {
       children: [
         const SheetTitle(title: 'Known limitations'),
         for (final item in const <String>[
-          'No cloud sync or multi-device merge. The archive is local to this install.',
-          'Backups exclude media bytes. Copy the media vault separately.',
-          'No background GPS or automatic visit detection. Visits are manual.',
-          'The map is a schematic canvas and sends no coordinates anywhere.',
-          'Last.fm sync needs your own API key and public recent tracks. It is read-only.',
-          'Album artwork is fetched from Last.fm and can be turned off.',
-          'The PIN is an app-level privacy screen, not a key-derivation step.',
-          'The local key-file fallback is weaker than platform secure storage.',
+          'Data is saved locally on this device. Google Drive sync is optional and stores an encrypted backup (records and text; media files are not included).',
+          'No automatic multi-device merge. Restoring from a backup replaces local data on that device.',
+          'Screen Time data cannot be read by this app on iPhone without special Apple entitlements; this is not currently available.',
+          'Automatic steps require Health access on supported devices. Other step sources are not imported automatically.',
+          'Backups exclude media file bytes. Keep your media vault separately if needed.',
+          'No background location tracking or automatic visit detection. Location is only used when you choose to save a place or visit.',
+          'Last.fm import is optional and read-only; syncing may require an API key depending on Last.fm.',
+          'The PIN is an app-level privacy screen, not a key-derivation step. A forgotten backup passphrase cannot be recovered.',
         ])
           Padding(
             padding: const EdgeInsets.only(bottom: Insets.md),

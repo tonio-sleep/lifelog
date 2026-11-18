@@ -1,6 +1,4 @@
-import 'dart:ui' show FontFeature;
-
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
 import '../../app/theme/app_theme.dart';
 import '../../domain/models/journal.dart';
@@ -682,7 +680,10 @@ Future<T?> guard<T>(
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(errorPrefix == null ? '$error' : '$errorPrefix: $error'),
+          duration: const Duration(seconds: 3),
+          content: Text(
+            errorPrefix == null ? '$error' : '$errorPrefix: $error',
+          ),
         ),
       );
     }
@@ -690,11 +691,15 @@ Future<T?> guard<T>(
   }
 }
 
-void showSnack(BuildContext context, String message) {
+void showSnack(
+  BuildContext context,
+  String message, {
+  Duration duration = const Duration(seconds: 3),
+}) {
   if (!context.mounted) return;
   ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()
-    ..showSnackBar(SnackBar(content: Text(message)));
+    ..showSnackBar(SnackBar(content: Text(message), duration: duration));
 }
 
 Future<bool> confirm(

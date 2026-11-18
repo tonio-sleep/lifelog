@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -14,16 +13,9 @@ import '../../domain/models/journal.dart';
 import '../../domain/models/places.dart';
 import '../photos/photo_widgets.dart';
 import '../places/place_dialogs.dart';
+import '../today/quick_add.dart';
 
 enum _SaveState { idle, unsaved, saving, saved, error }
-
-const _moodIcons = <Mood, IconData>{
-  Mood.awful: Icons.sentiment_very_dissatisfied_rounded,
-  Mood.low: Icons.sentiment_dissatisfied_rounded,
-  Mood.okay: Icons.sentiment_neutral_rounded,
-  Mood.good: Icons.sentiment_satisfied_rounded,
-  Mood.great: Icons.sentiment_very_satisfied_rounded,
-};
 
 class JournalEditorScreen extends ConsumerStatefulWidget {
   const JournalEditorScreen({
@@ -46,10 +38,6 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
   late final TextEditingController _title;
   late final TextEditingController _body;
   late final TextEditingController _tags;
-  late final TextEditingController _meals;
-  late final TextEditingController _highlight;
-  late final TextEditingController _steps;
-  late final TextEditingController _sleep;
   final _bodyFocus = FocusNode();
 
   JournalEntry? _source;
@@ -59,6 +47,10 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
   late bool _archived;
   Mood? _mood;
   int? _energy;
+  double? _sleepHours;
+  int? _steps;
+  String _meals = '';
+  String _highlight = '';
   String? _placeId;
   String? _placeLabel;
 
@@ -89,23 +81,19 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
     _archived = existing?.archived ?? false;
     _mood = existing?.mood;
     _energy = existing?.energy;
+    _sleepHours = existing?.sleepHours;
+    _steps = existing?.steps;
+    _meals = existing?.meals ?? '';
+    _highlight = existing?.highlight ?? '';
     _placeId = existing?.placeId;
     _placeLabel = existing?.placeLabel;
     _title = TextEditingController(text: existing?.title ?? '');
     _body = TextEditingController(text: existing?.body ?? '');
     _tags = TextEditingController(text: existing?.tags.join(', ') ?? '');
-    _meals = TextEditingController(text: existing?.meals ?? '');
-    _highlight = TextEditingController(text: existing?.highlight ?? '');
-    _steps = TextEditingController(text: existing?.steps?.toString() ?? '');
-    _sleep = TextEditingController(text: existing?.sleepHours == null ? '' : _formatNum(existing!.sleepHours!));
     _showTags = (existing?.tags ?? const []).isNotEmpty;
     _title.addListener(_onChanged);
     _body.addListener(_onChanged);
     _tags.addListener(_onChanged);
-    _meals.addListener(_onChanged);
-    _highlight.addListener(_onChanged);
-    _steps.addListener(_onChanged);
-    _sleep.addListener(_onChanged);
     if (widget.focusBody) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _bodyFocus.requestFocus();
@@ -119,17 +107,8 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
     _title.dispose();
     _body.dispose();
     _tags.dispose();
-    _meals.dispose();
-    _highlight.dispose();
-    _steps.dispose();
-    _sleep.dispose();
     _bodyFocus.dispose();
     super.dispose();
-  }
-
-  String _formatNum(double v) {
-    if (v == v.roundToDouble()) return v.toInt().toString();
-    return v.toStringAsFixed(v * 10 % 10 == 0 ? 1 : 2);
   }
 
   void _onChanged() {
@@ -153,10 +132,10 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
         .isNotEmpty;
     return _title.text.trim().isNotEmpty ||
         _body.text.trim().isNotEmpty ||
-        _meals.text.trim().isNotEmpty ||
-        _highlight.text.trim().isNotEmpty ||
-        _steps.text.trim().isNotEmpty ||
-        _sleep.text.trim().isNotEmpty ||
+        _meals.trim().isNotEmpty ||
+        _highlight.trim().isNotEmpty ||
+        _steps != null ||
+        _sleepHours != null ||
         _currentTags.isNotEmpty ||
         _mood != null ||
         _energy != null ||
@@ -166,8 +145,6 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
 
   JournalEntry _buildEntry() {
     final tags = _currentTags;
-    final stepsVal = int.tryParse(_steps.text.trim());
-    final sleepVal = double.tryParse(_sleep.text.trim().replaceAll(',', '.'));
     return JournalEntry(
       id: _id,
       createdAt: _createdAt,
@@ -176,10 +153,10 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
       body: _body.text,
       mood: _mood,
       energy: _energy,
-      sleepHours: sleepVal,
-      steps: stepsVal,
-      meals: _meals.text.trim(),
-      highlight: _highlight.text.trim(),
+      sleepHours: _sleepHours,
+      steps: _steps,
+      meals: _meals,
+      highlight: _highlight,
       tags: tags,
       placeId: _placeId,
       placeLabel: _placeLabel,
@@ -303,7 +280,7 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
   Future<void> _attachFiles() async {
     setState(() => _importing = true);
     try {
-      final files = await openFiles();
+      final files = await pickMediaFromPhotosOrFiles();
       if (files.isEmpty) return;
       if (!await _ensureSaved()) return;
       for (final file in files) {
@@ -327,7 +304,7 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
             );
       }
       if (!mounted) return;
-      showSnack(context, 'Encrypted attachment${files.length == 1 ? '' : 's'} added.');
+      showSnack(context, files.length == 1 ? 'Added to the entry.' : '${files.length} items added.');
     } catch (error) {
       if (mounted) showSnack(context, 'Could not import media: $error');
     } finally {
@@ -402,54 +379,7 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
     });
   }
 
-  void _setMood(Mood? mood) {
-    setState(() {
-      _mood = mood;
-      _state = _SaveState.unsaved;
-    });
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 300), () {
-      unawaited(_saveDraft());
-    });
-  }
-
-  void _setEnergy(int? energy) {
-    setState(() {
-      _energy = energy;
-      _state = _SaveState.unsaved;
-    });
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 300), () {
-      unawaited(_saveDraft());
-    });
-  }
-
-  Future<void> _importStepsFromHealth() async {
-    final services = ref.read(appServicesProvider);
-    if (!services.healthSteps.isSupported) {
-      if (mounted) showSnack(context, 'Health steps are available on iPhone/Android with Health access enabled.');
-      return;
-    }
-    final granted = await guard<bool>(
-      context,
-      services.healthSteps.requestPermission(),
-      errorPrefix: 'Could not access Health data',
-    );
-    if (granted != true || !mounted) return;
-    final steps = await guard<int?>(
-      context,
-      services.healthSteps.getStepsForDay(_createdAt),
-      errorPrefix: 'Could not read steps',
-    );
-    if (!mounted) return;
-    if (steps == null) {
-      showSnack(context, 'No step data available for this day.');
-      return;
-    }
-    _steps.text = steps.toString();
-    _onChanged();
-    showSnack(context, 'Imported $steps steps from Health.');
-  }
+  // Daily check-in details (mood, energy, sleep, steps, meals) are edited from Today.
 
   Future<void> _close() async {
     await _saveDraft();
@@ -661,147 +591,17 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                                 .copyWith(color: palette.dimText),
                           ),
                         ),
-                        const SizedBox(height: Insets.xl),
-                        Text(
-                          'How are you doing today?',
-                          style: text.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-                        ),
-                        const SizedBox(height: Insets.xs),
-                        Text(
-                          'A quick check-in for your day (all optional).',
-                          style: text.bodySmall?.copyWith(color: palette.mutedText),
-                        ),
                         const SizedBox(height: Insets.md),
-                        Text(
-                          'Mood',
-                          style: text.labelMedium?.copyWith(color: palette.mutedText),
-                        ),
-                        const SizedBox(height: Insets.sm),
-                        Row(
-                          children: [
-                            for (final mood in Mood.values)
-                              Padding(
-                                padding: const EdgeInsets.only(right: Insets.sm),
-                                child: _MoodDot(
-                                  mood: mood,
-                                  selected: _mood == mood,
-                                  onTap: () => _setMood(_mood == mood ? null : mood),
-                                ),
-                              ),
-                            const SizedBox(width: Insets.xs),
-                            Expanded(
-                              child: AnimatedSwitcher(
-                                duration: Motion.fast,
-                                child: Text(
-                                  _mood?.label ?? '',
-                                  key: ValueKey<String>(_mood?.label ?? ''),
-                                  style: text.labelLarge?.copyWith(
-                                    color: _mood == null
-                                        ? palette.dimText
-                                        : moodColor(_mood!, scheme),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: Insets.md),
-                        Text(
-                          'Energy',
-                          style: text.labelMedium?.copyWith(color: palette.mutedText),
-                        ),
-                        const SizedBox(height: Insets.sm),
-                        Row(
-                          children: [
-                            for (var i = 1; i <= 5; i++)
-                              Padding(
-                                padding: const EdgeInsets.only(right: Insets.sm),
-                                child: _LevelDot(
-                                  value: i,
-                                  selected: _energy == i,
-                                  onTap: () => _setEnergy(_energy == i ? null : i),
-                                  color: scheme.primary,
-                                ),
-                              ),
-                            const SizedBox(width: Insets.xs),
-                            Expanded(
-                              child: Text(
-                                _energy == null ? '' : '$_energy / 5',
-                                style: text.labelLarge?.copyWith(
-                                  color: _energy == null ? palette.dimText : scheme.primary,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: Insets.md),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller: _sleep,
-                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                decoration: const InputDecoration(
-                                  labelText: 'Sleep (hours)',
-                                  hintText: 'e.g. 7.5',
-                                  prefixIcon: Icon(Icons.bedtime_outlined, size: 18),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: Insets.md),
-                            Expanded(
-                              child: Column(
-                                children: [
-                                  TextField(
-                                    controller: _steps,
-                                    keyboardType: TextInputType.number,
-                                    decoration: const InputDecoration(
-                                      labelText: 'Steps',
-                                      hintText: 'e.g. 8000',
-                                      prefixIcon: Icon(Icons.directions_walk_rounded, size: 18),
-                                    ),
-                                  ),
-                                  Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: TextButton.icon(
-                                      onPressed: _importStepsFromHealth,
-                                      style: TextButton.styleFrom(
-                                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
-                                        minimumSize: const Size(0, 32),
-                                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                      ),
-                                      icon: const Icon(Icons.favorite_outline_rounded, size: 14),
-                                      label: const Text('Import from Health', style: TextStyle(fontSize: 12)),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: Insets.md),
-                        TextField(
-                          controller: _meals,
-                          minLines: 1,
-                          maxLines: 3,
-                          textCapitalization: TextCapitalization.sentences,
-                          decoration: const InputDecoration(
-                            labelText: 'What did you eat?',
-                            hintText: 'Breakfast, lunch, dinner, snacks...',
-                            prefixIcon: Icon(Icons.restaurant_outlined, size: 18),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(Insets.md),
+                          decoration: BoxDecoration(
+                            color: palette.subtle,
+                            borderRadius: BorderRadius.circular(Radii.md),
                           ),
-                        ),
-                        const SizedBox(height: Insets.md),
-                        TextField(
-                          controller: _highlight,
-                          minLines: 1,
-                          maxLines: 3,
-                          textCapitalization: TextCapitalization.sentences,
-                          decoration: const InputDecoration(
-                            labelText: 'Highlight or reflection',
-                            hintText: 'Best part of the day, gratitude, or how it went',
-                            prefixIcon: Icon(Icons.wb_sunny_outlined, size: 18),
+                          child: Text(
+                            'Daily details like mood, energy, sleep, steps, and what you ate are in your Daily check-in on Today.',
+                            style: text.bodySmall?.copyWith(color: palette.mutedText),
                           ),
                         ),
                         AnimatedSize(
@@ -979,95 +779,6 @@ class _PlaceOption extends StatelessWidget {
             if (selected)
               Icon(Icons.check_rounded, color: context.scheme.primary),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _MoodDot extends StatelessWidget {
-  const _MoodDot({
-    required this.mood,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final Mood mood;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = moodColor(mood, context.scheme);
-    return Tooltip(
-      message: mood.label,
-      child: Pressable(
-        scale: 0.88,
-        haptic: true,
-        borderRadius: BorderRadius.circular(Radii.pill),
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: Motion.base,
-          curve: Motion.out,
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: selected ? color : color.withValues(alpha: 0.13),
-          ),
-          child: Icon(
-            _moodIcons[mood] ?? Icons.sentiment_neutral_rounded,
-            size: 22,
-            color: selected ? Colors.white : color,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _LevelDot extends StatelessWidget {
-  const _LevelDot({
-    required this.value,
-    required this.selected,
-    required this.onTap,
-    required this.color,
-  });
-
-  final int value;
-  final bool selected;
-  final VoidCallback onTap;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: '$value / 5',
-      child: Pressable(
-        scale: 0.9,
-        haptic: true,
-        borderRadius: BorderRadius.circular(Radii.pill),
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: Motion.base,
-          curve: Motion.out,
-          width: 36,
-          height: 36,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: selected ? color : color.withValues(alpha: 0.12),
-            border: Border.all(
-              color: selected ? color : color.withValues(alpha: 0.2),
-            ),
-          ),
-          child: Text(
-            '$value',
-            style: context.text.labelLarge?.copyWith(
-              color: selected ? Colors.white : color,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
         ),
       ),
     );

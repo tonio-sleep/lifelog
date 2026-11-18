@@ -16,14 +16,14 @@ Future<({bool ok, String message})> syncLastfmRecent(
   final lastfm = ref.read(appServicesProvider).lastfm;
   final username = ref.read(settingsProvider).lastfmUsername;
   final apiKey = await settingsController.lastfmApiKey();
-  if (username == null || username.trim().isEmpty || apiKey == null) {
+  if (username == null || username.trim().isEmpty) {
     return (ok: false, message: 'Connect Last.fm first.');
   }
   try {
     final now = DateTime.now();
     final tracks = await lastfm.fetchRecentTracks(
       username: username,
-      apiKey: apiKey,
+      apiKey: apiKey ?? '',
       from: now.subtract(Duration(days: days)),
       to: now,
       maxPages: 4,

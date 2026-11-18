@@ -40,16 +40,16 @@ class _TrackersScreenState extends ConsumerState<TrackersScreen> {
     final paused = archive.trackers.where((t) => !t.active).toList();
 
     return ScreenFrame(
-      title: 'Habits',
+      title: 'Activities',
       actions: [
         HeaderButton(
           icon: Icons.auto_awesome_outlined,
-          tooltip: 'Starter habits',
+          tooltip: 'Starter activities',
           onPressed: () => _showTemplates(context),
         ),
         HeaderButton(
           icon: Icons.add_rounded,
-          tooltip: 'New habit',
+          tooltip: 'New activity',
           filled: true,
           onPressed: () => showTrackerEditor(context, ref),
         ),
@@ -64,9 +64,9 @@ class _TrackersScreenState extends ConsumerState<TrackersScreen> {
           EmptyState(
             icon: Icons.task_alt_rounded,
             color: palette.tracker,
-            title: 'No habits yet',
-            message: 'Pick a few starters or create your own. Nothing is '
-                'recorded unless you tap it.',
+            title: 'No activities yet',
+            message: 'Add things you might do in a day. Log them when you do, '
+                'with time or duration if you want. Nothing is required.',
             actionLabel: 'Choose starters',
             onAction: () => _showTemplates(context),
           )
@@ -162,18 +162,18 @@ class _TrackersScreenState extends ConsumerState<TrackersScreen> {
     await guard(
       context,
       ref.read(archiveProvider.notifier).addTrackers(chosen),
-      errorPrefix: 'Could not add habits',
+      errorPrefix: 'Could not add activities',
     );
     if (context.mounted) {
       showSnack(
         context,
-        '${chosen.length} ${plural(chosen.length, 'habit')} added.',
+        '${chosen.length} ${plural(chosen.length, 'activity', 'activities')} added.',
       );
     }
   }
 }
 
-/// Summary ring plus habits, grouped only when there is more than one group.
+/// Summary plus activities for the day, grouped only when there is more than one group.
 class _HabitList extends ConsumerWidget {
   const _HabitList({required this.day});
 
@@ -190,9 +190,7 @@ class _HabitList extends ConsumerWidget {
     final histories = {
       for (final t in trackers) t.id: HabitHistory(t, archive.trackerRecords),
     };
-    final done = trackers.where((t) => histories[t.id]!.doneOn(day)).length;
-    final progress = done / trackers.length;
-    final left = trackers.length - done;
+    final done = trackers.where((t) => histories[t.id]!.loggedOn(day)).length;
 
     TrackerDefinition? streakLeader;
     var streakBest = 1;
@@ -218,12 +216,12 @@ class _HabitList extends ConsumerWidget {
           child: Row(
             children: [
               ProgressRing(
-                value: progress,
+                value: trackers.isEmpty ? 0 : done / trackers.length,
                 size: 76,
                 stroke: 8,
                 color: palette.tracker,
                 child: Text(
-                  '$done/${trackers.length}',
+                  '$done',
                   style: text.titleMedium?.copyWith(fontFeatures: tabularFigures),
                 ),
               ),
@@ -233,7 +231,7 @@ class _HabitList extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      left == 0 ? 'All done' : '$left left',
+                      done == 0 ? 'What did you do today?' : '$done logged today',
                       style: text.headlineSmall,
                     ),
                     const SizedBox(height: 2),
@@ -260,7 +258,7 @@ class _HabitList extends ConsumerWidget {
                       )
                     else
                       Text(
-                        'Tap a habit to log it. Hold for more.',
+                        'Tap to log quickly. Hold for details like time or duration.',
                         style: text.bodySmall?.copyWith(color: palette.mutedText),
                       ),
                   ],
@@ -335,7 +333,7 @@ class _TemplateSheetState extends State<_TemplateSheet> {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        const SheetTitle(title: 'Starter habits'),
+        const SheetTitle(title: 'Starter activities'),
         for (final template in _templates)
           Pressable(
             haptic: true,

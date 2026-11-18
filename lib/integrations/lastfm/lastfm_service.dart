@@ -27,7 +27,7 @@ class LastfmService {
 
   Future<List<MusicScrobble>> fetchRecentTracks({
     required String username,
-    required String apiKey,
+    String apiKey = '',
     DateTime? from,
     DateTime? to,
     int maxPages = 10,
@@ -35,7 +35,6 @@ class LastfmService {
     final user = username.trim();
     final key = apiKey.trim();
     if (user.isEmpty) throw LastfmException('Enter your Last.fm username.');
-    if (key.isEmpty) throw LastfmException('Enter your Last.fm API key.');
 
     final results = <MusicScrobble>[];
     var page = 1;
@@ -45,7 +44,7 @@ class LastfmService {
       final query = <String, String>{
         'method': 'user.getrecenttracks',
         'user': user,
-        'api_key': key,
+        if (key.isNotEmpty) 'api_key': key,
         'format': 'json',
         'limit': '200',
         'page': '$page',

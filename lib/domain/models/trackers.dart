@@ -170,28 +170,70 @@ class TrackerRecord {
     this.value,
     this.text = '',
     this.note = '',
+    this.startedAt,
+    this.endedAt,
+    this.durationMinutes,
+    this.count,
   });
 
   final String id;
   final String trackerId;
+
+  /// When this record was logged / the primary moment for the day.
   final DateTime recordedAt;
+
+  /// Primary numeric value (count, amount, rating, yes=1/no=0, etc.).
   final double? value;
   final String text;
   final String note;
 
+  /// Optional time range for an occurrence/session.
+  final DateTime? startedAt;
+  final DateTime? endedAt;
+
+  /// Optional explicit duration in minutes (e.g. alongside count or yes/no).
+  final double? durationMinutes;
+
+  /// Optional count aspect when logging multiple aspects together.
+  final double? count;
+
+  double? get effectiveDurationMinutes {
+    if (durationMinutes != null) return durationMinutes;
+    if (startedAt != null && endedAt != null) {
+      final diff = endedAt!.difference(startedAt!).inMinutes.toDouble();
+      return diff < 0 ? null : diff;
+    }
+    return null;
+  }
+
   TrackerRecord copyWith({
     DateTime? recordedAt,
     double? value,
+    bool clearValue = false,
     String? text,
     String? note,
+    DateTime? startedAt,
+    bool clearStartedAt = false,
+    DateTime? endedAt,
+    bool clearEndedAt = false,
+    double? durationMinutes,
+    bool clearDurationMinutes = false,
+    double? count,
+    bool clearCount = false,
   }) {
     return TrackerRecord(
       id: id,
       trackerId: trackerId,
       recordedAt: recordedAt ?? this.recordedAt,
-      value: value ?? this.value,
+      value: clearValue ? null : (value ?? this.value),
       text: text ?? this.text,
       note: note ?? this.note,
+      startedAt: clearStartedAt ? null : (startedAt ?? this.startedAt),
+      endedAt: clearEndedAt ? null : (endedAt ?? this.endedAt),
+      durationMinutes: clearDurationMinutes
+          ? null
+          : (durationMinutes ?? this.durationMinutes),
+      count: clearCount ? null : (count ?? this.count),
     );
   }
 
@@ -202,6 +244,10 @@ class TrackerRecord {
     'value': value,
     'text': text,
     'note': note,
+    'startedAt': startedAt?.toIso8601String(),
+    'endedAt': endedAt?.toIso8601String(),
+    'durationMinutes': durationMinutes,
+    'count': count,
   };
 
   factory TrackerRecord.fromJson(Map<String, dynamic> json) {
@@ -214,6 +260,10 @@ class TrackerRecord {
       value: (json['value'] as num?)?.toDouble(),
       text: json['text'] as String? ?? '',
       note: json['note'] as String? ?? '',
+      startedAt: DateTime.tryParse(json['startedAt'] as String? ?? ''),
+      endedAt: DateTime.tryParse(json['endedAt'] as String? ?? ''),
+      durationMinutes: (json['durationMinutes'] as num?)?.toDouble(),
+      count: (json['count'] as num?)?.toDouble(),
     );
   }
 }
@@ -273,48 +323,93 @@ class TrackerMath {
     final matching = recordsOn(records, tracker.id, day);
     if (matching.isEmpty) return null;
 
+    String withDurationAndCount(String base) {
+      final mins = matching.fold<double>(
+        0,
+        (sum, r) => sum + (r.effectiveDurationMinutes ?? 0),
+      );
+      final extraCount = matching.fold<double>(
+        0,
+        (sum, r) => sum + (r.count ?? 0),
+      );
+      var out = base;
+      if (extraCount > 0 &&
+          tracker.type != TrackerType.count &&
+          tracker.type != TrackerType.event) {
+        out = '$out · ${formatCompactNumber(extraCount)}×';
+      }
+      if (mins > 0) out = '$out · ${formatDurationMinutes(mins)}';
+      return out;
+    }
+
     switch (tracker.type) {
       case TrackerType.boolean:
-        return matching.any((r) => (r.value ?? 0) > 0) ? 'Yes' : 'No';
+        final yes = matching.any((r) => (r.value ?? 0) > 0);
+        return withDurationAndCount(yes ? 'Yes' : 'No');
       case TrackerType.count:
       case TrackerType.event:
         final total = totalOn(records, tracker.id, day).round();
-        return total == 1 ? '1 time' : '$total times';
+        final base = total == 1 ? '1 time' : '$total times';
+        return withDurationAndCount(base);
       case TrackerType.duration:
-        return formatDurationMinutes(totalOn(records, tracker.id, day));
+        final mins = matching.fold<double>(
+          0,
+          (sum, r) => sum + (r.value ?? r.effectiveDurationMinutes ?? 0),
+        );
+        return withDurationAndCount(formatDurationMinutes(mins <= 0 ? totalOn(records, tracker.id, day) : mins));
       case TrackerType.number:
         final total = totalOn(records, tracker.id, day);
         final unit = tracker.unit.trim();
-        return '${formatCompactNumber(total)}${unit.isEmpty ? '' : ' $unit'}';
+        final base = '${formatCompactNumber(total)}${unit.isEmpty ? '' : ' $unit'}';
+        return withDurationAndCount(base);
       case TrackerType.rating:
         final average = averageOn(records, tracker.id, day);
         if (average == null) return null;
-        return '${average.toStringAsFixed(1)} / 5';
+        return withDurationAndCount('${average.toStringAsFixed(1)} / 5');
       case TrackerType.text:
-        return matching.length == 1
-            ? (matching.first.text.isEmpty ? '1 note' : matching.first.text)
-            : '${matching.length} notes';
+        return withDurationAndCount(
+          matching.length == 1
+              ? (matching.first.text.isEmpty ? '1 note' : matching.first.text)
+              : '${matching.length} notes',
+        );
     }
   }
 
   static String recordLabel(TrackerDefinition tracker, TrackerRecord record) {
+    final parts = <String>[];
     switch (tracker.type) {
       case TrackerType.boolean:
-        return (record.value ?? 0) > 0 ? 'Yes' : 'No';
+        parts.add((record.value ?? 0) > 0 ? 'Yes' : 'No');
       case TrackerType.count:
       case TrackerType.event:
-        return '${formatCompactNumber(record.value ?? 1)}×';
+        parts.add('${formatCompactNumber(record.value ?? record.count ?? 1)}×');
       case TrackerType.duration:
-        return formatDurationMinutes(record.value ?? 0);
+        parts.add(formatDurationMinutes(record.value ?? record.effectiveDurationMinutes ?? 0));
       case TrackerType.number:
         final unit = tracker.unit.trim();
         final value = formatCompactNumber(record.value ?? 0);
-        return unit.isEmpty ? value : '$value $unit';
+        parts.add(unit.isEmpty ? value : '$value $unit');
       case TrackerType.rating:
-        return '${formatCompactNumber(record.value ?? 0)} / 5';
+        parts.add('${formatCompactNumber(record.value ?? 0)} / 5');
       case TrackerType.text:
-        return record.text.isEmpty ? 'Note' : record.text;
+        parts.add(record.text.isEmpty ? 'Note' : record.text);
     }
+    if (tracker.type != TrackerType.count &&
+        tracker.type != TrackerType.event &&
+        record.count != null &&
+        record.count! > 0) {
+      parts.add('${formatCompactNumber(record.count!)}×');
+    }
+    final d = record.effectiveDurationMinutes;
+    final showD = d != null && d > 0 && tracker.type != TrackerType.duration;
+    if (showD) parts.add(formatDurationMinutes(d));
+    if (record.startedAt != null && record.endedAt != null) {
+      parts.add('${formatTime(record.startedAt!)}–${formatTime(record.endedAt!)}');
+    } else if (record.startedAt != null) {
+      parts.add(formatTime(record.startedAt!));
+    }
+    if (parts.isEmpty) return 'Logged';
+    return parts.join(' · ');
   }
 
   /// Series of daily totals for the last [days] days, oldest first.

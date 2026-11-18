@@ -310,7 +310,6 @@ class ComposerCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.palette;
     final text = context.text;
-    final hasEntry = entry != null && !entry!.isEmpty;
     final e = entry;
     final hasCheckin = e != null &&
         (e.mood != null ||
@@ -331,30 +330,30 @@ class ComposerCard extends StatelessWidget {
                 width: 36,
                 height: 36,
                 decoration: BoxDecoration(
-                  color: palette.journal.withValues(alpha: 0.14),
+                  color: palette.tracker.withValues(alpha: 0.14),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
-                  hasEntry ? Icons.menu_book_rounded : Icons.favorite_border_rounded,
+                  Icons.favorite_border_rounded,
                   size: 18,
-                  color: palette.journal,
+                  color: palette.tracker,
                 ),
               ),
               const SizedBox(width: Insets.md),
               Expanded(
                 child: Text(
-                  hasEntry || hasCheckin
+                  hasCheckin
                       ? (isToday ? 'Daily check-in' : 'This day\'s check-in')
-                      : (isToday ? 'How are you doing today?' : 'Log this day'),
+                      : (isToday ? 'How was your day?' : 'Log this day'),
                   style: AppTheme.serif(text.bodyLarge, size: 16).copyWith(
-                    color: (hasEntry || hasCheckin) ? text.bodyLarge?.color : palette.mutedText,
-                    fontWeight: (hasEntry || hasCheckin) ? FontWeight.w600 : FontWeight.w500,
+                    color: hasCheckin ? text.bodyLarge?.color : palette.mutedText,
+                    fontWeight: hasCheckin ? FontWeight.w600 : FontWeight.w500,
                   ),
                 ),
               ),
               Text(
-                (hasEntry || hasCheckin) ? 'Edit' : 'Start',
-                style: text.labelMedium?.copyWith(color: palette.journal),
+                hasCheckin ? 'Edit' : 'Start',
+                style: text.labelMedium?.copyWith(color: palette.tracker),
               ),
             ],
           ),
@@ -372,15 +371,7 @@ class ComposerCard extends StatelessWidget {
               ],
             ),
           ],
-          if (hasEntry && e != null && e.body.trim().isNotEmpty) ...[
-            const SizedBox(height: Insets.sm),
-            Text(
-              e.excerpt == 'No text' ? e.displayTitle : e.excerpt,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: text.bodyMedium?.copyWith(color: palette.mutedText, height: 1.5),
-            ),
-          ] else if (e != null && e.highlight.trim().isNotEmpty) ...[
+          if (e != null && e.highlight.trim().isNotEmpty) ...[
             const SizedBox(height: Insets.sm),
             Text(
               e.highlight,
@@ -392,8 +383,8 @@ class ComposerCard extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               isToday
-                  ? 'Track mood, energy, sleep, steps, meals and more.'
-                  : 'Add how this day felt, what you ate, steps, sleep and notes.',
+                  ? 'Sleep, steps, meals, mood, energy and more — all optional.'
+                  : 'Add sleep, steps, meals, mood and notes for this day.',
               style: text.bodySmall?.copyWith(color: palette.dimText),
             ),
           ],
@@ -431,6 +422,72 @@ class ComposerCard extends StatelessWidget {
               fontWeight: FontWeight.w600,
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class JournalWriteCard extends StatelessWidget {
+  const JournalWriteCard({
+    super.key,
+    required this.onTap,
+    required this.isToday,
+    this.entry,
+  });
+
+  final VoidCallback onTap;
+  final bool isToday;
+  final JournalEntry? entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final text = context.text;
+    final e = entry;
+    final hasWriting = e != null && (e.title.trim().isNotEmpty || e.body.trim().isNotEmpty);
+    return QuietCard(
+      onTap: onTap,
+      padding: const EdgeInsets.all(Insets.md),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: palette.journal.withValues(alpha: 0.14),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.edit_note_rounded, size: 20, color: palette.journal),
+          ),
+          const SizedBox(width: Insets.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  hasWriting ? (isToday ? 'Journal' : 'Journal entry') : (isToday ? 'Write about today' : 'Write about this day'),
+                  style: AppTheme.serif(text.bodyLarge, size: 16).copyWith(
+                    color: hasWriting ? text.bodyLarge?.color : palette.mutedText,
+                    fontWeight: hasWriting ? FontWeight.w600 : FontWeight.w500,
+                  ),
+                ),
+                if (hasWriting)
+                  Text(
+                    e.excerpt == 'No text' ? e.displayTitle : e.excerpt,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.bodySmall?.copyWith(color: palette.mutedText, height: 1.4),
+                  )
+                else
+                  Text(
+                    'Thoughts, notes, or anything you want to remember.',
+                    style: text.bodySmall?.copyWith(color: palette.dimText),
+                  ),
+              ],
+            ),
+          ),
+          Icon(Icons.chevron_right_rounded, color: palette.dimText),
         ],
       ),
     );

@@ -41,16 +41,20 @@ class SettingsController extends Notifier<AppSettings> {
 
   Future<void> connectLastfm({
     required String username,
-    required String apiKey,
+    String apiKey = '',
   }) async {
-    final cipher = await ref
-        .read(appServicesProvider)
-        .crypto
-        .encryptString(apiKey.trim(), aad: _apiKeyAad);
+    final key = apiKey.trim();
+    final cipher = key.isEmpty
+        ? null
+        : await ref
+            .read(appServicesProvider)
+            .crypto
+            .encryptString(key, aad: _apiKeyAad);
     await update(
       (current) => current.copyWith(
         lastfmUsername: username.trim(),
         lastfmApiKeyCipher: cipher,
+        clearLastfmApiKeyCipher: key.isEmpty,
         lastfmConnectedAt: DateTime.now(),
       ),
     );

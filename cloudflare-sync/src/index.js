@@ -7,24 +7,39 @@ export default {
     try {
       return await handle(request, env);
     } catch (err) {
-      console.error("Unhandled worker error", err);
-      // Avoid leaking internal details.
+      console.error("Unhandled worker error", err?.stack || err);
+      // Avoid leaking internal details to clients.
       return json({ error: "Internal server error" }, 500, request);
     }
   },
 };
 
+function serverConfigError(request, env) {
+  if (!env || !env.BACKUP_BUCKET) {
+    return json({ error: "Server not configured: missing R2 bucket binding" }, 500, request);
+  }
+  if (!env.TOKEN_SECRET) {
+    return json({ error: "Server not configured: missing TOKEN_SECRET" }, 500, request);
+  }
+  return null;
+}
+
 async function handle(request, env) {
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, "") || "/";
-  const method = (request.method || "GET").toUpperCase();
+  const method = String(request.method || "GET").toUpperCase();
 
   if (method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders(request) });
   }
 
   if (method === "GET" && path === "/api/health") {
-    return json({ ok: true, service: "lifelog-cloudflare-sync" }, 200, request);
+    const configured = Boolean(env?.BACKUP_BUCKET) && Boolean(env?.TOKEN_SECRET);
+    return json(
+      { ok: true, service: "lifelog-cloudflare-sync", configured },
+      200,
+      request,
+    );
   }
 
   if (path === "/api/auth/register" && method === "POST") {
@@ -38,7 +53,11 @@ async function handle(request, env) {
   if (path === "/api/auth/me" && method === "GET") {
     const auth = await requireAuth(request, env);
     if (!auth.ok) return auth.response;
-    return json({ ok: true, username: auth.user.username, connectedAt: auth.user.createdAt || null }, 200, request);
+    return json(
+      { ok: true, username: auth.user.username, connectedAt: auth.user.createdAt || null },
+      200,
+      request,
+    );
   }
   if (path === "/api/backup/meta" && method === "GET") {
     const auth = await requireAuth(request, env);
@@ -110,6 +129,7 @@ function validPassword(p) {
 }
 
 async function getUser(env) {
+  if (!env?.BACKUP_BUCKET) return null;
   const obj = await env.BACKUP_BUCKET.get("auth/user.json");
   if (!obj) return null;
   try {
@@ -119,19 +139,23 @@ async function getUser(env) {
   }
 }
 async function putUser(env, user) {
+  if (!env?.BACKUP_BUCKET) throw new Error("Missing BACKUP_BUCKET binding");
   await env.BACKUP_BUCKET.put("auth/user.json", JSON.stringify(user), {
     httpMetadata: { contentType: "application/json; charset=utf-8" },
   });
 }
 
 async function register(request, env) {
+  const cfg = serverConfigError(request, env);
+  if (cfg) return cfg;
   const body = await readJson(request);
   if (!body.ok) return json({ error: body.error }, 400, request);
-  const username = normalizeUsername(body.value.username);
-  const password = body.value.password;
+  const username = normalizeUsername(body.value?.username);
+  const password = body.value?.password;
   if (!validUsername(username)) return json({ error: "Invalid username" }, 400, request);
-  if (!validPassword(password)) return json({ error: "Password must be at least 10 characters" }, 400, request);
-  if (!env.TOKEN_SECRET) return json({ error: "Server not configured" }, 500, request);
+  if (!validPassword(password)) {
+    return json({ error: "Password must be at least 10 characters" }, 400, request);
+  }
 
   const existing = await getUser(env);
   if (existing) return json({ error: "Account already exists" }, 409, request);
@@ -153,12 +177,13 @@ async function register(request, env) {
 }
 
 async function login(request, env) {
+  const cfg = serverConfigError(request, env);
+  if (cfg) return cfg;
   const body = await readJson(request);
   if (!body.ok) return json({ error: body.error }, 400, request);
-  const username = normalizeUsername(body.value.username);
-  const password = body.value.password;
+  const username = normalizeUsername(body.value?.username);
+  const password = body.value?.password;
   if (typeof password !== "string") return json({ error: "Invalid credentials" }, 401, request);
-  if (!env.TOKEN_SECRET) return json({ error: "Server not configured" }, 500, request);
 
   const user = await getUser(env);
   if (!user || user.username !== username) {
@@ -174,7 +199,8 @@ async function login(request, env) {
     if (!timingSafeEqual(actual, expected)) {
       return json({ error: "Invalid credentials" }, 401, request);
     }
-  } catch {
+  } catch (err) {
+    console.error("Login verification error", err?.stack || err);
     return json({ error: "Invalid credentials" }, 401, request);
   }
   const token = await createToken(env, user);
@@ -182,14 +208,17 @@ async function login(request, env) {
 }
 
 async function requireAuth(request, env) {
-  if (!env.TOKEN_SECRET) return { ok: false, response: json({ error: "Server not configured" }, 500, request) };
+  const cfg = serverConfigError(request, env);
+  if (cfg) return { ok: false, response: cfg };
   const header = request.headers.get("Authorization") || "";
   const m = header.match(/^Bearer\s+(.+)$/i);
   if (!m) return { ok: false, response: json({ error: "Unauthorized" }, 401, request) };
   const payload = await verifyToken(env, m[1].trim());
   if (!payload) return { ok: false, response: json({ error: "Unauthorized" }, 401, request) };
   const user = await getUser(env);
-  if (!user || user.username !== payload.sub) return { ok: false, response: json({ error: "Unauthorized" }, 401, request) };
+  if (!user || user.username !== payload.sub) {
+    return { ok: false, response: json({ error: "Unauthorized" }, 401, request) };
+  }
   if (Number(payload.v || 0) !== Number(user.tokenVersion || 0)) {
     return { ok: false, response: json({ error: "Unauthorized" }, 401, request) };
   }
@@ -197,6 +226,9 @@ async function requireAuth(request, env) {
 }
 
 async function backupMeta(request, env, username) {
+  if (!env?.BACKUP_BUCKET) {
+    return json({ error: "Server not configured: missing R2 bucket binding" }, 500, request);
+  }
   const key = backupKey(username);
   const head = await env.BACKUP_BUCKET.head(key);
   if (!head) return json({ ok: true, exists: false }, 200, request);
@@ -207,38 +239,67 @@ async function backupMeta(request, env, username) {
     size: head.size,
     etag: head.etag || null,
     uploadedAt: head.uploaded ? head.uploaded.toISOString() : null,
-    modifiedAt: (head.customMetadata && head.customMetadata.modifiedAt) || (head.uploaded ? head.uploaded.toISOString() : null),
+    modifiedAt:
+      (head.customMetadata && head.customMetadata.modifiedAt) ||
+      (head.uploaded ? head.uploaded.toISOString() : null),
   }, 200, request);
 }
 
 async function uploadBackup(request, env, username) {
-  const max = 512 * 1024 * 1024; // 512 MB safety cap for encrypted backup blobs (including media); very large libraries may require chunked/object strategies
+  if (!env?.BACKUP_BUCKET) {
+    return json({ error: "Server not configured: missing R2 bucket binding" }, 500, request);
+  }
+  const max = 512 * 1024 * 1024; // 512 MB safety cap for encrypted backup blobs
   const len = Number(request.headers.get("content-length") || "0");
   if (len && len > max) return json({ error: "Backup too large" }, 413, request);
-  const body = await request.arrayBuffer();
-  if (body.byteLength === 0) return json({ error: "Empty backup" }, 400, request);
+
+  let body;
+  try {
+    body = await request.arrayBuffer();
+  } catch (err) {
+    console.error("Failed to read upload body", err?.stack || err);
+    return json({ error: "Invalid upload payload" }, 400, request);
+  }
+  if (!body || body.byteLength === 0) return json({ error: "Empty backup" }, 400, request);
   if (body.byteLength > max) return json({ error: "Backup too large" }, 413, request);
+
   const now = new Date().toISOString();
   const key = backupKey(username);
-  await env.BACKUP_BUCKET.put(key, body, {
-    httpMetadata: { contentType: "application/octet-stream" },
-    customMetadata: { modifiedAt: now, kind: "lifelog-encrypted-backup" },
-  });
+  try {
+    await env.BACKUP_BUCKET.put(key, body, {
+      httpMetadata: { contentType: "application/octet-stream" },
+      customMetadata: { modifiedAt: now, kind: "lifelog-encrypted-backup" },
+    });
+  } catch (err) {
+    console.error("R2 put failed", err?.stack || err);
+    return json({ error: "Could not store backup" }, 500, request);
+  }
   return json({ ok: true, uploadedAt: now, size: body.byteLength }, 200, request);
 }
 
 async function downloadBackup(request, env, username) {
+  if (!env?.BACKUP_BUCKET) {
+    return json({ error: "Server not configured: missing R2 bucket binding" }, 500, request);
+  }
   const key = backupKey(username);
-  const obj = await env.BACKUP_BUCKET.get(key);
+  let obj;
+  try {
+    obj = await env.BACKUP_BUCKET.get(key);
+  } catch (err) {
+    console.error("R2 get failed", err?.stack || err);
+    return json({ error: "Could not read backup" }, 500, request);
+  }
   if (!obj) return json({ error: "No backup found" }, 404, request);
   const headers = {
     "content-type": "application/octet-stream",
     "cache-control": "no-store",
     ...corsHeaders(request),
   };
-  const modifiedAt = (obj.customMetadata && obj.customMetadata.modifiedAt) || (obj.uploaded ? obj.uploaded.toISOString() : null);
+  const modifiedAt =
+    (obj.customMetadata && obj.customMetadata.modifiedAt) ||
+    (obj.uploaded ? obj.uploaded.toISOString() : null);
   if (modifiedAt) headers["x-backup-modified-at"] = modifiedAt;
-  headers["etag"] = obj.etag || "";
+  if (obj.etag) headers["etag"] = obj.etag;
   return new Response(obj.body, { status: 200, headers });
 }
 

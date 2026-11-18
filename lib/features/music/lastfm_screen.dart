@@ -131,15 +131,15 @@ class _LastfmScreenState extends ConsumerState<LastfmScreen> {
                           obscureText: true,
                           autocorrect: false,
                           decoration: InputDecoration(
-                            labelText: 'API key (optional)',
+                            labelText: 'API key',
                             hintText: connected
                                 ? 'Leave blank to keep the saved key'
-                                : 'Only needed if sync requires it',
+                                : 'Required to sync listening history',
                           ),
                         ),
                         const SizedBox(height: Insets.xs),
                         Text(
-                          'Usually your username is enough. If Last.fm asks for a key, you can add one later (stored encrypted on this device).',
+                          'Syncing uses the Last.fm API and requires your username and an API key. The key is stored encrypted on this device.',
                           style: text.bodySmall?.copyWith(color: palette.dimText),
                         ),
                         const SizedBox(height: Insets.lg),
@@ -272,6 +272,10 @@ class _LastfmScreenState extends ConsumerState<LastfmScreen> {
       setState(() => _error = 'Enter your Last.fm username.');
       return;
     }
+    if (key.isEmpty) {
+      setState(() => _error = 'Enter your Last.fm API key to sync listening history.');
+      return;
+    }
     setState(() {
       _busy = true;
       _error = null;
@@ -285,6 +289,7 @@ class _LastfmScreenState extends ConsumerState<LastfmScreen> {
       if (!mounted) return;
       setState(() {
         _editing = false;
+        _error = null;
         _status = 'Saved. Tap Sync now to import your recent listening.';
       });
     } catch (error) {

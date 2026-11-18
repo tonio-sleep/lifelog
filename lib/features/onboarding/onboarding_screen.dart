@@ -192,17 +192,26 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                       _PermissionCard(
                         icon: Icons.location_on_outlined,
                         title: 'Location',
-                        subtitle: 'Used only when you choose to save a place or visit',
-                        actionLabel: 'Allow',
-                        onTap: () => _requestLocationPermission(context),
+                        subtitle: _locationPermission == LocationPermission.always ||
+                                _locationPermission == LocationPermission.whileInUse
+                            ? 'Location access is enabled for saving places and visits.'
+                            : 'Used only when you choose to save a place or visit.',
+                        actionLabel: _requestingLocation ? '...' : _locationStatusLabel(),
+                        onTap: _requestingLocation
+                            ? () {}
+                            : () => _requestLocationPermission(context),
                       ),
                       const SizedBox(height: Insets.md),
                       _PermissionCard(
                         icon: Icons.favorite_border_rounded,
-                        title: 'Health & steps',
-                        subtitle: 'Read-only access to import your daily step count',
-                        actionLabel: 'Allow',
-                        onTap: () => _requestHealthPermission(context),
+                        title: 'Health, sleep & steps',
+                        subtitle: _healthGranted == true
+                            ? 'Read-only access enabled to sync sleep and steps automatically.'
+                            : 'Read-only access to automatically sync sleep and steps.',
+                        actionLabel: _requestingHealth ? '...' : _healthStatusLabel(),
+                        onTap: _requestingHealth
+                            ? () {}
+                            : () => _requestHealthPermission(context),
                       ),
                       const SizedBox(height: Insets.md),
                       QuietCard(
@@ -215,7 +224,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                             const SizedBox(width: Insets.sm),
                             Expanded(
                               child: Text(
-                                'Screen Time and app usage data cannot be accessed by regular iPhone apps without special Apple entitlements, so it cannot be imported here.',
+                                'Screen Time and app usage data cannot be accessed by regular iPhone apps without special Apple entitlements (Family Controls approval), so it cannot be retrieved in this app.',
                                 style: Theme.of(context).textTheme.bodySmall?.copyWith(color: LifelogPalette.of(context).mutedText),
                               ),
                             ),
@@ -406,38 +415,112 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   static const _pagesInitialised = 6;
 
-  Future<void> _requestLocationPermission(BuildContext context) async {
+  LocationPermission? _locationPermission;
+  bool? _healthGranted;
+  bool _requestingLocation = false;
+  bool _requestingHealth = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshPermissionStatuses();
+  }
+
+  Future<void> _refreshPermissionStatuses() async {
+    LocationPermission? location;
     try {
-      await Geolocator.isLocationServiceEnabled();
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
+      location = await Geolocator.checkPermission();
+    } catch (_) {}
+    final services = ref.read(appServicesProvider);
+    bool? health;
+    try {
+      health = await services.healthSteps.hasPermission();
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _locationPermission = location;
+      _healthGranted = health;
+    });
+  }
+
+  String _locationStatusLabel() {
+    final p = _locationPermission;
+    if (p == null) return 'Check access';
+    if (p == LocationPermission.always || p == LocationPermission.whileInUse) {
+      return 'Allowed';
+    }
+    if (p == LocationPermission.deniedForever) return 'Open Settings';
+    if (p == LocationPermission.denied) return 'Allow';
+    return 'Allow';
+  }
+
+  String _healthStatusLabel() {
+    if (_healthGranted == true) return 'Allowed';
+    if (_healthGranted == false) return 'Allow';
+    return 'Allow';
+  }
+
+  Future<void> _requestLocationPermission(BuildContext context) async {
+    if (_requestingLocation) return;
+    setState(() => _requestingLocation = true);
+    try {
+      var permission = _locationPermission ?? await Geolocator.checkPermission();
+      if (permission == LocationPermission.deniedForever) {
+        await Geolocator.openAppSettings();
+      } else {
+        final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+        if (!serviceEnabled && context.mounted) {
+          showSnack(context, 'Turn on Location Services in device settings to use location.');
+        }
         permission = await Geolocator.requestPermission();
       }
       if (!context.mounted) return;
+      setState(() => _locationPermission = permission);
       if (permission == LocationPermission.deniedForever) {
-        showSnack(context, 'Location permission is off. You can enable it in Settings.');
-      } else if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
+        showSnack(context, 'Location permission is off. You can enable it in device Settings.');
+      } else if (permission == LocationPermission.whileInUse ||
+          permission == LocationPermission.always) {
         showSnack(context, 'Location access enabled.');
       } else {
         showSnack(context, 'Location access not granted.');
       }
-    } catch (_) {
-      if (context.mounted) showSnack(context, 'Could not request location access right now.');
+    } catch (e) {
+      if (context.mounted) {
+        showSnack(context, 'Could not request location access: $e');
+      }
+    } finally {
+      if (mounted) setState(() => _requestingLocation = false);
+      await _refreshPermissionStatuses();
     }
   }
 
   Future<void> _requestHealthPermission(BuildContext context) async {
+    if (_requestingHealth) return;
+    setState(() => _requestingHealth = true);
     try {
       final services = ref.read(appServicesProvider);
       if (!services.healthSteps.isSupported) {
-        if (context.mounted) showSnack(context, 'Health steps are available on supported devices.');
+        if (context.mounted) {
+          showSnack(context, 'Health access is available on supported devices.');
+        }
         return;
       }
       final ok = await services.healthSteps.requestPermission();
+      final status = await services.healthSteps.hasPermission();
       if (!context.mounted) return;
-      showSnack(context, ok ? 'Health access enabled.' : 'Health access not granted.');
-    } catch (_) {
-      if (context.mounted) showSnack(context, 'Could not request Health access right now.');
+      setState(() => _healthGranted = status ?? ok);
+      if (ok || status == true) {
+        showSnack(context, 'Health access enabled. Sleep and steps can sync automatically.');
+      } else {
+        showSnack(context, 'Health access was not granted. You can enable it in device settings.');
+      }
+    } catch (e) {
+      if (context.mounted) {
+        showSnack(context, 'Could not request Health access: $e');
+      }
+    } finally {
+      if (mounted) setState(() => _requestingHealth = false);
+      await _refreshPermissionStatuses();
     }
   }
 

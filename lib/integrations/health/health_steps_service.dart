@@ -3,34 +3,54 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:health/health.dart';
 
-/// Reads daily step counts from Apple Health (iOS) / Health Connect (Android)
+class DailyHealthSummary {
+  const DailyHealthSummary({this.steps, this.sleepHours});
+
+  final int? steps;
+  final double? sleepHours;
+
+  bool get hasData => steps != null || sleepHours != null;
+}
+
+/// Reads daily health data from Apple Health (iOS) / Health Connect (Android)
 /// when available. On unsupported platforms this is a no-op.
 class HealthStepsService {
   final Health _health = Health();
 
   bool get isSupported => !kIsWeb && (Platform.isIOS || Platform.isAndroid);
 
-  static const _types = <HealthDataType>[HealthDataType.STEPS];
-  static const _permissions = <HealthDataAccess>[HealthDataAccess.READ];
+  static const _types = <HealthDataType>[
+    HealthDataType.STEPS,
+    HealthDataType.SLEEP_ASLEEP,
+    HealthDataType.SLEEP_IN_BED,
+  ];
+  static final _permissions = List<HealthDataAccess>.filled(
+    _types.length,
+    HealthDataAccess.READ,
+  );
 
-  Future<bool> hasPermission() async {
+  Future<bool?> hasPermission() async {
     if (!isSupported) return false;
     try {
-      final has = await _health.hasPermissions(_types, permissions: _permissions);
-      return has == true;
+      return await _health.hasPermissions(_types, permissions: _permissions);
     } catch (_) {
-      return false;
+      return null;
     }
   }
 
   Future<bool> requestPermission() async {
     if (!isSupported) return false;
     try {
-      final granted = await _health.requestAuthorization(
+      // Configure Health Connect on Android when applicable.
+      if (Platform.isAndroid) {
+        try {
+          await _health.configure();
+        } catch (_) {}
+      }
+      return await _health.requestAuthorization(
         _types,
         permissions: _permissions,
       );
-      return granted;
     } catch (_) {
       return false;
     }
@@ -38,17 +58,73 @@ class HealthStepsService {
 
   /// Returns total steps for [day] (local day), or null if unavailable.
   Future<int?> getStepsForDay(DateTime day) async {
-    if (!isSupported) return null;
-    try {
-      final start = DateTime(day.year, day.month, day.day);
-      final end = start.add(const Duration(days: 1)).subtract(const Duration(milliseconds: 1));
-      final now = DateTime.now();
-      final effectiveEnd = end.isAfter(now) ? now : end;
-      if (!effectiveEnd.isAfter(start)) return 0;
-      final steps = await _health.getTotalStepsInInterval(start, effectiveEnd);
-      return steps;
-    } catch (_) {
-      return null;
+    final summary = await getDailySummary(day, includeSleep: false);
+    return summary.steps;
+  }
+
+  /// Returns total sleep duration in hours for [day], or null if unavailable.
+  /// Includes sleep sessions that overlap the local day window.
+  Future<double?> getSleepHoursForDay(DateTime day) async {
+    final summary = await getDailySummary(day, includeSteps: false);
+    return summary.sleepHours;
+  }
+
+  /// Reads steps and/or sleep for [day] from Health. Returns available values;
+  /// missing data remains null.
+  Future<DailyHealthSummary> getDailySummary(
+    DateTime day, {
+    bool includeSteps = true,
+    bool includeSleep = true,
+  }) async {
+    if (!isSupported) return const DailyHealthSummary();
+    final start = DateTime(day.year, day.month, day.day);
+    final end = start.add(const Duration(days: 1));
+    final now = DateTime.now();
+    final effectiveEnd = end.isAfter(now) ? now : end;
+
+    int? steps;
+    double? sleepHours;
+
+    if (includeSteps) {
+      try {
+        if (effectiveEnd.isAfter(start)) {
+          steps = await _health.getTotalStepsInInterval(start, effectiveEnd);
+        } else {
+          steps = 0;
+        }
+      } catch (_) {
+        steps = null;
+      }
     }
+
+    if (includeSleep) {
+      try {
+        final points = await _health.getHealthDataFromTypes(
+          types: const [HealthDataType.SLEEP_ASLEEP, HealthDataType.SLEEP_IN_BED],
+          startTime: start.subtract(const Duration(hours: 12)),
+          endTime: end.add(const Duration(hours: 12)),
+        );
+        // Prefer asleep samples when present, otherwise fall back to in-bed.
+        final asleep = points
+            .where((p) => p.type == HealthDataType.SLEEP_ASLEEP)
+            .toList();
+        final source = asleep.isNotEmpty
+            ? asleep
+            : points.where((p) => p.type == HealthDataType.SLEEP_IN_BED).toList();
+
+        var totalMinutes = 0.0;
+        for (final p in source) {
+          final from = p.dateFrom.isAfter(start) ? p.dateFrom : start;
+          final to = p.dateTo.isBefore(end) ? p.dateTo : end;
+          if (!to.isAfter(from)) continue;
+          totalMinutes += to.difference(from).inMinutes;
+        }
+        sleepHours = totalMinutes <= 0 ? null : totalMinutes / 60.0;
+      } catch (_) {
+        sleepHours = null;
+      }
+    }
+
+    return DailyHealthSummary(steps: steps, sleepHours: sleepHours);
   }
 }

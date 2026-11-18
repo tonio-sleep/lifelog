@@ -35,6 +35,12 @@ class LastfmService {
     final user = username.trim();
     final key = apiKey.trim();
     if (user.isEmpty) throw LastfmException('Enter your Last.fm username.');
+    if (key.isEmpty) {
+      throw LastfmException(
+        'A Last.fm API key is required to sync listening history. '
+        'Add your API key in Last.fm settings, then try again.',
+      );
+    }
 
     final results = <MusicScrobble>[];
     var page = 1;
@@ -44,7 +50,7 @@ class LastfmService {
       final query = <String, String>{
         'method': 'user.getrecenttracks',
         'user': user,
-        if (key.isNotEmpty) 'api_key': key,
+        'api_key': key,
         'format': 'json',
         'limit': '200',
         'page': '$page',
@@ -68,9 +74,15 @@ class LastfmService {
       }
 
       if (response.statusCode != 200) {
-        throw LastfmException(
-          'Last.fm returned HTTP ${response.statusCode}.',
-        );
+        String detail = 'Last.fm returned HTTP ${response.statusCode}.';
+        try {
+          final body = jsonDecode(response.body);
+          if (body is Map && body['message'] is String) {
+            final msg = body['message'] as String;
+            detail = msg.isEmpty ? detail : 'Last.fm: $msg';
+          }
+        } catch (_) {}
+        throw LastfmException('$detail Check your username and API key.');
       }
 
       final decoded = jsonDecode(response.body);

@@ -165,8 +165,9 @@ class SettingsScreen extends ConsumerWidget {
         ),
         ListGroup(
           title: 'Permissions',
-          footer: 'Location is used only when you choose to save a place. Health access is read-only for step counts. '
-              'Screen Time data is not available on iPhone without special Apple entitlements.',
+          footer: 'Location is used only when you choose to save a place. '
+              'Health access is read-only and lets Lifelog sync sleep and steps automatically. '
+              'Screen Time/app usage is not available to regular iPhone apps without special Apple Family Controls entitlement and approval.',
           children: [
             ListRow(
               icon: Icons.location_on_outlined,
@@ -180,21 +181,10 @@ class SettingsScreen extends ConsumerWidget {
               ListRow(
                 icon: Icons.favorite_border_rounded,
                 iconColor: palette.tracker,
-                title: 'Health access (steps)',
-                subtitle: 'Allow read-only access to daily step counts',
+                title: 'Health access',
+                subtitle: 'Allow read-only access to sync sleep and steps',
                 chevron: true,
-                onTap: () async {
-                  final ok = await guard<bool>(
-                    context,
-                    services.healthSteps.requestPermission(),
-                    errorPrefix: 'Could not connect to Health',
-                  );
-                  if (ok == true && context.mounted) {
-                    showSnack(context, 'Health access granted.');
-                  } else if (ok == false && context.mounted) {
-                    showSnack(context, 'Health access was not granted.');
-                  }
-                },
+                onTap: () => _requestHealthAccess(context, ref),
               ),
             ListRow(
               icon: Icons.hourglass_disabled_rounded,
@@ -206,16 +196,16 @@ class SettingsScreen extends ConsumerWidget {
         ),
         if (services.healthSteps.isSupported)
           ListGroup(
-            title: 'Steps',
-            footer: 'Import your daily step count into your check-in. Read-only; nothing is written to Health.',
+            title: 'Health sync',
+            footer: 'Sleep and steps are read from Health and saved to your daily check-in. Read-only; nothing is written to Health.',
             children: [
               ListRow(
-                icon: Icons.directions_walk_rounded,
+                icon: Icons.sync_rounded,
                 iconColor: palette.place,
-                title: 'Import today\'s steps',
-                subtitle: 'Save today\'s steps to your daily check-in',
+                title: 'Sync today from Health',
+                subtitle: 'Update today\'s sleep and steps automatically',
                 chevron: true,
-                onTap: () => _importTodaySteps(context, ref),
+                onTap: () => _syncTodayFromHealth(context, ref),
               ),
             ],
           ),
@@ -450,32 +440,62 @@ class SettingsScreen extends ConsumerWidget {
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled && context.mounted) {
-        showSnack(context, 'Location services are turned off. Enable them in Settings to save places with your location.');
+        showSnack(context, 'Location services are turned off. You can enable them in device Settings.');
       }
       var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.deniedForever) {
+        if (context.mounted) {
+          showSnack(context, 'Location permission is turned off. Opening device Settings...');
+        }
+        await Geolocator.openAppSettings();
+        return;
+      }
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
       }
       if (!context.mounted) return;
       if (permission == LocationPermission.deniedForever) {
-        showSnack(context, 'Location permission is denied. You can enable it in your device Settings.');
+        showSnack(context, 'Location permission is turned off. Opening device Settings...');
         await Geolocator.openAppSettings();
         return;
       }
-      if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
+      if (permission == LocationPermission.whileInUse ||
+          permission == LocationPermission.always) {
         showSnack(context, 'Location access is enabled.');
       } else {
         showSnack(context, 'Location access was not granted.');
       }
     } catch (error) {
-      if (context.mounted) showSnack(context, 'Could not request location access: $error');
+      if (context.mounted) {
+        showSnack(context, 'Could not request location access: $error');
+      }
     }
   }
 
-  Future<void> _importTodaySteps(BuildContext context, WidgetRef ref) async {
+  Future<void> _requestHealthAccess(BuildContext context, WidgetRef ref) async {
     final services = ref.read(appServicesProvider);
     if (!services.healthSteps.isSupported) {
-      showSnack(context, 'Steps import is available on supported devices with Health access.');
+      showSnack(context, 'Health access is available on supported devices.');
+      return;
+    }
+    final granted = await guard<bool>(
+      context,
+      services.healthSteps.requestPermission(),
+      errorPrefix: 'Could not request Health access',
+    );
+    final has = await services.healthSteps.hasPermission();
+    if (!context.mounted) return;
+    if (granted == true || has == true) {
+      showSnack(context, 'Health access enabled. Sleep and steps can sync automatically.');
+    } else {
+      showSnack(context, 'Health access was not granted. You can enable it in device Settings.');
+    }
+  }
+
+  Future<void> _syncTodayFromHealth(BuildContext context, WidgetRef ref) async {
+    final services = ref.read(appServicesProvider);
+    if (!services.healthSteps.isSupported) {
+      showSnack(context, 'Health sync is available on supported devices with Health access.');
       return;
     }
     final granted = await guard<bool>(
@@ -483,15 +503,20 @@ class SettingsScreen extends ConsumerWidget {
       services.healthSteps.requestPermission(),
       errorPrefix: 'Could not access Health data',
     );
-    if (granted != true || !context.mounted) return;
+    final hasPermission = await services.healthSteps.hasPermission();
+    if ((granted != true && hasPermission != true) || !context.mounted) {
+      if (context.mounted) showSnack(context, 'Health access was not granted.');
+      return;
+    }
     final today = DateTime.now();
-    final steps = await guard<int?>(
+    final summary = await guard(
       context,
-      services.healthSteps.getStepsForDay(today),
-      errorPrefix: 'Could not read steps',
+      services.healthSteps.getDailySummary(today),
+      errorPrefix: 'Could not read Health data',
     );
-    if (!context.mounted || steps == null) {
-      if (context.mounted) showSnack(context, 'No step data available for today.');
+    if (!context.mounted || summary == null) return;
+    if (summary.steps == null && summary.sleepHours == null) {
+      showSnack(context, 'No sleep or step data found in Health for today.');
       return;
     }
     final archive = ref.read(archiveProvider);
@@ -505,16 +530,22 @@ class SettingsScreen extends ConsumerWidget {
           body: '',
           draft: true,
         );
+    var next = base.copyWith(updatedAt: DateTime.now());
+    if (summary.steps != null) next = next.copyWith(steps: summary.steps);
+    if (summary.sleepHours != null) next = next.copyWith(sleepHours: summary.sleepHours);
     await guard(
       context,
-      ref.read(archiveProvider.notifier).saveEntry(
-            base.copyWith(steps: steps, updatedAt: DateTime.now()),
-          ),
-      errorPrefix: 'Could not save steps',
+      ref.read(archiveProvider.notifier).saveEntry(next),
+      errorPrefix: 'Could not save Health data',
     );
-    if (context.mounted) {
-      showSnack(context, 'Saved $steps steps to today\'s check-in.');
+    if (!context.mounted) return;
+    final parts = <String>[];
+    if (summary.sleepHours != null) {
+      final v = summary.sleepHours!;
+      parts.add('sleep ${v == v.roundToDouble() ? v.toInt().toString() : v.toStringAsFixed(1)} hr');
     }
+    if (summary.steps != null) parts.add('${summary.steps} steps');
+    showSnack(context, 'Synced ${parts.join(' and ')} for today.');
   }
 
   Future<void> _wipe(BuildContext context, WidgetRef ref) async {

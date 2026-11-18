@@ -452,21 +452,13 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
                       ),
                     if (tracker.type != TrackerType.count && tracker.type != TrackerType.event)
                       const SizedBox(height: Insets.sm),
-                    if (tracker.type != TrackerType.duration)
-                      TextField(
-                        controller: _durationController,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        inputFormatters: [
-                          FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]')),
-                        ],
-                        decoration: const InputDecoration(
-                          labelText: 'Duration (minutes, optional)',
-                          hintText: 'e.g. 30',
-                          prefixIcon: Icon(Icons.timer_outlined, size: 18),
-                        ),
+                    Text(
+                      'Time & duration',
+                      style: context.text.labelMedium?.copyWith(
+                        color: context.palette.mutedText,
                       ),
-                    if (tracker.type != TrackerType.duration)
-                      const SizedBox(height: Insets.sm),
+                    ),
+                    const SizedBox(height: Insets.xs),
                     Row(
                       children: [
                         Expanded(
@@ -476,7 +468,10 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
                             onTap: () => _pickRangeTime(isStart: true),
                             onClear: _startedAt == null
                                 ? null
-                                : () => setState(() => _startedAt = null),
+                                : () => setState(() {
+                                      _startedAt = null;
+                                      if (_endedAt == null) _durationController.clear();
+                                    }),
                           ),
                         ),
                         const SizedBox(width: Insets.sm),
@@ -487,9 +482,57 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
                             onTap: () => _pickRangeTime(isStart: false),
                             onClear: _endedAt == null
                                 ? null
-                                : () => setState(() => _endedAt = null),
+                                : () => setState(() {
+                                      _endedAt = null;
+                                      if (_startedAt == null) _durationController.clear();
+                                    }),
                           ),
                         ),
+                      ],
+                    ),
+                    const SizedBox(height: Insets.sm),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _durationController,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]')),
+                            ],
+                            decoration: InputDecoration(
+                              labelText: 'Duration (minutes)',
+                              hintText: 'e.g. 16',
+                              prefixIcon: const Icon(Icons.timer_outlined, size: 18),
+                              suffixText: 'min',
+                              helperText: _startedAt != null || _endedAt != null
+                                  ? 'Set minutes to auto-calc the other time'
+                                  : 'Optional. You can also set From/To times',
+                            ),
+                            onChanged: (_) => setState(_syncRangeFromDuration),
+                          ),
+                        ),
+                        const SizedBox(width: Insets.sm),
+                        IconButton.filledTonal(
+                          tooltip: 'Set duration',
+                          onPressed: _setDurationByPicker,
+                          icon: const Icon(Icons.timelapse_rounded),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: Insets.sm),
+                    Wrap(
+                      spacing: Insets.sm,
+                      runSpacing: Insets.sm,
+                      children: [
+                        for (final m in const [5, 10, 15, 16, 30, 45, 60])
+                          ActionChip(
+                            label: Text('$m min'),
+                            onPressed: () => setState(() {
+                              _setDurationMinutes(m.toDouble());
+                              _syncRangeFromDuration();
+                            }),
+                          ),
                       ],
                     ),
                     const SizedBox(height: Insets.sm),
@@ -578,6 +621,40 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
     });
   }
 
+  double? get _enteredDurationMinutes {
+    final t = _durationController.text.trim().replaceAll(',', '.');
+    if (t.isEmpty) return null;
+    return double.tryParse(t);
+  }
+
+  void _setDurationMinutes(double minutes, {bool fromRange = false}) {
+    final m = minutes < 0 ? 0 : minutes;
+    final text = formatCompactNumber(m);
+    _durationController.text = text;
+    if (widget.tracker.type == TrackerType.duration) {
+      _valueController.text = text;
+    } else if (!fromRange && widget.tracker.type == TrackerType.event) {
+      // keep event value independent unless user wants it; do not override
+    }
+  }
+
+  void _syncRangeFromDuration() {
+    final mins = _enteredDurationMinutes ??
+        (widget.tracker.type == TrackerType.duration
+            ? double.tryParse(_valueController.text.trim().replaceAll(',', '.'))
+            : null);
+    if (mins == null) return;
+    final whole = mins.round();
+    if (_startedAt != null && _endedAt == null) {
+      _endedAt = _startedAt!.add(Duration(minutes: whole));
+    } else if (_startedAt == null && _endedAt != null) {
+      _startedAt = _endedAt!.subtract(Duration(minutes: whole));
+    } else if (_startedAt != null && _endedAt != null) {
+      // if user adjusted duration while both set, move end time from start
+      _endedAt = _startedAt!.add(Duration(minutes: whole));
+    }
+  }
+
   Future<void> _pickRangeTime({required bool isStart}) async {
     final base = (isStart ? _startedAt : _endedAt) ?? _when;
     final date = await showDatePicker(
@@ -592,7 +669,13 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
       initialTime: TimeOfDay.fromDateTime(base),
     );
     if (time == null || !mounted) return;
-    final picked = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    final picked = DateTime(
+      date.year,
+      date.month,
+      date.day,
+      time.hour,
+      time.minute,
+    );
     setState(() {
       if (isStart) {
         _startedAt = picked;
@@ -600,11 +683,77 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
         _endedAt = picked;
       }
       if (_startedAt != null && _endedAt != null) {
-        final diff = _endedAt!.difference(_startedAt!).inMinutes;
-        if (diff >= 0 && widget.tracker.type != TrackerType.duration) {
-          _durationController.text = '$diff';
+        final diff = _endedAt!.difference(_startedAt!).inMinutes.toDouble();
+        if (diff >= 0) {
+          _setDurationMinutes(diff, fromRange: true);
         }
+      } else {
+        _syncRangeFromDuration();
       }
+    });
+  }
+
+  Future<void> _setDurationByPicker() async {
+    final current = (_enteredDurationMinutes ??
+            (widget.tracker.type == TrackerType.duration
+                ? double.tryParse(_valueController.text.trim().replaceAll(',', '.'))
+                : null) ??
+            0)
+        .round();
+    final controller = TextEditingController(text: current <= 0 ? '' : '$current');
+    final mins = await showLifelogSheet<int>(
+      context,
+      builder: (ctx) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SheetTitle(
+            title: 'Set duration',
+            subtitle: 'Enter minutes, or pick a quick value',
+          ),
+          TextField(
+            controller: controller,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            decoration: const InputDecoration(
+              labelText: 'Minutes',
+              hintText: '16',
+              suffixText: 'min',
+            ),
+          ),
+          const SizedBox(height: Insets.md),
+          Wrap(
+            spacing: Insets.sm,
+            runSpacing: Insets.sm,
+            children: [
+              for (final m in const [5, 10, 15, 16, 20, 30, 45, 60, 90])
+                ActionChip(
+                  label: Text('$m min'),
+                  onPressed: () => Navigator.of(ctx).pop(m),
+                ),
+            ],
+          ),
+          const SizedBox(height: Insets.lg),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: () {
+                final v = int.tryParse(controller.text.trim());
+                if (v == null) return;
+                Navigator.of(ctx).pop(v);
+              },
+              child: const Text('Apply'),
+            ),
+          ),
+        ],
+      ),
+    );
+    Future<void>.delayed(const Duration(milliseconds: 400), controller.dispose);
+    if (mins == null || !mounted) return;
+    setState(() {
+      _setDurationMinutes(mins.toDouble());
+      _syncRangeFromDuration();
     });
   }
 

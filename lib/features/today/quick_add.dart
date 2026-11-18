@@ -220,6 +220,14 @@ class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
     _highlight = TextEditingController(text: entry?.highlight ?? '');
     _mood = entry?.mood;
     _energy = entry?.energy;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _healthAutoLoaded) return;
+      _healthAutoLoaded = true;
+      final services = ref.read(appServicesProvider);
+      if (services.healthSteps.isSupported) {
+        _importFromHealth();
+      }
+    });
   }
 
   @override
@@ -250,34 +258,135 @@ class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
         );
   }
 
-  Future<void> _importSteps() async {
+  bool _loadingHealth = false;
+  bool _healthAutoLoaded = false;
+  bool _healthEditable = false;
+  String? _healthMessage;
+  bool _stepsFromHealth = false;
+  bool _sleepFromHealth = false;
+
+  Future<void> _importFromHealth({bool interactive = false}) async {
     final services = ref.read(appServicesProvider);
     if (!services.healthSteps.isSupported) {
-      if (mounted) showSnack(context, 'Health steps are available on supported devices with Health access.');
+      if (interactive && mounted) {
+        showSnack(context, 'Health data is available on supported devices with Health access enabled.');
+      }
       return;
     }
-    final granted = await guard<bool>(
-      context,
-      services.healthSteps.requestPermission(),
-      errorPrefix: 'Could not access Health data',
-    );
-    if (granted != true || !mounted) return;
-    final steps = await guard<int?>(
-      context,
-      services.healthSteps.getStepsForDay(widget.day),
-      errorPrefix: 'Could not read steps',
-    );
-    if (!mounted) return;
-    if (steps == null) {
-      showSnack(context, 'No step data available for this day.');
-      return;
+    setState(() {
+      _loadingHealth = true;
+      _healthMessage = null;
+    });
+    try {
+      final granted = await services.healthSteps.requestPermission();
+      if (!mounted) return;
+      if (!granted) {
+        setState(() {
+          _healthMessage = interactive
+              ? 'Health access was not granted.'
+              : 'Allow Health access to auto-fill sleep and steps.';
+        });
+        if (interactive) showSnack(context, 'Health access was not granted.');
+        return;
+      }
+      final summary = await services.healthSteps.getDailySummary(widget.day);
+      if (!mounted) return;
+      var updated = false;
+      setState(() {
+        if (summary.steps != null) {
+          _steps.text = summary.steps.toString();
+          _stepsFromHealth = true;
+          updated = true;
+        }
+        if (summary.sleepHours != null) {
+          _sleep.text = _fmtNum(summary.sleepHours!);
+          _sleepFromHealth = true;
+          updated = true;
+        }
+        _healthMessage = updated
+            ? 'Sleep and steps synced from Health.'
+            : 'No Health sleep or step data found for this day.';
+      });
+      if (interactive) {
+        showSnack(
+          context,
+          updated
+              ? 'Synced sleep and steps from Health.'
+              : 'No Health sleep or step data found for this day.',
+        );
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _healthMessage = 'Could not read Health data.');
+      if (interactive) showSnack(context, 'Could not read Health data: $error');
+    } finally {
+      if (mounted) setState(() => _loadingHealth = false);
     }
-    setState(() => _steps.text = steps.toString());
-    showSnack(context, 'Imported $steps steps from Health.');
+  }
+
+  List<String> _mealLines() {
+    return _meals.text
+        .split('\n')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+  }
+
+  Future<void> _addMeal() async {
+    final controller = TextEditingController();
+    final added = await showLifelogSheet<String>(
+      context,
+      builder: (ctx) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SheetTitle(
+            title: 'Add food or drink',
+            subtitle: 'Log it as you go through the day',
+          ),
+          TextField(
+            controller: controller,
+            autofocus: true,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(
+              hintText: 'e.g. Breakfast: oats and coffee',
+              labelText: 'Meal or item',
+            ),
+            onSubmitted: (value) => Navigator.of(ctx).pop(value),
+          ),
+          const SizedBox(height: Insets.lg),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(controller.text),
+              child: const Text('Add'),
+            ),
+          ),
+        ],
+      ),
+    );
+    Future<void>.delayed(const Duration(milliseconds: 400), controller.dispose);
+    final text = added?.trim() ?? '';
+    if (text.isEmpty || !mounted) return;
+    final now = TimeOfDay.fromDateTime(DateTime.now());
+    final timeLabel =
+        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+    final line = '$timeLabel  $text';
+    final lines = _mealLines()..add(line);
+    setState(() => _meals.text = lines.join('\n'));
   }
 
   Future<void> _save() async {
     setState(() => _saving = true);
+    // Refresh from Health if supported so saved values stay current.
+    if (ref.read(appServicesProvider).healthSteps.isSupported) {
+      try {
+        final summary =
+            await ref.read(appServicesProvider).healthSteps.getDailySummary(widget.day);
+        if (summary.steps != null) _steps.text = summary.steps.toString();
+        if (summary.sleepHours != null) _sleep.text = _fmtNum(summary.sleepHours!);
+      } catch (_) {}
+    }
     final steps = int.tryParse(_steps.text.trim());
     final sleep = double.tryParse(_sleep.text.trim().replaceAll(',', '.'));
     final base = _baseEntry();
@@ -348,47 +457,115 @@ class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
         Row(
           children: [
             Expanded(
-              child: TextField(
-                controller: _sleep,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'Sleep (hours)',
-                  hintText: '7.5',
-                  prefixIcon: Icon(Icons.bedtime_outlined, size: 18),
-                ),
+              child: Text(
+                'Sleep & steps',
+                style: text.labelMedium?.copyWith(color: palette.mutedText),
               ),
             ),
-            const SizedBox(width: Insets.md),
-            Expanded(
-              child: TextField(
-                controller: _steps,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: 'Steps',
-                  hintText: '8000',
-                  prefixIcon: const Icon(Icons.directions_walk_rounded, size: 18),
-                  suffixIcon: IconButton(
-                    tooltip: 'Import from Health',
-                    onPressed: _importSteps,
-                    icon: const Icon(Icons.favorite_outline_rounded, size: 18),
-                  ),
-                ),
+            if (_loadingHealth)
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              TextButton.icon(
+                onPressed: () => _importFromHealth(interactive: true),
+                icon: const Icon(Icons.sync_rounded, size: 16),
+                label: const Text('Sync from Health'),
               ),
+          ],
+        ),
+        const SizedBox(height: Insets.xs),
+        QuietCard(
+          padding: const EdgeInsets.all(Insets.md),
+          color: palette.subtle.withValues(alpha: 0.6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: _MetricTile(
+                      icon: Icons.bedtime_outlined,
+                      label: 'Sleep',
+                      value: _sleep.text.trim().isEmpty
+                          ? 'Not available'
+                          : '${_sleep.text.trim()} hr',
+                    ),
+                  ),
+                  const SizedBox(width: Insets.md),
+                  Expanded(
+                    child: _MetricTile(
+                      icon: Icons.directions_walk_rounded,
+                      label: 'Steps',
+                      value: _steps.text.trim().isEmpty
+                          ? 'Not available'
+                          : _steps.text.trim(),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: Insets.xs),
+              Text(
+                _healthMessage ??
+                    (ref.read(appServicesProvider).healthSteps.isSupported
+                        ? 'Sleep and steps are automatically synced from Health when available.'
+                        : 'Automatic Health sync is available on supported devices.'),
+                style: text.bodySmall?.copyWith(color: palette.mutedText),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: Insets.md),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'What I ate',
+                style: text.labelMedium?.copyWith(color: palette.mutedText),
+              ),
+            ),
+            TextButton.icon(
+              onPressed: _addMeal,
+              icon: const Icon(Icons.add_rounded, size: 16),
+              label: const Text('Add'),
             ),
           ],
         ),
-        const SizedBox(height: Insets.md),
-        TextField(
-          controller: _meals,
-          minLines: 2,
-          maxLines: 4,
-          textCapitalization: TextCapitalization.sentences,
-          decoration: const InputDecoration(
-            labelText: 'What I ate',
-            hintText: 'Breakfast, lunch, dinner, snacks, drinks...',
-            prefixIcon: Icon(Icons.restaurant_outlined, size: 18),
+        const SizedBox(height: Insets.xs),
+        if (_meals.text.trim().isEmpty)
+          QuietCard(
+            padding: const EdgeInsets.all(Insets.md),
+            color: palette.subtle.withValues(alpha: 0.6),
+            child: Text(
+              'No meals added yet. Add items as you go through the day.',
+              style: text.bodySmall?.copyWith(color: palette.mutedText),
+            ),
+          )
+        else
+          QuietCard(
+            padding: const EdgeInsets.all(Insets.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final line in _mealLines()) ...[
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.restaurant_outlined,
+                            size: 16, color: palette.mutedText),
+                        const SizedBox(width: Insets.sm),
+                        Expanded(child: Text(line, style: text.bodyMedium)),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
-        ),
         const SizedBox(height: Insets.md),
         TextField(
           controller: _highlight,
@@ -421,8 +598,6 @@ Future<List<XFile>> pickMediaFromPhotosOrFiles() async {
     try {
       final picker = ImagePicker();
       final picked = await picker.pickMultipleMedia();
-      if (picked.isNotEmpty) return picked;
-      // If user cancelled, fall through? no, return empty to respect cancel.
       return picked;
     } catch (_) {
       // fall through to file picker
@@ -440,28 +615,180 @@ Future<void> importMediaForDay(
 }) async {
   try {
     final files = await pickMediaFromPhotosOrFiles();
-    if (files.isEmpty) return;
-    var added = 0;
-    for (final file in files) {
-      final bytes = await file.readAsBytes();
-      if (!context.mounted) return;
-      final details = await askMediaDetails(context, fileName: file.name);
-      if (details == null) continue;
-      if (!context.mounted) return;
-      await ref.read(archiveProvider.notifier).importMedia(
-        bytes: Uint8List.fromList(bytes),
-        fileName: file.name,
-        caption: details.caption,
-        tags: details.tags,
-        journalEntryId: journalEntryId,
-        createdAt: momentForDay(day),
-      );
-      added++;
-    }
-    if (context.mounted && added > 0) {
-      showSnack(context, added == 1 ? 'Added to the day.' : '$added items added.');
-    }
+    if (files.isEmpty || !context.mounted) return;
+    await _importFilesWithProgress(
+      context,
+      ref,
+      day,
+      files,
+      journalEntryId: journalEntryId,
+    );
   } catch (error) {
     if (context.mounted) showSnack(context, 'Could not import media: $error');
+  }
+}
+
+Future<void> _importFilesWithProgress(
+  BuildContext context,
+  WidgetRef ref,
+  DateTime day,
+  List<XFile> files, {
+  String? journalEntryId,
+}) async {
+  final progress = ValueNotifier<_ImportProgress>(
+    _ImportProgress(total: files.length, current: 0, label: 'Preparing...'),
+  );
+  var dialogOpen = true;
+  // Show a non-dismissible progress dialog while importing.
+  // ignore: unawaited_futures
+  showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => PopScope(
+      canPop: false,
+      child: AlertDialog(
+        content: ValueListenableBuilder<_ImportProgress>(
+          valueListenable: progress,
+          builder: (context, p, _) {
+            final fraction = p.total <= 0 ? null : (p.current / p.total).clamp(0.0, 1.0);
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Adding media',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: Insets.md),
+                LinearProgressIndicator(value: fraction),
+                const SizedBox(height: Insets.md),
+                Text(
+                  '${p.current} of ${p.total}',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontFeatures: tabularFigures,
+                      ),
+                ),
+                if (p.label.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    p.label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+                ],
+              ],
+            );
+          },
+        ),
+      ),
+    ),
+  ).whenComplete(() => dialogOpen = false);
+
+  var added = 0;
+  try {
+    for (var i = 0; i < files.length; i++) {
+      final file = files[i];
+      progress.value = _ImportProgress(
+        total: files.length,
+        current: i,
+        label: 'Reading ${file.name}',
+      );
+      final bytes = await file.readAsBytes();
+      if (!context.mounted) break;
+
+      progress.value = _ImportProgress(
+        total: files.length,
+        current: i,
+        label: 'Details for ${file.name}',
+      );
+      final details = await askMediaDetails(context, fileName: file.name);
+      if (details == null) {
+        progress.value = _ImportProgress(
+          total: files.length,
+          current: i + 1,
+          label: 'Skipped ${file.name}',
+        );
+        continue;
+      }
+      if (!context.mounted) break;
+
+      progress.value = _ImportProgress(
+        total: files.length,
+        current: i,
+        label: 'Saving ${file.name}',
+      );
+      await ref.read(archiveProvider.notifier).importMedia(
+            bytes: Uint8List.fromList(bytes),
+            fileName: file.name,
+            caption: details.caption,
+            tags: details.tags,
+            journalEntryId: journalEntryId,
+            createdAt: momentForDay(day),
+          );
+      added++;
+      progress.value = _ImportProgress(
+        total: files.length,
+        current: i + 1,
+        label: 'Added ${file.name}',
+      );
+    }
+  } finally {
+    if (dialogOpen && context.mounted) {
+      Navigator.of(context, rootNavigator: true).pop();
+    }
+    progress.dispose();
+  }
+
+  if (context.mounted && added > 0) {
+    showSnack(context, added == 1 ? 'Added to the day.' : '$added items added.');
+  }
+}
+
+class _ImportProgress {
+  const _ImportProgress({
+    required this.total,
+    required this.current,
+    required this.label,
+  });
+  final int total;
+  final int current;
+  final String label;
+}
+
+class _MetricTile extends StatelessWidget {
+  const _MetricTile({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final text = context.text;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 16, color: palette.mutedText),
+            const SizedBox(width: 6),
+            Text(label, style: text.labelSmall?.copyWith(color: palette.mutedText)),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: text.titleSmall?.copyWith(fontFeatures: tabularFigures),
+        ),
+      ],
+    );
   }
 }

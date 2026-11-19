@@ -76,7 +76,7 @@ enum LifelogTheme {
         case .footnote: return .footnote
         case .caption: return .caption1
         case .caption2: return .caption2
-        @unknown default: return .body
+        default: return .body
         }
     }
 
@@ -91,7 +91,7 @@ enum LifelogTheme {
         case .bold: return .bold
         case .heavy: return .heavy
         case .black: return .black
-        @unknown default: return .regular
+        default: return .regular
         }
     }
 }

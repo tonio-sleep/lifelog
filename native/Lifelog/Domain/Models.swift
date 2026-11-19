@@ -43,7 +43,7 @@ enum MoodScore {
 
 // MARK: - Journal
 
-enum JournalEntryKind: String, Codable {
+enum JournalEntryKind: String, Codable, CaseIterable {
     case journal, note, vocab
 
     var label: String {

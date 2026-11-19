@@ -57,3 +57,56 @@ jobs:
           path: |
             xcodebuild-build.log
             xcodebuild-test.log
+
+  build-ipa:
+    name: Unsigned IPA
+    runs-on: macos-15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Build device app without signing
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project native/Lifelog.xcodeproj \
+            -scheme Lifelog \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath DerivedData-ipa \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            build 2>&1 | tee xcodebuild-ipa.log
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          APP="DerivedData-ipa/Build/Products/Release-iphoneos/Lifelog.app"
+          test -d "$APP"
+          rm -rf Payload Lifelog-unsigned.ipa
+          mkdir Payload
+          cp -R "$APP" Payload/
+          zip -qry Lifelog-unsigned.ipa Payload
+          ls -lh Lifelog-unsigned.ipa
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lifelog-unsigned-ipa
+          path: Lifelog-unsigned.ipa
+          if-no-files-found: error
+
+      - name: Upload IPA build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-ipa-log
+          path: xcodebuild-ipa.log

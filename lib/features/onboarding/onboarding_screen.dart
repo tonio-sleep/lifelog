@@ -88,8 +88,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     eyebrow: 'Account required',
                     title: 'Sign in to continue',
                     body:
-                        'A Cloudflare sync account is required to use Lifelog. '
-                        'Sign in or create an account to continue. Your journal stays on this device and encrypted; cloud sync stores encrypted backups only.',
+                        'A Cloudflare account is required to use Lifelog. '
+                        'Sign in or create an account to continue. Your data stays on this device, and you can sync everything (entries, photos, videos, habits, places, music) with end-to-end encryption.',
                     children: [
                       if (settings.cloudflareConnected)
                         QuietCard(

@@ -257,10 +257,10 @@ class SettingsScreen extends ConsumerWidget {
             ],
           ),
         ListGroup(
-          title: 'Backups on this device',
+          title: 'Local backups',
           footer: settings.lastBackupAt == null
-              ? 'No backup has been created from this install yet.'
-              : 'Last backup ${formatDayLong(settings.lastBackupAt!)}, ${formatTime(settings.lastBackupAt!)}.',
+              ? 'Save an encrypted backup file to this device or a folder you choose (e.g. iCloud/Drive folder). Includes all entries, media, habits, places, and music.'
+              : 'Last local backup ${formatDayLong(settings.lastBackupAt!)}, ${formatTime(settings.lastBackupAt!)}. Includes all entries, media, habits, places, and music.',
           children: [
             ListRow(
               icon: Icons.folder_shared_outlined,

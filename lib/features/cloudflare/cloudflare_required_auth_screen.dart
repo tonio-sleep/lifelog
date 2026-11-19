@@ -248,13 +248,13 @@ class _CloudflareRequiredAuthScreenState
                     _InfoRow(
                       icon: Icons.lock_outline_rounded,
                       text:
-                          'End-to-end encrypted: backups are encrypted on this device with a separate backup passphrase.',
+                          'End-to-end encrypted: entries, notes, vocab, photos, videos, habits, places, and music are encrypted on this device before upload.',
                     ),
                     const SizedBox(height: Insets.sm),
                     _InfoRow(
                       icon: Icons.shield_outlined,
                       text:
-                          'Your session is stored encrypted on this device. Local data is never deleted by signing in.',
+                          'Your session stays on this device. Signing in never deletes your local data.',
                     ),
                     const SizedBox(height: Insets.md),
                     TextField(
@@ -415,7 +415,7 @@ class _CloudflareRequiredAuthScreenState
               ),
               const SizedBox(height: Insets.md),
               Text(
-                'Cloud sync sign-in is required. Your journal and records remain stored locally and encrypted on this device.',
+                'Cloud sync is required. Your journal stays on this device, and backups can sync everything to your Cloudflare Worker when you choose.',
                 textAlign: TextAlign.center,
                 style: text.bodySmall?.copyWith(color: palette.dimText),
               ),

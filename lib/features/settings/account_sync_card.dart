@@ -36,11 +36,11 @@ class AccountSyncCard extends ConsumerWidget {
     };
 
     final title = status.signedIn
-        ? (status.username ?? 'Cloud backup')
-        : 'Cloud backup';
+        ? (status.username ?? 'Cloud sync')
+        : 'Cloud sync';
     final subtitle = status.signedIn
         ? (status.host ?? 'Cloudflare Worker')
-        : 'Optional. Your journal works fully without it.';
+        : 'Sign in to back up and sync your data.';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -190,8 +190,7 @@ class _SignedOutBody extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          'Keep an encrypted copy of your journal, records and media on your '
-          'own Cloudflare Worker, and restore it on a new device.',
+          'Back up and sync all your data — journal entries, notes, vocab, photos, videos, habits, places, music, and timeline — encrypted on your device before upload. Restore everything on a new device anytime.',
           style: context.text.bodyMedium?.copyWith(
             color: context.palette.mutedText,
           ),
@@ -258,7 +257,7 @@ class _SignedInBody extends ConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Last backup',
+                    'Last synced backup',
                     style: text.labelMedium?.copyWith(color: palette.mutedText),
                   ),
                   const SizedBox(height: 2),
@@ -268,14 +267,20 @@ class _SignedInBody extends ConsumerWidget {
             ),
           ],
         ),
+        const SizedBox(height: Insets.xs),
+        Text(
+          'Includes entries, notes, vocab, photos/videos, habits, places, music, and timeline.',
+          style: text.bodySmall?.copyWith(color: palette.mutedText),
+        ),
         const SizedBox(height: Insets.lg),
         Row(
           children: [
             Expanded(
               flex: 3,
-              child: FilledButton(
+              child: FilledButton.icon(
                 onPressed: () => backupToCloudflare(context, ref),
-                child: const Text('Back up now'),
+                icon: const Icon(Icons.cloud_upload_outlined, size: 18),
+                label: const Text('Sync now'),
               ),
             ),
             const SizedBox(width: Insets.sm),

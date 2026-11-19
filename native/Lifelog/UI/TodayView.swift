@@ -210,7 +210,7 @@ struct TodayView: View {
                             .frame(width: 62, height: 62)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                         VStack(alignment: .leading) {
-                            Text("\(summary.total) \(Dates.plural(summary.total, "track"))")
+                            Text("\(summary.scrobbles.count) \(Dates.plural(summary.scrobbles.count, "track"))")
                                 .font(LifelogTheme.serif(21, relativeTo: .title3))
                             Text("\(summary.uniqueArtists) artists · \(summary.uniqueTracks) tracks")
                                 .font(LifelogTheme.sans(12)).foregroundStyle(palette.secondary)

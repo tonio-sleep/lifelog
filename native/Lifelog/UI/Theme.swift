@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum LifelogTheme {
     struct Palette {
@@ -57,7 +58,41 @@ enum LifelogTheme {
     }
 
     static func sans(_ size: CGFloat, weight: Font.Weight = .regular, relativeTo: Font.TextStyle = .body) -> Font {
-        Font.system(size: size, weight: weight, relativeTo: relativeTo, design: .default)
+        let base = UIFont.systemFont(ofSize: size, weight: uiWeight(weight))
+        let scaled = UIFontMetrics(forTextStyle: uiTextStyle(relativeTo)).scaledFont(for: base)
+        return Font(scaled)
+    }
+
+    private static func uiTextStyle(_ style: Font.TextStyle) -> UIFont.TextStyle {
+        switch style {
+        case .largeTitle: return .largeTitle
+        case .title: return .title1
+        case .title2: return .title2
+        case .title3: return .title3
+        case .headline: return .headline
+        case .subheadline: return .subheadline
+        case .body: return .body
+        case .callout: return .callout
+        case .footnote: return .footnote
+        case .caption: return .caption1
+        case .caption2: return .caption2
+        @unknown default: return .body
+        }
+    }
+
+    private static func uiWeight(_ weight: Font.Weight) -> UIFont.Weight {
+        switch weight {
+        case .ultraLight: return .ultraLight
+        case .thin: return .thin
+        case .light: return .light
+        case .regular: return .regular
+        case .medium: return .medium
+        case .semibold: return .semibold
+        case .bold: return .bold
+        case .heavy: return .heavy
+        case .black: return .black
+        @unknown default: return .regular
+        }
     }
 }
 

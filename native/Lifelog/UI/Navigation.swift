@@ -56,7 +56,7 @@ struct DestinationSidebar: View {
     let onSettings: () -> Void
 
     var body: some View {
-        List(selection: $selection) {
+        List {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Lifelog")
                     .font(LifelogTheme.serif(27, relativeTo: .largeTitle))
@@ -67,10 +67,20 @@ struct DestinationSidebar: View {
             }
             .padding(.vertical, 14)
 
-            ForEach(Destination.allCases) { destination in
-                Label(destination.title, systemImage: destination.symbol)
-                    .font(LifelogTheme.sans(15, weight: .medium))
-                    .tag(destination)
+            Section {
+                ForEach(Destination.allCases) { destination in
+                    Button {
+                        selection = destination
+                    } label: {
+                        Label(destination.title, systemImage: destination.symbol)
+                            .font(LifelogTheme.sans(15, weight: selection == destination ? .semibold : .medium))
+                            .foregroundStyle(selection == destination ? palette.accent : palette.text)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(selection == destination ? palette.accentSoft : Color.clear)
+                }
             }
 
             Section {

@@ -88,105 +88,18 @@ struct EntryEditorView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("The day") {
-                    TextField("Title (optional)", text: $draft.title)
-                    Picker("Kind", selection: $draft.kind) {
-                        ForEach(JournalEntryKind.allCases, id: \.self) { kind in
-                            Text(kind.label).tag(kind)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    TextField("Write freely…", text: $draft.body, axis: .vertical)
-                        .lineLimit(6...14)
-                    TextField("Highlight", text: $draft.highlight, axis: .vertical)
-                        .lineLimit(1...3)
-                }
-
-                Section("How it felt") {
-                    Toggle("Record mood", isOn: $moodEnabled)
-                    if moodEnabled {
-                        VStack(alignment: .leading) {
-                            HStack {
-                                Text(MoodScore.label(draft.mood ?? 5))
-                                Spacer()
-                                Text(MoodScore.shortLabel(draft.mood ?? 5))
-                                    .foregroundStyle(.secondary)
-                            }
-                            Slider(value: Binding(
-                                get: { Double(draft.mood ?? 5) },
-                                set: { draft.mood = Int($0.rounded()) }
-                            ), in: 1...10, step: 1)
-                        }
-                    }
-                    Toggle("Record energy", isOn: $energyEnabled)
-                    if energyEnabled {
-                        Slider(value: Binding(
-                            get: { Double(draft.energy ?? 5) },
-                            set: { draft.energy = Int($0.rounded()) }
-                        ), in: 1...10, step: 1)
-                    }
-                }
-
-                Section("Details") {
-                    TextField("Sleep hours", text: $sleepText)
-                        .keyboardType(.decimalPad)
-                    TextField("Steps", text: $stepsText)
-                        .keyboardType(.numberPad)
-                    TextField("Meals", text: $draft.meals, axis: .vertical)
-                        .lineLimit(1...3)
-                    TextField("Tags, separated by commas", text: $tagText)
-                }
-
+                daySection
+                feelingsSection
+                detailsSection
                 if draft.kind == .vocab {
-                    Section("Words") {
-                        ForEach(draft.vocabItems.indices, id: \.self) { index in
-                            HStack {
-                                TextField("Term", text: $draft.vocabItems[index].term)
-                                TextField("Meaning", text: $draft.vocabItems[index].meaning)
-                                Button(role: .destructive) { draft.vocabItems.remove(at: index) } label: {
-                                    Image(systemName: "minus.circle")
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        Button {
-                            draft.vocabItems.append(VocabItem())
-                        } label: {
-                            Label("Add word", systemImage: "plus")
-                        }
-                    }
+                    vocabSection
                 }
-
-                Section("Attachments") {
-                    PhotosPicker(selection: $photoItem, matching: .images) {
-                        Label("Add a photo", systemImage: "photo.badge.plus")
-                    }
-                    let attached = env.archive.media.filter { $0.journalEntryId == draft.id }
-                    if !attached.isEmpty {
-                        ScrollView(.horizontal) {
-                            HStack {
-                                ForEach(attached) { item in
-                                    EncryptedMediaImage(item: item)
-                                        .frame(width: 78, height: 78)
-                                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if env.archive.entryById(draft.id) != nil {
-                    Section {
-                        Button(role: .destructive) {
-                            env.deleteEntry(draft)
-                            dismiss()
-                        } label: {
-                            Label("Delete entry", systemImage: "trash")
-                        }
-                    }
+                attachmentsSection
+                if isExisting {
+                    deleteSection
                 }
             }
-            .navigationTitle(env.archive.entryById(draft.id) == nil ? "New entry" : "Edit entry")
+            .navigationTitle(isExisting ? "Edit entry" : "New entry")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -205,6 +118,131 @@ struct EntryEditorView: View {
                     }
                     photoItem = nil
                 }
+            }
+        }
+    }
+
+    private var isExisting: Bool { env.archive.entryById(draft.id) != nil }
+
+    private var attachedMedia: [MediaItem] {
+        env.archive.media.filter { $0.journalEntryId == draft.id }
+    }
+
+    private var moodBinding: Binding<Double> {
+        Binding(
+            get: { Double(draft.mood ?? 5) },
+            set: { draft.mood = Int($0.rounded()) }
+        )
+    }
+
+    private var energyBinding: Binding<Double> {
+        Binding(
+            get: { Double(draft.energy ?? 5) },
+            set: { draft.energy = Int($0.rounded()) }
+        )
+    }
+
+    @ViewBuilder
+    private var daySection: some View {
+        Section("The day") {
+            TextField("Title (optional)", text: $draft.title)
+            Picker("Kind", selection: $draft.kind) {
+                ForEach(JournalEntryKind.allCases, id: \.self) { kind in
+                    Text(kind.label).tag(kind)
+                }
+            }
+            .pickerStyle(.segmented)
+            TextField("Write freely…", text: $draft.body, axis: .vertical)
+                .lineLimit(6...14)
+            TextField("Highlight", text: $draft.highlight, axis: .vertical)
+                .lineLimit(1...3)
+        }
+    }
+
+    @ViewBuilder
+    private var feelingsSection: some View {
+        Section("How it felt") {
+            Toggle("Record mood", isOn: $moodEnabled)
+            if moodEnabled {
+                VStack(alignment: .leading) {
+                    HStack {
+                        Text(MoodScore.label(draft.mood ?? 5))
+                        Spacer()
+                        Text(MoodScore.shortLabel(draft.mood ?? 5))
+                            .foregroundStyle(.secondary)
+                    }
+                    Slider(value: moodBinding, in: 1...10, step: 1)
+                }
+            }
+            Toggle("Record energy", isOn: $energyEnabled)
+            if energyEnabled {
+                Slider(value: energyBinding, in: 1...10, step: 1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var detailsSection: some View {
+        Section("Details") {
+            TextField("Sleep hours", text: $sleepText)
+                .keyboardType(.decimalPad)
+            TextField("Steps", text: $stepsText)
+                .keyboardType(.numberPad)
+            TextField("Meals", text: $draft.meals, axis: .vertical)
+                .lineLimit(1...3)
+            TextField("Tags, separated by commas", text: $tagText)
+        }
+    }
+
+    @ViewBuilder
+    private var vocabSection: some View {
+        Section("Words") {
+            ForEach(draft.vocabItems.indices, id: \.self) { index in
+                HStack {
+                    TextField("Term", text: $draft.vocabItems[index].term)
+                    TextField("Meaning", text: $draft.vocabItems[index].meaning)
+                    Button(role: .destructive) { draft.vocabItems.remove(at: index) } label: {
+                        Image(systemName: "minus.circle")
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            Button {
+                draft.vocabItems.append(VocabItem())
+            } label: {
+                Label("Add word", systemImage: "plus")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var attachmentsSection: some View {
+        Section("Attachments") {
+            PhotosPicker(selection: $photoItem, matching: .images) {
+                Label("Add a photo", systemImage: "photo.badge.plus")
+            }
+            if !attachedMedia.isEmpty {
+                ScrollView(.horizontal) {
+                    HStack {
+                        ForEach(attachedMedia) { item in
+                            EncryptedMediaImage(item: item)
+                                .frame(width: 78, height: 78)
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var deleteSection: some View {
+        Section {
+            Button(role: .destructive) {
+                env.deleteEntry(draft)
+                dismiss()
+            } label: {
+                Label("Delete entry", systemImage: "trash")
             }
         }
     }
@@ -281,7 +319,7 @@ struct TrackerLogView: View {
     @State private var note = ""
 
     init() {
-        _trackerId = State(initialValue: envPlaceholderFirstTrackerID)
+        _trackerId = State(initialValue: Self.envPlaceholderFirstTrackerID)
     }
 
     private static var envPlaceholderFirstTrackerID: String { "" }

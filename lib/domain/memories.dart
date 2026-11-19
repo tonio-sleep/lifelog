@@ -151,21 +151,17 @@ List<DaySummary> activeDaysInPreviousYears(
   return results;
 }
 
-/// The dominant mood for a day, if any entry records one. This is a stored
-/// value, not an inferred emotional assessment.
-Mood? dominantMood(Archive archive, DateTime day) {
+/// The average mood score for a day (1-10), if any entry records one.
+/// Rounded to nearest int for display. This is a stored value, not an
+/// inferred emotional assessment.
+int? dominantMood(Archive archive, DateTime day) {
   final entries = archive
       .entriesOn(day, includeDrafts: true)
       .where((e) => e.mood != null)
       .toList();
   if (entries.isEmpty) return null;
-  final counts = <Mood, int>{};
-  for (final entry in entries) {
-    counts[entry.mood!] = (counts[entry.mood!] ?? 0) + 1;
-  }
-  final sorted = counts.entries.toList()
-    ..sort((a, b) => b.value.compareTo(a.value));
-  return sorted.first.key;
+  final total = entries.fold<int>(0, (sum, e) => sum + e.mood!);
+  return (total / entries.length).round().clamp(1, 10);
 }
 
 /// Consecutive days, ending today (or yesterday if today is still empty), on

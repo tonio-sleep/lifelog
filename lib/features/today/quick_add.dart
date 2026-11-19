@@ -218,7 +218,7 @@ class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
   late final TextEditingController _steps;
   late final TextEditingController _meals;
   late final TextEditingController _highlight;
-  Mood? _mood;
+  int? _mood;
   int? _energy;
   bool _saving = false;
 
@@ -439,19 +439,11 @@ class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
           title: 'Daily check-in',
           subtitle: relativeDayLabel(widget.day),
         ),
-        Text('How did it feel?', style: text.labelMedium?.copyWith(color: palette.mutedText)),
+        Text('Mood (1-10)', style: text.labelMedium?.copyWith(color: palette.mutedText)),
         const SizedBox(height: Insets.sm),
-        Wrap(
-          spacing: Insets.sm,
-          runSpacing: Insets.sm,
-          children: [
-            for (final mood in Mood.values)
-              ChoiceChip(
-                label: Text(mood.label),
-                selected: _mood == mood,
-                onSelected: (_) => setState(() => _mood = _mood == mood ? null : mood),
-              ),
-          ],
+        MoodScorePicker(
+          value: _mood,
+          onChanged: (value) => setState(() => _mood = value),
         ),
         const SizedBox(height: Insets.md),
         Text('Energy', style: text.labelMedium?.copyWith(color: palette.mutedText)),

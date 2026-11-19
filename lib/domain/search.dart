@@ -1,5 +1,6 @@
 import '../core/util/dates.dart';
 import 'models/archive.dart';
+import 'models/journal.dart';
 
 enum SearchKind {
   journal,
@@ -69,7 +70,8 @@ List<SearchHit> searchArchive(Archive archive, String rawQuery) {
         matches(entry.body) ||
         matches(joinedTags) ||
         matches(entry.placeLabel) ||
-        matches(entry.mood?.label) ||
+        (entry.mood != null && matches(MoodScore.label(entry.mood!))) ||
+        (entry.mood != null && matches('${entry.mood}/10')) ||
         matches(entry.meals) ||
         matches(entry.highlight) ||
         (entry.steps != null && matches('${entry.steps}')) ||

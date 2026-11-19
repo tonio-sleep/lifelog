@@ -398,12 +398,15 @@ class StatTile extends StatelessWidget {
 }
 
 class MoodBadge extends StatelessWidget {
-  const MoodBadge(this.mood, {super.key});
-  final Mood mood;
+  const MoodBadge(this.mood, {super.key, this.showLabel = true});
+  final int mood;
+  final bool showLabel;
 
   @override
   Widget build(BuildContext context) {
-    final color = moodColor(mood, context.scheme);
+    final score = mood.clamp(1, 10);
+    final color = moodColor(score, context.scheme);
+    final label = showLabel ? MoodScore.label(score) : '$score';
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -414,7 +417,7 @@ class MoodBadge extends StatelessWidget {
         ),
         const SizedBox(width: 6),
         Text(
-          mood.label,
+          label,
           style: context.text.labelMedium?.copyWith(
             color: context.palette.mutedText,
           ),
@@ -424,13 +427,122 @@ class MoodBadge extends StatelessWidget {
   }
 }
 
-Color moodColor(Mood mood, ColorScheme scheme) => switch (mood) {
-  Mood.awful => const Color(0xFFD4566B),
-  Mood.low => const Color(0xFFD98F3E),
-  Mood.okay => const Color(0xFF8E96B3),
-  Mood.good => const Color(0xFF3FA27C),
-  Mood.great => const Color(0xFF3B8DDE),
-};
+/// Color for a 1-10 mood score (low = warm/red, high = cool/green-blue).
+Color moodColor(int mood, ColorScheme scheme) {
+  final t = ((mood.clamp(1, 10) - 1) / 9.0);
+  const low = Color(0xFFD4566B);
+  const mid = Color(0xFFD9A13E);
+  const high = Color(0xFF3FA27C);
+  final color = t < 0.5
+      ? Color.lerp(low, mid, t * 2)!
+      : Color.lerp(mid, high, (t - 0.5) * 2)!;
+  return color;
+}
+
+/// Compact picker for selecting a mood score from 1 to 10.
+class MoodScorePicker extends StatelessWidget {
+  const MoodScorePicker({
+    super.key,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final int? value;
+  final ValueChanged<int?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final text = context.text;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (var score = 1; score <= 10; score++)
+              _MoodChip(
+                score: score,
+                selected: value == score,
+                onTap: () => onChanged(value == score ? null : score),
+              ),
+          ],
+        ),
+        const SizedBox(height: Insets.xs),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('Low', style: text.labelSmall?.copyWith(color: palette.dimText)),
+            if (value != null)
+              Text(
+                '${value!}/10 · ${MoodScore.label(value!)}',
+                style: text.labelSmall?.copyWith(
+                  color: moodColor(value!, context.scheme),
+                  fontWeight: FontWeight.w600,
+                ),
+              )
+            else
+              Text(
+                'Tap a number (optional)',
+                style: text.labelSmall?.copyWith(color: palette.dimText),
+              ),
+            Text('High', style: text.labelSmall?.copyWith(color: palette.dimText)),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _MoodChip extends StatelessWidget {
+  const _MoodChip({
+    required this.score,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final int score;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = moodColor(score, context.scheme);
+    final scheme = context.scheme;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: 'Mood $score out of 10, ${MoodScore.label(score)}',
+      child: Pressable(
+        borderRadius: BorderRadius.circular(Radii.sm),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: Motion.fast,
+          curve: Motion.out,
+          width: 34,
+          height: 34,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: selected ? color : color.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(Radii.sm),
+            border: Border.all(
+              color: selected ? color : color.withValues(alpha: 0.25),
+            ),
+          ),
+          child: Text(
+            '$score',
+            style: context.text.labelMedium?.copyWith(
+              color: selected ? scheme.onPrimary : color,
+              fontWeight: FontWeight.w700,
+              fontFeatures: tabularFigures,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 IconAndColor sourceStyle(TimelineSource source, ColorScheme scheme) {
   final dark = scheme.brightness == Brightness.dark;

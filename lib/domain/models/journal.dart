@@ -2,32 +2,53 @@ import 'package:uuid/uuid.dart';
 
 const _uuid = Uuid();
 
-/// Optional mood attached to a journal entry. Keeping this free-form is
-/// intentional: an entry is never required to have a mood.
-enum Mood {
-  awful,
-  low,
-  okay,
-  good,
-  great;
+/// Optional mood score attached to a journal entry (1-10, higher is better).
+/// Parsed leniently to preserve legacy data (old 5-level names/values).
+class MoodScore {
+  const MoodScore._();
 
-  String get label => switch (this) {
-        Mood.awful => 'Awful',
-        Mood.low => 'Low',
-        Mood.okay => 'Okay',
-        Mood.good => 'Good',
-        Mood.great => 'Great',
-      };
-
-  String get symbol => '';
-
-  static Mood? tryParse(String? value) {
+  static int? parse(dynamic value) {
     if (value == null) return null;
-    for (final mood in Mood.values) {
-      if (mood.name == value) return mood;
+    if (value is int) return _clamp(value);
+    if (value is num) return _clamp(value.round());
+    if (value is String) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty) return null;
+      final asInt = int.tryParse(trimmed);
+      if (asInt != null) return _clamp(asInt);
+      return switch (trimmed.toLowerCase()) {
+        'awful' || 'terrible' || 'very_low' || '1' => 2,
+        'low' || 'bad' || '2' => 4,
+        'okay' || 'ok' || 'neutral' || 'meh' || '3' => 5,
+        'good' || '4' => 8,
+        'great' || 'excellent' || 'amazing' || 'very_good' || '5' => 10,
+        _ => null,
+      };
     }
     return null;
   }
+
+  static int _clamp(int value) => value.clamp(1, 10);
+
+  static String label(int score) => switch (_clamp(score)) {
+        1 => 'Very low',
+        2 => 'Low',
+        3 => 'Rough',
+        4 => 'Below okay',
+        5 => 'Okay',
+        6 => 'Fine',
+        7 => 'Good',
+        8 => 'Very good',
+        9 => 'Great',
+        10 => 'Excellent',
+        _ => '$score',
+      };
+
+  /// Short label for compact chips/badges.
+  static String shortLabel(int score) => '$score/10';
+
+  /// 0.0 (low) .. 1.0 (high) for charts/colors.
+  static double normalize(int score) => (_clamp(score) - 1) / 9.0;
 }
 
 /// Entry type so a day can hold different kinds of notes together.
@@ -104,7 +125,9 @@ class JournalEntry {
   final String body;
   final JournalEntryKind kind;
   final List<VocabItem> vocabItems;
-  final Mood? mood;
+
+  /// Mood score from 1 (very low) to 10 (excellent), optional.
+  final int? mood;
 
   /// 1 (low) to 5 (high), optional.
   final int? energy;
@@ -196,7 +219,7 @@ class JournalEntry {
     String? body,
     JournalEntryKind? kind,
     List<VocabItem>? vocabItems,
-    Mood? mood,
+    int? mood,
     bool clearMood = false,
     int? energy,
     bool clearEnergy = false,
@@ -243,7 +266,7 @@ class JournalEntry {
         'body': body,
         'kind': kind.name,
         'vocab': vocabItems.map((v) => v.toJson()).toList(),
-        'mood': mood?.name,
+        'mood': mood,
         'energy': energy,
         'sleepHours': sleepHours,
         'steps': steps,
@@ -273,7 +296,7 @@ class JournalEntry {
       body: json['body'] as String? ?? '',
       kind: JournalEntryKind.tryParse(json['kind'] as String?),
       vocabItems: vocabItems,
-      mood: Mood.tryParse(json['mood'] as String?),
+      mood: MoodScore.parse(json['mood']),
       energy: (json['energy'] as num?)?.toInt(),
       sleepHours: (json['sleepHours'] as num?)?.toDouble(),
       steps: (json['steps'] as num?)?.toInt(),

@@ -146,12 +146,20 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
     final topTags = tags.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
 
-    final moods = <Mood, int>{};
+    final moodValues = <int>[];
+    final moodBuckets = <int, int>{for (var i = 1; i <= 10; i++) i: 0};
     for (final entry in published) {
       final mood = entry.mood;
-      if (mood != null) moods[mood] = (moods[mood] ?? 0) + 1;
+      if (mood != null) {
+        final s = mood.clamp(1, 10);
+        moodValues.add(s);
+        moodBuckets[s] = (moodBuckets[s] ?? 0) + 1;
+      }
     }
-    final moodTotal = moods.values.fold<int>(0, (sum, value) => sum + value);
+    final moodTotal = moodValues.length;
+    final moodAverage = moodValues.isEmpty
+        ? null
+        : moodValues.reduce((a, b) => a + b) / moodValues.length;
 
     final placeCounts = <String, int>{};
     for (final visit in visits) {
@@ -350,18 +358,36 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
                 ),
                 if (moodTotal > 0) ...[
                   const SizedBox(height: Insets.lg),
-                  Text('Mood', style: text.labelMedium?.copyWith(color: palette.mutedText)),
-                  const SizedBox(height: Insets.sm),
-                  SegmentBar(
-                    segments: [
-                      for (final mood in Mood.values)
-                        (
-                          label: mood.label,
-                          value: (moods[mood] ?? 0).toDouble(),
-                          color: moodColor(mood, scheme),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Mood',
+                          style: text.labelMedium
+                              ?.copyWith(color: palette.mutedText),
+                        ),
+                      ),
+                      if (moodAverage != null)
+                        Text(
+                          'Avg ${moodAverage.toStringAsFixed(1)}/10',
+                          style: text.labelMedium?.copyWith(
+                            color: moodColor(moodAverage.round(), scheme),
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                     ],
                   ),
+                  const SizedBox(height: Insets.sm),
+                  ...[
+                    for (var score = 10; score >= 1; score--)
+                      if ((moodBuckets[score] ?? 0) > 0)
+                        _BreakdownRow(
+                          label: '$score · ${MoodScore.label(score)}',
+                          value: (moodBuckets[score] ?? 0).toDouble(),
+                          color: moodColor(score, scheme),
+                          showMax: false,
+                        ),
+                  ],
                 ],
                 if (topTags.isNotEmpty) ...[
                   const SizedBox(height: Insets.lg),

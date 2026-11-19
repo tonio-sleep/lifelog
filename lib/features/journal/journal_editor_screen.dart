@@ -48,7 +48,7 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
   late bool _draft;
   late bool _archived;
   late JournalEntryKind _kind;
-  Mood? _mood;
+  int? _mood;
   int? _energy;
   double? _sleepHours;
   int? _steps;

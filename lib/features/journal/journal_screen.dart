@@ -63,7 +63,8 @@ class _JournalView {
         vocabText,
         entry.placeLabel ?? '',
         entry.tags.join(' '),
-        entry.mood?.label ?? '',
+        entry.mood == null ? '' : MoodScore.label(entry.mood!),
+        entry.mood == null ? '' : '${entry.mood}/10',
         entry.kind.label,
       ].join(' ').toLowerCase();
       return haystack.contains(query);

@@ -32,7 +32,7 @@ final class FormatGoldenTests: XCTestCase {
 
     func testArgon2idGoldenVectorMatchesFlutterParameters() {
         let password = Array("correct horse battery staple".utf8)
-        let salt = Array(0..<16)
+        let salt = (0..<16).map { UInt8($0) }
         let digest = Argon2id.hash(
             password: password,
             salt: salt,

@@ -1,4 +1,4 @@
-﻿import 'dart:ui';
+import 'dart:ui' show FontFeature;
 
 import 'package:flutter/material.dart';
 
@@ -12,7 +12,9 @@ export 'motion.dart';
 /// Tabular figures keep changing numbers from jittering.
 const List<FontFeature> tabularFigures = [FontFeature.tabularFigures()];
 
-/// The one surface used for grouped content.
+/// The one surface used for grouped content: opaque, hairline-edged, no
+/// shadow. Depth comes from the contrast between page and card, not from
+/// blur or elevation.
 class QuietCard extends StatelessWidget {
   const QuietCard({
     super.key,
@@ -21,11 +23,10 @@ class QuietCard extends StatelessWidget {
     this.onLongPress,
     this.padding = const EdgeInsets.all(Insets.lg),
     this.color,
-    this.radius = Radii.xl,
+    this.radius = Radii.lg,
     this.border = true,
     this.margin,
     this.gradient,
-    this.glass = false,
   });
 
   final Widget child;
@@ -38,51 +39,29 @@ class QuietCard extends StatelessWidget {
   final EdgeInsetsGeometry? margin;
   final Gradient? gradient;
 
-  /// Enables a subtle frosted-glass blur effect.
-  final bool glass;
-
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
     final shape = BorderRadius.circular(radius);
-    final baseColor = color ?? palette.card;
-    final fill = glass
-        ? baseColor.withValues(alpha: palette.isDark ? 0.55 : 0.62)
-        : baseColor;
 
-    Widget surface = Container(
-      decoration: BoxDecoration(
-        color: gradient == null ? fill : null,
-        gradient: gradient,
-        borderRadius: shape,
-        border: border
-            ? Border.all(
-                color: palette.border.withValues(
-                  alpha: palette.isDark ? 0.35 : 0.55,
-                ),
-              )
-            : null,
-      ),
-      child: Padding(padding: padding, child: child),
-    );
-
-    if (glass) {
-      surface = ClipRRect(
-        borderRadius: shape,
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-          child: surface,
+    Widget surface = ClipRRect(
+      borderRadius: shape,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: gradient == null ? (color ?? palette.card) : null,
+          gradient: gradient,
+          borderRadius: shape,
+          border: border ? Border.all(color: palette.border) : null,
         ),
-      );
-    } else {
-      surface = ClipRRect(borderRadius: shape, child: surface);
-    }
+        child: Padding(padding: padding, child: child),
+      ),
+    );
 
     if (onTap != null || onLongPress != null) {
       surface = Pressable(
         onTap: onTap,
         onLongPress: onLongPress,
-        scale: 0.985,
+        scale: 0.99,
         borderRadius: shape,
         child: surface,
       );
@@ -192,7 +171,8 @@ class SectionHeader extends StatelessWidget {
   }
 }
 
-/// Friendly empty state with a softly breathing icon.
+/// Quiet empty state: one icon, one sentence of what this is, one action.
+/// Nothing moves; an empty screen should feel settled, not like it is waiting.
 class EmptyState extends StatelessWidget {
   const EmptyState({
     super.key,
@@ -217,6 +197,7 @@ class EmptyState extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = context.text;
     final palette = context.palette;
+    final accent = color ?? palette.mutedText;
     return Padding(
       padding: EdgeInsets.symmetric(
         vertical: compact ? Insets.lg : Insets.xxl,
@@ -228,12 +209,16 @@ class EmptyState extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _EmptyArt(
-                icon: icon,
-                size: compact ? 72 : 104,
-                color: color ?? context.scheme.primary,
+              Container(
+                width: compact ? 48 : 60,
+                height: compact ? 48 : 60,
+                decoration: BoxDecoration(
+                  color: palette.subtle,
+                  borderRadius: BorderRadius.circular(Radii.lg),
+                ),
+                child: Icon(icon, size: compact ? 22 : 26, color: accent),
               ),
-              SizedBox(height: compact ? Insets.sm : Insets.md),
+              SizedBox(height: compact ? Insets.md : Insets.lg),
               Text(title, textAlign: TextAlign.center, style: text.titleMedium),
               const SizedBox(height: Insets.xs),
               Text(
@@ -251,82 +236,6 @@ class EmptyState extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _EmptyArt extends StatefulWidget {
-  const _EmptyArt({
-    required this.icon,
-    required this.size,
-    required this.color,
-  });
-
-  final IconData icon;
-  final double size;
-  final Color color;
-
-  @override
-  State<_EmptyArt> createState() => _EmptyArtState();
-}
-
-class _EmptyArtState extends State<_EmptyArt>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 3200),
-  );
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (context.reduceMotion) {
-      _controller.stop();
-    } else if (!_controller.isAnimating) {
-      _controller.repeat(reverse: true);
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final size = widget.size;
-    return SizedBox(
-      width: size,
-      height: size,
-      child: AnimatedBuilder(
-        animation: _controller,
-        builder: (context, _) {
-          final t = Curves.easeInOut.transform(_controller.value);
-          return Stack(
-            alignment: Alignment.center,
-            children: [
-              for (var i = 0; i < 3; i++)
-                Container(
-                  width: size * (0.5 + i * 0.25) * (0.97 + 0.06 * t),
-                  height: size * (0.5 + i * 0.25) * (0.97 + 0.06 * t),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: widget.color.withValues(alpha: 0.12 - i * 0.035),
-                  ),
-                ),
-              Transform.translate(
-                offset: Offset(0, -2 * t),
-                child: Icon(
-                  widget.icon,
-                  size: size * 0.3,
-                  color: widget.color,
-                ),
-              ),
-            ],
-          );
-        },
       ),
     );
   }
@@ -657,33 +566,29 @@ class ContentColumn extends StatelessWidget {
   }
 }
 
-/// App mark used on the splash, sidebar and onboarding.
+/// App mark used on the splash, sidebar and onboarding: a flat serif
+/// monogram. No gradient, no glyph borrowed from the icon set.
 class LifelogMark extends StatelessWidget {
   const LifelogMark({super.key, this.size = 40});
   final double size;
 
   @override
   Widget build(BuildContext context) {
-    final primary = context.scheme.primary;
-    final dark = context.palette.isDark;
     return Container(
       width: size,
       height: size,
+      alignment: Alignment.center,
       decoration: BoxDecoration(
+        color: context.scheme.primary,
         borderRadius: BorderRadius.circular(size * 0.3),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            primary,
-            Color.lerp(primary, dark ? const Color(0xFFBE9BFF) : const Color(0xFF8B5CD6), 0.7)!,
-          ],
-        ),
       ),
-      child: Icon(
-        Icons.auto_stories_rounded,
-        size: size * 0.52,
-        color: dark ? const Color(0xFF12163A) : Colors.white,
+      child: Text(
+        'L',
+        style: AppTheme.serif(
+          null,
+          size: size * 0.58,
+          weight: FontWeight.w500,
+        ).copyWith(color: context.scheme.onPrimary, height: 1),
       ),
     );
   }

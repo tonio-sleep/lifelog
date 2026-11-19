@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,6 +8,7 @@ import '../../app/providers/settings_provider.dart';
 import '../../core/util/dates.dart';
 import '../../features/settings/cloudflare_sync_actions.dart';
 import 'cloudflare_sync_service.dart';
+import 'sync_status.dart';
 
 /// On startup, if Cloudflare sync is connected and local archive is empty,
 /// prompt to restore from cloud so users can retrieve their data on a new device.
@@ -70,7 +71,8 @@ Future<void> maybePromptCloudflareRestore(
     if (msg.contains('session expired') ||
         msg.contains('unauthorized') ||
         msg.contains('sign in again')) {
-      await ref.read(settingsProvider.notifier).disconnectCloudflareSync();
+      // Keep the account details; the sync card will offer "Sign in again".
+      ref.read(syncSessionRejectedProvider.notifier).reject();
     }
     // silent on startup for other errors
   } catch (_) {

@@ -7,8 +7,10 @@ import '../../core/util/dates.dart';
 import '../providers/settings_provider.dart';
 import '../theme/app_theme.dart';
 import 'common.dart';
+import 'surfaces.dart';
 
-/// A round-cornered icon button used in screen headers.
+/// Icon button for screen headers. Bare by default (like a native navigation
+/// bar); [filled] marks the one primary action with a soft accent tint.
 class HeaderButton extends StatelessWidget {
   const HeaderButton({
     super.key,
@@ -27,28 +29,30 @@ class HeaderButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.palette;
-    final fg = color ?? (filled ? context.scheme.onPrimary : context.scheme.onSurface);
-    return Padding(
-      padding: const EdgeInsets.only(left: Insets.xs),
-      child: Tooltip(
-        message: tooltip,
+    final primary = context.scheme.primary;
+    final fg = color ?? (filled ? primary : context.scheme.onSurface);
+    return Tooltip(
+      message: tooltip,
+      child: Semantics(
+        button: true,
+        label: tooltip,
+        excludeSemantics: true,
         child: Pressable(
           onTap: onPressed,
-          borderRadius: BorderRadius.circular(Radii.lg),
+          scale: 0.9,
+          borderRadius: BorderRadius.circular(Radii.pill),
           child: AnimatedContainer(
             duration: Motion.fast,
             curve: Motion.out,
-            width: 42,
-            height: 42,
+            // 44pt is the minimum comfortable touch target.
+            width: 44,
+            height: 44,
+            alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: filled
-                  ? context.scheme.primary
-                  : palette.subtle.withValues(alpha: palette.isDark ? 0.55 : 0.8),
-              borderRadius: BorderRadius.circular(Radii.lg),
-              border: filled ? null : Border.all(color: palette.border),
+              color: filled ? primary.withValues(alpha: 0.12) : Colors.transparent,
+              shape: BoxShape.circle,
             ),
-            child: Icon(icon, size: 20, color: fg),
+            child: Icon(icon, size: 22, color: fg),
           ),
         ),
       ),
@@ -56,82 +60,11 @@ class HeaderButton extends StatelessWidget {
   }
 }
 
-/// Compact title row. Pushed pages get a back button automatically.
-class ScreenHeader extends StatelessWidget {
-  const ScreenHeader({
-    super.key,
-    required this.title,
-    this.subtitle,
-    this.actions = const [],
-    this.showBack = false,
-  });
-
-  final String title;
-  final String? subtitle;
-  final List<Widget> actions;
-  final bool showBack;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = context.text;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: Insets.md),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 46),
-        child: Row(
-          children: [
-            if (showBack)
-              Padding(
-                padding: const EdgeInsets.only(right: Insets.sm),
-                child: Tooltip(
-                  message: 'Back',
-                  child: Pressable(
-                    onTap: () => Navigator.of(context).maybePop(),
-                    borderRadius: BorderRadius.circular(Radii.md),
-                    child: SizedBox(
-                      width: 40,
-                      height: 42,
-                      child: Icon(
-                        Icons.arrow_back_ios_new_rounded,
-                        size: 18,
-                        color: context.scheme.onSurface,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: text.headlineMedium,
-                  ),
-                  if (subtitle != null)
-                    Text(
-                      subtitle!,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: text.bodySmall?.copyWith(
-                        color: context.palette.mutedText,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            ...actions,
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// The shared page scaffold: compact header, lazy scrolling, optional
-/// pull-to-refresh, centred max width on desktop and a small bottom gap.
+/// The shared page scaffold: a large title that collapses into a frosted bar
+/// on scroll, lazy scrolling, optional pull-to-refresh, a centred max width on
+/// desktop and bottom padding that clears the floating navigation bar.
+///
+/// Pass [header] to replace the title block entirely (Today does this).
 class ScreenFrame extends StatelessWidget {
   const ScreenFrame({
     super.key,
@@ -154,7 +87,7 @@ class ScreenFrame extends StatelessWidget {
   /// Extra slivers appended after [children]; padded to match.
   final List<Widget> slivers;
 
-  /// Replaces the standard header.
+  /// Replaces the standard large title.
   final Widget? header;
   final Future<void> Function()? onRefresh;
   final double maxWidth;
@@ -165,29 +98,33 @@ class ScreenFrame extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pushed = ModalRoute.of(context)?.canPop ?? false;
-    final headerWidget =
-        header ??
-        ScreenHeader(
-          title: title,
-          subtitle: subtitle,
-          actions: actions,
-          showBack: pushed,
-        );
 
     Widget body = LayoutBuilder(
       builder: (context, constraints) {
         final base = context.compact ? Insets.page : Insets.xl;
         final side = math.max(base, (constraints.maxWidth - maxWidth) / 2);
+        // Includes the floating tab bar's height on phones.
         final bottom = Insets.xl + MediaQuery.paddingOf(context).bottom;
         final scroll = CustomScrollView(
           physics: onRefresh != null
               ? const AlwaysScrollableScrollPhysics()
               : null,
           slivers: [
+            if (header == null)
+              SliverPersistentHeader(
+                pinned: true,
+                delegate: _LargeTitleDelegate(
+                  title: title,
+                  subtitle: subtitle,
+                  actions: actions,
+                  showBack: pushed,
+                  side: side,
+                ),
+              ),
             SliverPadding(
               padding: EdgeInsets.fromLTRB(side, Insets.sm, side, 0),
               sliver: SliverList(
-                delegate: SliverChildListDelegate([headerWidget, ...children]),
+                delegate: SliverChildListDelegate([?header, ...children]),
               ),
             ),
             for (final sliver in slivers)
@@ -216,6 +153,132 @@ class ScreenFrame extends StatelessWidget {
     }
     return body;
   }
+}
+
+/// Large serif title that scales away into a compact, frosted bar. Only the
+/// collapsed state blurs, so the expanded page stays flat and quiet.
+class _LargeTitleDelegate extends SliverPersistentHeaderDelegate {
+  _LargeTitleDelegate({
+    required this.title,
+    required this.subtitle,
+    required this.actions,
+    required this.showBack,
+    required this.side,
+  });
+
+  final String title;
+  final String? subtitle;
+  final List<Widget> actions;
+  final bool showBack;
+  final double side;
+
+  static const double _bar = 52;
+
+  @override
+  double get minExtent => _bar;
+
+  @override
+  double get maxExtent => _bar + (subtitle == null ? 52 : 72);
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+    final range = maxExtent - minExtent;
+    final t = (shrinkOffset / range).clamp(0.0, 1.0);
+    final collapsed = t > 0.92;
+    final text = context.text;
+    final palette = context.palette;
+    final reduce = context.reduceMotion;
+
+    final bar = SizedBox(
+      height: _bar,
+      child: Padding(
+        padding: EdgeInsets.symmetric(horizontal: math.max(0.0, side - 12)),
+        child: Row(
+          children: [
+            if (showBack)
+              HeaderButton(
+                icon: Icons.arrow_back_ios_new_rounded,
+                tooltip: 'Back',
+                onPressed: () => Navigator.of(context).maybePop(),
+              )
+            else
+              const SizedBox(width: 12),
+            Expanded(
+              child: AnimatedOpacity(
+                duration: reduce ? Duration.zero : Motion.fast,
+                opacity: collapsed ? 1 : 0,
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTheme.serif(
+                    text.titleLarge,
+                    size: 18,
+                    weight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ),
+            ...actions,
+            const SizedBox(width: 4),
+          ],
+        ),
+      ),
+    );
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // Frosted bar fades in only once the large title has gone.
+        AnimatedOpacity(
+          duration: reduce ? Duration.zero : Motion.fast,
+          opacity: collapsed ? 1 : 0,
+          child: const GlassSurface(
+            borderSides: [AxisDirection.down],
+            child: SizedBox.expand(),
+          ),
+        ),
+        Positioned(
+          left: side,
+          right: side,
+          bottom: 10,
+          child: Opacity(
+            opacity: (1 - t * 1.6).clamp(0.0, 1.0),
+            child: Transform.translate(
+              offset: Offset(0, -t * 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.headlineMedium,
+                  ),
+                  if (subtitle != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: text.bodySmall?.copyWith(color: palette.mutedText),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+        Positioned(top: 0, left: 0, right: 0, child: bar),
+      ],
+    );
+  }
+
+  // Actions are closures built by the parent, so there is nothing cheap to
+  // compare. The delegate is trivial to rebuild.
+  @override
+  bool shouldRebuild(covariant _LargeTitleDelegate old) => true;
 }
 
 /// Previous / next day with a tappable label. Swipe handling lives in
@@ -337,16 +400,7 @@ class ListGroup extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (title != null)
-            Padding(
-              padding: const EdgeInsets.only(left: Insets.xs, bottom: Insets.sm),
-              child: Text(
-                title!,
-                style: context.text.labelLarge?.copyWith(
-                  color: palette.mutedText,
-                ),
-              ),
-            ),
+          if (title != null) Eyebrow(title!),
           Container(
             clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(

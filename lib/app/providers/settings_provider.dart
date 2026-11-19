@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -184,6 +184,7 @@ class SettingsController extends Notifier<AppSettings> {
         cloudflareUsername: username.trim(),
         cloudflareSessionCipher: cipher,
         cloudflareConnectedAt: DateTime.now(),
+        cloudflareSetupDone: true,
       ),
     );
   }

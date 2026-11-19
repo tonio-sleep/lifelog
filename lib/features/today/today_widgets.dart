@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../app/theme/app_theme.dart';
 import '../../app/widgets/common.dart';
 import '../../app/widgets/components.dart';
 import '../../core/util/dates.dart';
-import '../../domain/models/journal.dart';
 import '../../domain/models/music.dart';
+import '../../integrations/cloudflare/sync_status.dart';
 
 String greetingFor(DateTime now) {
   final hour = now.hour;
@@ -16,18 +17,8 @@ String greetingFor(DateTime now) {
   return 'Good evening';
 }
 
-/// Two colours that follow the hour: dawn, day, golden hour, dusk, night.
-List<Color> dayGlowColors(DateTime now) {
-  final h = now.hour + now.minute / 60;
-  if (h < 5 || h >= 22) return const [Color(0xFF4B55C8), Color(0xFF1B1F4A)];
-  if (h < 9) return const [Color(0xFFFFA97A), Color(0xFFF6C7E0)];
-  if (h < 16) return const [Color(0xFF7DB6FF), Color(0xFFBFE0FF)];
-  if (h < 19.5) return const [Color(0xFFFFB35E), Color(0xFFFF9EC4)];
-  return const [Color(0xFF8A78FF), Color(0xFF4A3C9C)];
-}
-
-/// A soft wash behind the Today header. For today it follows the time of
-/// day; for any other day it is a quiet tint of the brand colour.
+/// One quiet wash of the accent colour behind today's header. Other days get
+/// none, which is itself the cue that you are looking at the past.
 class TodayGlow extends StatelessWidget {
   const TodayGlow({super.key, required this.isToday});
 
@@ -36,25 +27,23 @@ class TodayGlow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = context.palette.isDark;
-    final colors = isToday
-        ? dayGlowColors(DateTime.now())
-        : [context.scheme.primary, context.scheme.primary];
-    final strength = dark ? 0.26 : 0.34;
+    final accent = context.scheme.primary;
     return Align(
       alignment: Alignment.topCenter,
-      child: AnimatedContainer(
-        duration: Motion.slow,
-        height: 320,
-        decoration: BoxDecoration(
-          gradient: RadialGradient(
-            center: const Alignment(-0.7, -1.15),
-            radius: 1.25,
-            colors: [
-              colors[0].withValues(alpha: isToday ? strength : strength * 0.5),
-              colors[1].withValues(alpha: isToday ? strength * 0.45 : strength * 0.2),
-              Colors.transparent,
-            ],
-            stops: const [0, 0.55, 1],
+      child: AnimatedOpacity(
+        duration: context.reduceMotion ? Duration.zero : Motion.slow,
+        opacity: isToday ? 1 : 0,
+        child: Container(
+          height: 280,
+          decoration: BoxDecoration(
+            gradient: RadialGradient(
+              center: const Alignment(-0.8, -1.2),
+              radius: 1.2,
+              colors: [
+                accent.withValues(alpha: dark ? 0.14 : 0.08),
+                Colors.transparent,
+              ],
+            ),
           ),
         ),
       ),
@@ -70,6 +59,7 @@ class TodayHeader extends StatelessWidget {
     required this.calendarOpen,
     required this.onToggleCalendar,
     required this.onSearch,
+    required this.onAccount,
     this.onAdd,
   });
 
@@ -78,6 +68,7 @@ class TodayHeader extends StatelessWidget {
   final bool calendarOpen;
   final VoidCallback onToggleCalendar;
   final VoidCallback onSearch;
+  final VoidCallback onAccount;
   final VoidCallback? onAdd;
 
   @override
@@ -128,68 +119,92 @@ class TodayHeader extends StatelessWidget {
                     style: text.displaySmall,
                   ),
                 ),
-              ],
-            ),
-          ),
-          if (streak >= 2)
-            Tooltip(
-              message: '$streak days in a row with something recorded',
-              child: Container(
-                margin: const EdgeInsets.only(right: Insets.xs, bottom: 6),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: context.scheme.secondary.withValues(alpha: 0.16),
-                  borderRadius: BorderRadius.circular(Radii.pill),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.local_fire_department_rounded,
-                      size: 16,
-                      color: context.scheme.secondary,
-                    ),
-                    const SizedBox(width: 3),
-                    Text(
-                      '$streak',
-                      style: text.labelLarge?.copyWith(
-                        color: context.scheme.secondary,
+                // A fact, not a reward: no icon, no colour.
+                if (streak >= 2)
+                  Padding(
+                    padding: const EdgeInsets.only(top: Insets.xs),
+                    child: Text(
+                      '$streak days in a row',
+                      style: text.labelMedium?.copyWith(
+                        color: palette.mutedText,
                         fontFeatures: tabularFigures,
                       ),
                     ),
-                  ],
-                ),
-              ),
-            ),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 2),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                HeaderButton(
-                  icon: Icons.search_rounded,
-                  tooltip: 'Search',
-                  onPressed: onSearch,
-                ),
-                HeaderButton(
-                  icon: calendarOpen
-                      ? Icons.calendar_view_week_rounded
-                      : Icons.calendar_month_rounded,
-                  tooltip: calendarOpen ? 'Show week' : 'Show month',
-                  onPressed: onToggleCalendar,
-                ),
-                if (onAdd != null)
-                  HeaderButton(
-                    icon: Icons.add_rounded,
-                    tooltip: 'Add',
-                    onPressed: onAdd,
-                    filled: true,
                   ),
               ],
             ),
           ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              HeaderButton(
+                icon: Icons.search_rounded,
+                tooltip: 'Search',
+                onPressed: onSearch,
+              ),
+              HeaderButton(
+                icon: calendarOpen
+                    ? Icons.calendar_view_week_rounded
+                    : Icons.calendar_month_rounded,
+                tooltip: calendarOpen ? 'Show week' : 'Show month',
+                onPressed: onToggleCalendar,
+              ),
+              _AccountButton(onPressed: onAccount),
+              if (onAdd != null)
+                HeaderButton(
+                  icon: Icons.add_rounded,
+                  tooltip: 'Add',
+                  onPressed: onAdd,
+                  filled: true,
+                ),
+            ],
+          ),
         ],
       ),
+    );
+  }
+}
+
+/// Opens Settings, and carries a small dot when the cloud session needs
+/// attention so that state is visible without opening anything.
+class _AccountButton extends ConsumerWidget {
+  const _AccountButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final phase = watchSyncStatus(ref).phase;
+    final attention =
+        phase == SyncPhase.expired || phase == SyncPhase.expiresSoon;
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        HeaderButton(
+          icon: Icons.person_outline_rounded,
+          tooltip: attention ? 'Settings, sync needs attention' : 'Settings',
+          onPressed: onPressed,
+        ),
+        if (attention)
+          Positioned(
+            top: 10,
+            right: 10,
+            child: IgnorePointer(
+              child: Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: context.palette.warning,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: context.scheme.surface,
+                    width: 1.5,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -290,240 +305,6 @@ class WeekStrip extends StatelessWidget {
             ),
           ),
       ],
-    );
-  }
-}
-
-class ComposerCard extends StatelessWidget {
-  const ComposerCard({
-    super.key,
-    required this.onTap,
-    required this.isToday,
-    this.entry,
-  });
-
-  final VoidCallback onTap;
-  final bool isToday;
-  final JournalEntry? entry;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.palette;
-    final text = context.text;
-    final e = entry;
-    final hasCheckin = e != null &&
-        (e.mood != null ||
-            e.energy != null ||
-            e.sleepHours != null ||
-            e.steps != null ||
-            e.meals.trim().isNotEmpty ||
-            e.highlight.trim().isNotEmpty);
-    return QuietCard(
-      onTap: onTap,
-      padding: const EdgeInsets.all(Insets.md),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: palette.tracker.withValues(alpha: 0.14),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.favorite_border_rounded,
-                  size: 18,
-                  color: palette.tracker,
-                ),
-              ),
-              const SizedBox(width: Insets.md),
-              Expanded(
-                child: Text(
-                  hasCheckin
-                      ? (isToday ? 'Daily check-in' : 'This day\'s check-in')
-                      : (isToday ? 'How was your day?' : 'Log this day'),
-                  style: AppTheme.serif(text.bodyLarge, size: 16).copyWith(
-                    color: hasCheckin ? text.bodyLarge?.color : palette.mutedText,
-                    fontWeight: hasCheckin ? FontWeight.w600 : FontWeight.w500,
-                  ),
-                ),
-              ),
-              Text(
-                hasCheckin ? 'Edit' : 'Start',
-                style: text.labelMedium?.copyWith(color: palette.tracker),
-              ),
-            ],
-          ),
-          if (e != null && hasCheckin) ...[
-            const SizedBox(height: Insets.sm),
-            Wrap(
-              spacing: Insets.sm,
-              runSpacing: Insets.xs,
-              children: [
-                if (e.mood != null) _checkChip(context, Icons.sentiment_satisfied_alt_rounded, e.mood!.label, palette.journal),
-                if (e.energy != null) _checkChip(context, Icons.bolt_rounded, 'Energy ${e.energy}/5', palette.tracker),
-                if (e.sleepHours != null) _checkChip(context, Icons.bedtime_outlined, '${_fmt(e.sleepHours!)}h sleep', palette.place),
-                if (e.steps != null) _checkChip(context, Icons.directions_walk_rounded, '${e.steps} steps', palette.music),
-                if (e.meals.trim().isNotEmpty) _checkChip(context, Icons.restaurant_outlined, _short(e.meals), palette.photo),
-              ],
-            ),
-          ],
-          if (e != null && e.highlight.trim().isNotEmpty) ...[
-            const SizedBox(height: Insets.sm),
-            Text(
-              e.highlight,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: text.bodyMedium?.copyWith(color: palette.mutedText, height: 1.5),
-            ),
-          ] else if (!hasCheckin) ...[
-            const SizedBox(height: 4),
-            Text(
-              isToday
-                  ? 'Sleep, steps, meals, mood, energy and more — all optional.'
-                  : 'Add sleep, steps, meals, mood and notes for this day.',
-              style: text.bodySmall?.copyWith(color: palette.dimText),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  static String _fmt(double v) {
-    if (v == v.roundToDouble()) return v.toInt().toString();
-    return v.toStringAsFixed(v * 10 % 10 == 0 ? 1 : 2);
-  }
-
-  static String _short(String t) {
-    final s = t.replaceAll(RegExp(r'\s+'), ' ').trim();
-    return s.length <= 22 ? s : '${s.substring(0, 21)}...';
-  }
-
-  static Widget _checkChip(BuildContext context, IconData icon, String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(Radii.pill),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: color),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: context.text.labelSmall?.copyWith(
-              color: context.palette.mutedText,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class JournalWriteCard extends StatelessWidget {
-  const JournalWriteCard({
-    super.key,
-    required this.onTap,
-    required this.isToday,
-    this.entry,
-    this.entryCount = 0,
-    this.onAdd,
-  });
-
-  final VoidCallback onTap;
-  final bool isToday;
-  final JournalEntry? entry;
-  final int entryCount;
-  final VoidCallback? onAdd;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.palette;
-    final text = context.text;
-    final e = entry;
-    final hasWriting = e != null &&
-        (e.title.trim().isNotEmpty ||
-            e.body.trim().isNotEmpty ||
-            e.hasVocabContent);
-    final multiple = entryCount > 1;
-    final title = multiple
-        ? '${isToday ? 'Today' : 'This day'} · $entryCount entries'
-        : hasWriting
-            ? (isToday ? 'Journal' : 'Journal entry')
-            : (isToday ? 'Write about today' : 'Write about this day');
-    final subtitle = multiple
-        ? 'Entries, notes, and vocab lists kept together for this day.'
-        : hasWriting
-            ? (e.excerpt == 'No text' ? e.displayTitle : e.excerpt)
-            : 'Thoughts, notes, or a simple vocab list.';
-
-    return QuietCard(
-      onTap: onTap,
-      padding: const EdgeInsets.all(Insets.md),
-      child: Row(
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: palette.journal.withValues(alpha: 0.14),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              multiple ? Icons.folder_outlined : Icons.edit_note_rounded,
-              size: 20,
-              color: palette.journal,
-            ),
-          ),
-          const SizedBox(width: Insets.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: AppTheme.serif(text.bodyLarge, size: 16).copyWith(
-                    color: (hasWriting || multiple)
-                        ? text.bodyLarge?.color
-                        : palette.mutedText,
-                    fontWeight: (hasWriting || multiple)
-                        ? FontWeight.w600
-                        : FontWeight.w500,
-                  ),
-                ),
-                Text(
-                  subtitle,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: text.bodySmall?.copyWith(
-                    color: (hasWriting || multiple)
-                        ? palette.mutedText
-                        : palette.dimText,
-                    height: 1.4,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (onAdd != null)
-            IconButton(
-              tooltip: 'Add another entry',
-              onPressed: onAdd,
-              icon: Icon(Icons.add_circle_outline_rounded,
-                  color: palette.journal),
-            )
-          else
-            Icon(Icons.chevron_right_rounded, color: palette.dimText),
-        ],
-      ),
     );
   }
 }

@@ -1,4 +1,4 @@
-﻿enum AppThemeMode {
+enum AppThemeMode {
   system,
   light,
   dark;
@@ -176,6 +176,7 @@ class AppSettings {
     this.cloudflareSessionCipher,
     this.cloudflareConnectedAt,
     this.cloudflareLastSyncAt,
+    this.cloudflareSetupDone = false,
     this.reminders = const [],
   });
 
@@ -219,6 +220,10 @@ class AppSettings {
   final String? cloudflareSessionCipher; // encrypted JSON: token and account metadata
   final DateTime? cloudflareConnectedAt;
   final DateTime? cloudflareLastSyncAt;
+
+  /// True once an account was set up on this install. Survives sign-out and
+  /// session expiry, so those never send someone back to a sign-in wall.
+  final bool cloudflareSetupDone;
 
   /// In-app reminders (time + message), stored locally in encrypted settings.
   final List<ReminderItem> reminders;
@@ -265,6 +270,7 @@ class AppSettings {
     bool clearCloudflareSession = false,
     DateTime? cloudflareConnectedAt,
     DateTime? cloudflareLastSyncAt,
+    bool? cloudflareSetupDone,
     List<ReminderItem>? reminders,
   }) {
     final clearCloud = clearCloudflareSession;
@@ -312,6 +318,7 @@ class AppSettings {
           clearCloud ? null : (cloudflareConnectedAt ?? this.cloudflareConnectedAt),
       cloudflareLastSyncAt:
           clearCloud ? null : (cloudflareLastSyncAt ?? this.cloudflareLastSyncAt),
+      cloudflareSetupDone: cloudflareSetupDone ?? this.cloudflareSetupDone,
       reminders: reminders ?? this.reminders,
     );
   }
@@ -339,6 +346,7 @@ class AppSettings {
         'cloudflareSessionCipher': cloudflareSessionCipher,
         'cloudflareConnectedAt': cloudflareConnectedAt?.toIso8601String(),
         'cloudflareLastSyncAt': cloudflareLastSyncAt?.toIso8601String(),
+        'cloudflareSetupDone': cloudflareSetupDone,
         'reminders': reminders.map((r) => r.toJson()).toList(),
       };
 
@@ -390,6 +398,9 @@ class AppSettings {
           DateTime.tryParse(json['cloudflareConnectedAt'] as String? ?? ''),
       cloudflareLastSyncAt:
           DateTime.tryParse(json['cloudflareLastSyncAt'] as String? ?? ''),
+      // Installs that were already signed in count as set up.
+      cloudflareSetupDone: json['cloudflareSetupDone'] as bool? ??
+          ((json['cloudflareSessionCipher'] as String?)?.isNotEmpty ?? false),
       reminders: (json['reminders'] as List? ?? const [])
           .whereType<Map>()
           .map((e) => ReminderItem.fromJson(Map<String, dynamic>.from(e)))

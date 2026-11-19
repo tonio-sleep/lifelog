@@ -6,12 +6,107 @@ import '../../app/theme/app_theme.dart';
 import '../../app/widgets/common.dart';
 import '../../app/widgets/components.dart';
 import '../../core/util/dates.dart';
+import '../../domain/models/archive.dart';
 import '../../domain/models/journal.dart';
+import 'journal_day_header.dart';
 import 'journal_widgets.dart';
 
 enum _JournalFilter { active, drafts, archived }
 
 int _words(String text) => RegExp(r'\S+').allMatches(text).length;
+
+class _JournalView {
+  const _JournalView({
+    required this.filtered,
+    required this.byDay,
+    required this.rows,
+    required this.wordCount,
+    required this.dayCount,
+    required this.entryCount,
+  });
+
+  final List<JournalEntry> filtered;
+  final Map<String, List<JournalEntry>> byDay;
+
+  /// Day keys interleaved with that day's entries, newest day first.
+  final List<Object> rows;
+  final int wordCount;
+  final int dayCount;
+  final int entryCount;
+
+  factory _JournalView.build(
+    Archive archive,
+    _JournalFilter filter,
+    String query,
+  ) {
+    final all = [...archive.entries]
+      ..sort((a, b) {
+        final byDate = b.createdAt.compareTo(a.createdAt);
+        return byDate != 0 ? byDate : b.updatedAt.compareTo(a.updatedAt);
+      });
+
+    final filtered = all.where((entry) {
+      switch (filter) {
+        case _JournalFilter.active:
+          if (entry.draft || entry.archived) return false;
+        case _JournalFilter.drafts:
+          if (!entry.draft || entry.archived) return false;
+        case _JournalFilter.archived:
+          if (!entry.archived) return false;
+      }
+      if (query.isEmpty) return true;
+      final vocabText =
+          entry.vocabItems.map((v) => '${v.term} ${v.meaning}').join(' ');
+      final haystack = [
+        entry.title,
+        entry.body,
+        vocabText,
+        entry.placeLabel ?? '',
+        entry.tags.join(' '),
+        entry.mood?.label ?? '',
+        entry.kind.label,
+      ].join(' ').toLowerCase();
+      return haystack.contains(query);
+    }).toList();
+
+    // Group all matching entries by day, oldest first within a day.
+    final byDay = <String, List<JournalEntry>>{};
+    for (final entry in filtered) {
+      byDay.putIfAbsent(dayKey(entry.createdAt), () => []).add(entry);
+    }
+    for (final list in byDay.values) {
+      list.sort((a, b) {
+        final byTime = a.createdAt.compareTo(b.createdAt);
+        return byTime != 0 ? byTime : a.updatedAt.compareTo(b.updatedAt);
+      });
+    }
+    final dayKeys = byDay.keys.toList()..sort((a, b) => b.compareTo(a));
+    final rows = <Object>[
+      for (final key in dayKeys) ...[key, ...byDay[key]!],
+    ];
+
+    final wordCount = all.fold<int>(
+      0,
+      (sum, entry) =>
+          sum +
+          _words(entry.body) +
+          entry.vocabItems.fold<int>(
+            0,
+            (s, v) => s + _words(v.term) + _words(v.meaning),
+          ),
+    );
+    final published =
+        archive.entries.where((e) => !e.draft && !e.archived).toList();
+    return _JournalView(
+      filtered: filtered,
+      byDay: byDay,
+      rows: rows,
+      wordCount: wordCount,
+      dayCount: published.map((e) => dayKey(e.createdAt)).toSet().length,
+      entryCount: published.length,
+    );
+  }
+}
 
 class JournalScreen extends ConsumerStatefulWidget {
   const JournalScreen({super.key});
@@ -25,6 +120,28 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
   _JournalFilter _filter = _JournalFilter.active;
   String _query = '';
   bool _searching = false;
+
+  // Grouping, sorting and word counts walk the whole archive, so they run
+  // only when the archive, filter or query actually changed (not on every
+  // rebuild, such as while the search field is focused).
+  Archive? _viewArchive;
+  _JournalFilter? _viewFilter;
+  String? _viewQuery;
+  _JournalView? _view;
+
+  _JournalView _viewFor(Archive archive) {
+    final cached = _view;
+    if (cached != null &&
+        identical(archive, _viewArchive) &&
+        _filter == _viewFilter &&
+        _query == _viewQuery) {
+      return cached;
+    }
+    _viewArchive = archive;
+    _viewFilter = _filter;
+    _viewQuery = _query;
+    return _view = _JournalView.build(archive, _filter, _query);
+  }
 
   @override
   void dispose() {
@@ -41,75 +158,13 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
   @override
   Widget build(BuildContext context) {
     final archive = ref.watch(archiveProvider);
-    final palette = context.palette;
-
-    final all = [...archive.entries]
-      ..sort((a, b) {
-        final byDate = b.createdAt.compareTo(a.createdAt);
-        return byDate != 0 ? byDate : b.updatedAt.compareTo(a.updatedAt);
-      });
-
-    final filtered = all.where((entry) {
-      switch (_filter) {
-        case _JournalFilter.active:
-          if (entry.draft || entry.archived) return false;
-        case _JournalFilter.drafts:
-          if (!entry.draft || entry.archived) return false;
-        case _JournalFilter.archived:
-          if (!entry.archived) return false;
-      }
-      if (_query.isEmpty) return true;
-      final vocabText =
-          entry.vocabItems.map((v) => '${v.term} ${v.meaning}').join(' ');
-      final haystack = [
-        entry.title,
-        entry.body,
-        vocabText,
-        entry.placeLabel ?? '',
-        entry.tags.join(' '),
-        entry.mood?.label ?? '',
-        entry.kind.label,
-      ].join(' ').toLowerCase();
-      return haystack.contains(_query);
-    }).toList();
-
-    // Group all matching entries by day (kept together in a day "folder").
-    final byDay = <String, List<JournalEntry>>{};
-    for (final entry in filtered) {
-      final key = dayKey(entry.createdAt);
-      byDay.putIfAbsent(key, () => []).add(entry);
-    }
-    for (final list in byDay.values) {
-      list.sort((a, b) {
-        final byTime = a.createdAt.compareTo(b.createdAt);
-        return byTime != 0 ? byTime : a.updatedAt.compareTo(b.updatedAt);
-      });
-    }
-    final dayKeys = byDay.keys.toList()..sort((a, b) => b.compareTo(a));
-
-    final rows = <Object>[];
-    for (final key in dayKeys) {
-      rows.add(key);
-      rows.addAll(byDay[key]!);
-    }
-
-    final wordCount = all.fold<int>(
-      0,
-      (sum, entry) =>
-          sum +
-          _words(entry.body) +
-          entry.vocabItems.fold<int>(
-            0,
-            (s, v) => s + _words(v.term) + _words(v.meaning),
-          ),
-    );
-    final dayCount = archive.entries
-        .where((e) => !e.draft && !e.archived)
-        .map((e) => dayKey(e.createdAt))
-        .toSet()
-        .length;
-    final entryCount =
-        archive.entries.where((e) => !e.draft && !e.archived).length;
+    final view = _viewFor(archive);
+    final filtered = view.filtered;
+    final byDay = view.byDay;
+    final rows = view.rows;
+    final dayCount = view.dayCount;
+    final entryCount = view.entryCount;
+    final wordCount = view.wordCount;
 
     return ScreenFrame(
       title: 'Journal',
@@ -212,62 +267,14 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
             final row = rows[index];
             if (row is String) {
               final day = parseDayKey(row);
-              final count = byDay[row]?.length ?? 0;
-              return Padding(
-                padding: const EdgeInsets.only(
-                  top: Insets.lg,
-                  bottom: Insets.sm,
-                  left: Insets.xs,
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.folder_outlined,
-                      size: 18,
-                      color: palette.mutedText,
-                    ),
-                    const SizedBox(width: Insets.sm),
-                    Expanded(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.baseline,
-                        textBaseline: TextBaseline.alphabetic,
-                        children: [
-                          Flexible(
-                            flex: 0,
-                            child: Text(
-                              relativeDayLabel(day),
-                              style: context.text.titleSmall,
-                            ),
-                          ),
-                          const SizedBox(width: Insets.sm),
-                          Flexible(
-                            child: Text(
-                              '${formatDayHeader(day)} · $count ${plural(count, 'entry')}',
-                              overflow: TextOverflow.ellipsis,
-                              style: context.text.labelSmall?.copyWith(
-                                color: palette.dimText,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: 'Add entry to this day',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: () => createJournalEntry(
-                        context,
-                        date: day,
-                        createNew: true,
-                        focusBody: true,
-                      ),
-                      icon: Icon(
-                        Icons.add_circle_outline_rounded,
-                        size: 20,
-                        color: palette.mutedText,
-                      ),
-                    ),
-                  ],
+              return JournalDayHeader(
+                day: day,
+                count: byDay[row]?.length ?? 0,
+                onAdd: () => createJournalEntry(
+                  context,
+                  date: day,
+                  createNew: true,
+                  focusBody: true,
                 ),
               );
             }

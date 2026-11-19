@@ -42,8 +42,18 @@ class Motion {
   static const Duration base = Duration(milliseconds: 280);
   static const Duration slow = Duration(milliseconds: 480);
 
+  /// Sheets and large layout changes.
+  static const Duration sheet = Duration(milliseconds: 360);
+
   static const Curve out = Curves.easeOutCubic;
   static const Curve inOut = Curves.easeInOutCubic;
+
+  /// Decelerating curve for things that arrive (sheets, headers). Settles
+  /// without overshoot.
+  static const Curve emphasized = Cubic(0.2, 0.0, 0.0, 1.0);
+
+  /// Kept for existing call sites. Prefer [out]: overshoot reads as playful,
+  /// not calm.
   static const Curve spring = Curves.easeOutBack;
 }
 
@@ -57,18 +67,24 @@ extension LifelogContext on BuildContext {
 
   /// Honours the platform's reduce-motion setting.
   bool get reduceMotion => MediaQuery.disableAnimationsOf(this);
+
+  /// Users who ask for more contrast get opaque surfaces instead of glass.
+  bool get highContrast => MediaQuery.highContrastOf(this);
 }
 
 class AppTheme {
   const AppTheme._();
 
   // Brand seed. Everything else is hand-tuned below.
-  static const seed = Color(0xFF4753D8);
+  static const seed = Color(0xFF3A55A4);
 
-  static const serifFamily = 'Georgia';
+  /// Bundled (see README) so Android and iOS render the same serif. Georgia
+  /// is only a fallback: it is missing on Android.
+  static const serifFamily = 'Newsreader';
   static const serifFallback = <String>[
-    'Cambria',
+    'Georgia',
     'Noto Serif',
+    'Cambria',
     'Times New Roman',
     'serif',
   ];
@@ -89,48 +105,59 @@ class AppTheme {
   static ThemeData _build(Brightness brightness) {
     final dark = brightness == Brightness.dark;
 
-    // Minimal, airy surfaces with a soft glass-like feel.
-    final surface = dark ? const Color(0xFF0A0C12) : const Color(0xFFF4F5F8);
-    final card = dark ? const Color(0xCC171A24) : const Color(0xE6FFFFFF);
-    final subtle = dark ? const Color(0xFF161A26) : const Color(0xFFF0F2F7);
-    final border = dark ? const Color(0x33FFFFFF) : const Color(0x140F172A);
-    final ink = dark ? const Color(0xFFF2F4FA) : const Color(0xFF10131C);
+    // Warm paper in light, neutral graphite in dark. Cards are opaque and
+    // separated by a hairline; translucency is reserved for bars (see
+    // GlassSurface), where there is content to blur.
+    final surface = dark ? const Color(0xFF0D0E11) : const Color(0xFFF5F4F1);
+    final card = dark ? const Color(0xFF16181D) : const Color(0xFFFFFFFF);
+    final subtle = dark ? const Color(0xFF1E2026) : const Color(0xFFEDECE8);
+    final border = dark ? const Color(0x14FFFFFF) : const Color(0x1A15161A);
+    final ink = dark ? const Color(0xFFECEDF0) : const Color(0xFF15161A);
 
-    final primary = dark ? const Color(0xFFB4BCFF) : const Color(0xFF4C57D8);
+    // One restrained accent. Everything else is neutral.
+    final primary = dark ? const Color(0xFFA9BAF5) : const Color(0xFF3A55A4);
 
     final scheme = ColorScheme.fromSeed(seedColor: seed, brightness: brightness)
         .copyWith(
           primary: primary,
-          onPrimary: dark ? const Color(0xFF11142E) : Colors.white,
-          primaryContainer: primary.withValues(alpha: dark ? 0.20 : 0.10),
+          onPrimary: dark ? const Color(0xFF0F1530) : Colors.white,
+          primaryContainer: primary.withValues(alpha: dark ? 0.18 : 0.10),
           onPrimaryContainer: primary,
-          secondary: dark ? const Color(0xFFF0C978) : const Color(0xFFB7770C),
-          tertiary: dark ? const Color(0xFF78D8B0) : const Color(0xFF238863),
+          secondary: dark ? const Color(0xFFE3BC7A) : const Color(0xFF8F6420),
+          tertiary: dark ? const Color(0xFF7CCBA4) : const Color(0xFF2B7A58),
           surface: surface,
           onSurface: ink,
-          onSurfaceVariant: ink.withValues(alpha: 0.60),
+          onSurfaceVariant: ink.withValues(alpha: 0.66),
           surfaceContainerLowest: surface,
           surfaceContainerLow: card,
           surfaceContainer: card,
           surfaceContainerHigh: subtle,
           surfaceContainerHighest: subtle,
-          outline: dark ? const Color(0xFF4A5068) : const Color(0xFFBCC2D6),
+          outline: dark ? const Color(0xFF4A4E5A) : const Color(0xFFB9BBC4),
           outlineVariant: border,
-          error: dark ? const Color(0xFFFF909B) : const Color(0xFFD03A4A),
+          error: dark ? const Color(0xFFF29A94) : const Color(0xFFB8352C),
         );
 
     final palette = LifelogPalette(
       card: card,
       subtle: subtle,
       border: border,
-      mutedText: ink.withValues(alpha: 0.58),
-      dimText: ink.withValues(alpha: 0.38),
+      // Body-level secondary text.
+      mutedText: ink.withValues(alpha: 0.66),
+      // Non-essential metadata only (timestamps, footnotes). Never the only
+      // carrier of meaning.
+      dimText: ink.withValues(alpha: 0.50),
+      glass: dark ? const Color(0xA6181A20) : const Color(0xB8FFFFFF),
+      success: scheme.tertiary,
+      warning: scheme.secondary,
+      // One colour per kind of record, kept low in saturation so a mixed
+      // timeline reads as a family, not a rainbow.
       journal: primary,
       tracker: scheme.tertiary,
-      place: dark ? const Color(0xFF76C0EC) : const Color(0xFF2A84B8),
-      music: dark ? const Color(0xFFC6A6FF) : const Color(0xFF8857D8),
-      photo: dark ? const Color(0xFFF2BD72) : const Color(0xFFC87816),
-      manual: dark ? const Color(0xFFAAB1CC) : const Color(0xFF6A7390),
+      place: dark ? const Color(0xFF86BCD6) : const Color(0xFF3B7A99),
+      music: dark ? const Color(0xFFBBA8E6) : const Color(0xFF7A62B5),
+      photo: dark ? const Color(0xFFDDB27A) : const Color(0xFFA9702B),
+      manual: dark ? const Color(0xFFA7ABB8) : const Color(0xFF6B6F7B),
       isDark: dark,
     );
 
@@ -147,8 +174,8 @@ class AppTheme {
       canvasColor: surface,
       textTheme: text,
       extensions: <ThemeExtension<dynamic>>[palette],
-      splashFactory: InkSparkle.splashFactory,
-      splashColor: primary.withValues(alpha: 0.06),
+      splashFactory: InkRipple.splashFactory,
+      splashColor: primary.withValues(alpha: 0.05),
       highlightColor: Colors.transparent,
       hoverColor: primary.withValues(alpha: 0.04),
       focusColor: primary.withValues(alpha: 0.10),
@@ -164,46 +191,45 @@ class AppTheme {
         surfaceTintColor: Colors.transparent,
         foregroundColor: ink,
         centerTitle: false,
-        titleTextStyle: AppTheme.serif(text.titleLarge, size: 20),
+        titleTextStyle:
+            AppTheme.serif(text.titleLarge, size: 19, weight: FontWeight.w500),
       ),
       dividerTheme: DividerThemeData(color: border, thickness: 1, space: 1),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: dark
-            ? Colors.white.withValues(alpha: 0.05)
-            : Colors.white.withValues(alpha: 0.72),
+        fillColor: subtle,
         contentPadding: const EdgeInsets.symmetric(
           horizontal: Insets.lg,
           vertical: 14,
         ),
-        hintStyle: TextStyle(color: ink.withValues(alpha: 0.40)),
-        labelStyle: TextStyle(color: ink.withValues(alpha: 0.58)),
+        hintStyle: TextStyle(color: ink.withValues(alpha: 0.50)),
+        labelStyle: TextStyle(color: ink.withValues(alpha: 0.66)),
         border: _inputBorder(Colors.transparent),
         enabledBorder: _inputBorder(Colors.transparent),
         disabledBorder: _inputBorder(Colors.transparent),
-        focusedBorder: _inputBorder(primary.withValues(alpha: 0.7), width: 1.4),
+        focusedBorder: _inputBorder(primary.withValues(alpha: 0.8), width: 1.2),
         errorBorder: _inputBorder(scheme.error),
-        focusedErrorBorder: _inputBorder(scheme.error, width: 1.4),
+        focusedErrorBorder: _inputBorder(scheme.error, width: 1.2),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          minimumSize: const Size(0, 48),
+          minimumSize: const Size(0, 50),
           padding: const EdgeInsets.symmetric(horizontal: Insets.xl),
           elevation: 0,
           shadowColor: Colors.transparent,
-          shape: rounded(Radii.lg),
+          shape: rounded(Radii.md),
           textStyle:
-              const TextStyle(fontWeight: FontWeight.w600, fontSize: 14.5),
+              const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          minimumSize: const Size(0, 48),
+          minimumSize: const Size(0, 50),
           padding: const EdgeInsets.symmetric(horizontal: Insets.xl),
           side: BorderSide(color: border),
-          shape: rounded(Radii.lg),
+          shape: rounded(Radii.md),
           textStyle:
-              const TextStyle(fontWeight: FontWeight.w600, fontSize: 14.5),
+              const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
         ),
       ),
       textButtonTheme: TextButtonThemeData(
@@ -246,7 +272,7 @@ class AppTheme {
         ),
       ),
       dialogTheme: DialogThemeData(
-        backgroundColor: dark ? const Color(0xF2161922) : const Color(0xF7FFFFFF),
+        backgroundColor: card,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         shape: rounded(Radii.xl),
@@ -254,32 +280,31 @@ class AppTheme {
         contentTextStyle: text.bodyMedium,
       ),
       bottomSheetTheme: BottomSheetThemeData(
-        backgroundColor: dark ? const Color(0xF2141720) : const Color(0xF7FFFFFF),
+        backgroundColor: card,
         surfaceTintColor: Colors.transparent,
-        modalBackgroundColor:
-            dark ? const Color(0xF2141720) : const Color(0xF7FFFFFF),
+        modalBackgroundColor: card,
         modalBarrierColor:
-            Colors.black.withValues(alpha: dark ? 0.55 : 0.28),
+            Colors.black.withValues(alpha: dark ? 0.55 : 0.30),
         showDragHandle: true,
-        dragHandleColor: border.withValues(alpha: dark ? 0.6 : 0.35),
+        dragHandleColor: ink.withValues(alpha: 0.18),
         dragHandleSize: const Size(38, 4),
         clipBehavior: Clip.antiAlias,
         shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.xl)),
         ),
       ),
       popupMenuTheme: PopupMenuThemeData(
-        color: dark ? const Color(0xF21A1E2A) : const Color(0xFAFFFFFF),
+        color: card,
         surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        shadowColor: Colors.transparent,
-        shape: rounded(Radii.lg),
+        elevation: 4,
+        shadowColor: Colors.black.withValues(alpha: 0.12),
+        shape: rounded(Radii.md),
         textStyle: text.bodyMedium,
       ),
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
         backgroundColor:
-            dark ? const Color(0xF22A3042) : const Color(0xF21A1E2A),
+            dark ? const Color(0xFF2A2D36) : const Color(0xFF1E2026),
         contentTextStyle:
             const TextStyle(color: Colors.white, fontSize: 13.5),
         actionTextColor: const Color(0xFFD6DBFF),
@@ -315,14 +340,12 @@ class AppTheme {
         thumbColor: WidgetStatePropertyAll(ink.withValues(alpha: 0.14)),
       ),
       datePickerTheme: DatePickerThemeData(
-        backgroundColor:
-            dark ? const Color(0xF2161922) : const Color(0xF7FFFFFF),
+        backgroundColor: card,
         surfaceTintColor: Colors.transparent,
         shape: rounded(Radii.xl),
       ),
       timePickerTheme: TimePickerThemeData(
-        backgroundColor:
-            dark ? const Color(0xF2161922) : const Color(0xF7FFFFFF),
+        backgroundColor: card,
         shape: rounded(Radii.xl),
       ),
       pageTransitionsTheme: const PageTransitionsTheme(
@@ -351,7 +374,7 @@ class AppTheme {
         .apply(bodyColor: scheme.onSurface, displayColor: scheme.onSurface);
 
     TextStyle display(TextStyle? s, double size, double ls, double h) {
-      return serif(s, size: size, weight: FontWeight.w600).copyWith(
+      return serif(s, size: size, weight: FontWeight.w500).copyWith(
         letterSpacing: ls,
         height: h,
       );
@@ -365,32 +388,32 @@ class AppTheme {
       headlineMedium: display(t.headlineMedium, 27, -0.5, 1.15),
       headlineSmall: display(t.headlineSmall, 21, -0.2, 1.25),
       titleLarge: t.titleLarge?.copyWith(
-        fontSize: 18,
+        fontSize: 19,
         fontWeight: FontWeight.w600,
         letterSpacing: -0.2,
       ),
       titleMedium: t.titleMedium?.copyWith(
-        fontSize: 15.5,
+        fontSize: 16,
         fontWeight: FontWeight.w600,
         letterSpacing: -0.1,
       ),
       titleSmall: t.titleSmall?.copyWith(
-        fontSize: 13.5,
+        fontSize: 14,
         fontWeight: FontWeight.w600,
       ),
       bodyLarge: t.bodyLarge?.copyWith(fontSize: 16, height: 1.5),
-      bodyMedium: t.bodyMedium?.copyWith(fontSize: 14.5, height: 1.45),
-      bodySmall: t.bodySmall?.copyWith(fontSize: 12.5, height: 1.4),
+      bodyMedium: t.bodyMedium?.copyWith(fontSize: 15, height: 1.45),
+      bodySmall: t.bodySmall?.copyWith(fontSize: 13, height: 1.4),
       labelLarge: t.labelLarge?.copyWith(
-        fontSize: 13.5,
+        fontSize: 14,
         fontWeight: FontWeight.w600,
       ),
       labelMedium: t.labelMedium?.copyWith(
-        fontSize: 12,
+        fontSize: 12.5,
         fontWeight: FontWeight.w500,
       ),
       labelSmall: t.labelSmall?.copyWith(
-        fontSize: 11,
+        fontSize: 11.5,
         fontWeight: FontWeight.w500,
         letterSpacing: 0.1,
       ),
@@ -453,6 +476,9 @@ class LifelogPalette extends ThemeExtension<LifelogPalette> {
     required this.border,
     required this.mutedText,
     required this.dimText,
+    required this.glass,
+    required this.success,
+    required this.warning,
     required this.journal,
     required this.tracker,
     required this.place,
@@ -467,6 +493,11 @@ class LifelogPalette extends ThemeExtension<LifelogPalette> {
   final Color border;
   final Color mutedText;
   final Color dimText;
+
+  /// Fill for frosted bars. Only meaningful over a [BackdropFilter].
+  final Color glass;
+  final Color success;
+  final Color warning;
 
   // One colour per kind of record, used consistently on every screen.
   final Color journal;
@@ -488,6 +519,9 @@ class LifelogPalette extends ThemeExtension<LifelogPalette> {
     Color? border,
     Color? mutedText,
     Color? dimText,
+    Color? glass,
+    Color? success,
+    Color? warning,
     Color? journal,
     Color? tracker,
     Color? place,
@@ -502,6 +536,9 @@ class LifelogPalette extends ThemeExtension<LifelogPalette> {
       border: border ?? this.border,
       mutedText: mutedText ?? this.mutedText,
       dimText: dimText ?? this.dimText,
+      glass: glass ?? this.glass,
+      success: success ?? this.success,
+      warning: warning ?? this.warning,
       journal: journal ?? this.journal,
       tracker: tracker ?? this.tracker,
       place: place ?? this.place,
@@ -521,6 +558,9 @@ class LifelogPalette extends ThemeExtension<LifelogPalette> {
       border: Color.lerp(border, other.border, t)!,
       mutedText: Color.lerp(mutedText, other.mutedText, t)!,
       dimText: Color.lerp(dimText, other.dimText, t)!,
+      glass: Color.lerp(glass, other.glass, t)!,
+      success: Color.lerp(success, other.success, t)!,
+      warning: Color.lerp(warning, other.warning, t)!,
       journal: Color.lerp(journal, other.journal, t)!,
       tracker: Color.lerp(tracker, other.tracker, t)!,
       place: Color.lerp(place, other.place, t)!,

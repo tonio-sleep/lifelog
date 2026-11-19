@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 
@@ -13,6 +13,7 @@ import '../../domain/models/journal.dart';
 import '../../domain/models/settings.dart';
 import '../music/lastfm_screen.dart';
 import '../security/pin_dialogs.dart';
+import 'account_sync_card.dart';
 import 'backup_actions.dart';
 import 'cloudflare_sync_actions.dart';
 
@@ -41,6 +42,10 @@ class SettingsScreen extends ConsumerWidget {
           ),
       ],
       children: [
+        const Padding(
+          padding: EdgeInsets.only(top: Insets.lg),
+          child: AccountSyncCard(),
+        ),
         ListGroup(
           title: 'Reminders',
           footer:
@@ -251,10 +256,8 @@ class SettingsScreen extends ConsumerWidget {
               ),
             ],
           ),
-        _CloudSyncSection(settings: settings),
-        const SizedBox(height: Insets.lg),
         ListGroup(
-          title: 'Backup & sync',
+          title: 'Backups on this device',
           footer: settings.lastBackupAt == null
               ? 'No backup has been created from this install yet.'
               : 'Last backup ${formatDayLong(settings.lastBackupAt!)}, ${formatTime(settings.lastBackupAt!)}.',
@@ -927,349 +930,6 @@ class SettingsScreen extends ConsumerWidget {
           Text(size, style: sheetContext.text.bodySmall?.copyWith(color: palette.mutedText)),
         ],
       ),
-    );
-  }
-}
-
-class _CloudSyncSection extends ConsumerWidget {
-  const _CloudSyncSection({required this.settings});
-  final AppSettings settings;
-
-  String _host(String? url) {
-    final u = Uri.tryParse((url ?? '').trim());
-    if (u == null || u.host.isEmpty) return 'Cloudflare Worker';
-    return u.host;
-  }
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final palette = context.palette;
-    final text = context.text;
-    final scheme = context.scheme;
-    final connected = settings.cloudflareConnected;
-
-    if (!connected) {
-      return Padding(
-        padding: const EdgeInsets.only(top: Insets.lg),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(left: Insets.xs, bottom: Insets.sm),
-              child: Text(
-                'Cloud sync',
-                style: text.labelLarge?.copyWith(color: palette.mutedText),
-              ),
-            ),
-            QuietCard(
-              glass: true,
-              padding: const EdgeInsets.all(Insets.lg),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 44,
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: scheme.primary.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(Radii.md),
-                        ),
-                        child: Icon(
-                          Icons.cloud_outlined,
-                          color: scheme.primary,
-                        ),
-                      ),
-                      const SizedBox(width: Insets.md),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('Cloudflare sync', style: text.titleMedium),
-                            const SizedBox(height: 2),
-                            Text(
-                              'Sign in required to back up or restore',
-                              style: text.bodySmall?.copyWith(
-                                color: palette.mutedText,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: Insets.md),
-                  Text(
-                    'Keep an encrypted copy of your journal, records, and media on your Cloudflare Worker. Your data is encrypted on this device with your backup passphrase before upload.',
-                    style: text.bodySmall?.copyWith(color: palette.mutedText),
-                  ),
-                  const SizedBox(height: Insets.sm),
-                  Wrap(
-                    spacing: Insets.sm,
-                    runSpacing: Insets.xs,
-                    children: [
-                      _InfoChip(
-                        icon: Icons.lock_outline_rounded,
-                        label: 'End-to-end encrypted',
-                      ),
-                      _InfoChip(
-                        icon: Icons.phone_iphone_rounded,
-                        label: 'Works offline locally',
-                      ),
-                      _InfoChip(
-                        icon: Icons.link_rounded,
-                        label: _host(settings.cloudflareWorkerUrl),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: Insets.lg),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed: () => connectCloudflareSync(context, ref),
-                          icon: const Icon(Icons.login_rounded, size: 18),
-                          label: const Text('Sign in'),
-                        ),
-                      ),
-                      const SizedBox(width: Insets.sm),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () => connectCloudflareSync(
-                            context,
-                            ref,
-                            initialCreateAccount: true,
-                          ),
-                          icon: const Icon(Icons.person_add_alt_1_rounded, size: 18),
-                          label: const Text('Create account'),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(Insets.xs, Insets.sm, Insets.xs, 0),
-              child: Text(
-                'Cloud sync is optional. Your journal stays local and encrypted on this device even if you never sign in.',
-                style: text.bodySmall?.copyWith(color: palette.dimText),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    final lastSync = settings.cloudflareLastSyncAt;
-    final connectedAt = settings.cloudflareConnectedAt;
-    final workerHost = _host(settings.cloudflareWorkerUrl);
-    final statusLine = lastSync == null
-        ? 'Signed in. No cloud backup yet.'
-        : 'Last sync ${formatDayLong(lastSync)}, ${formatTime(lastSync)}';
-
-    return Padding(
-      padding: const EdgeInsets.only(top: Insets.lg),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(left: Insets.xs, bottom: Insets.sm),
-            child: Text(
-              'Cloud sync',
-              style: text.labelLarge?.copyWith(color: palette.mutedText),
-            ),
-          ),
-          QuietCard(
-            glass: true,
-            padding: const EdgeInsets.all(Insets.lg),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 46,
-                      height: 46,
-                      decoration: BoxDecoration(
-                        color: palette.tracker.withValues(alpha: 0.14),
-                        borderRadius: BorderRadius.circular(Radii.md),
-                      ),
-                      child: Icon(
-                        Icons.cloud_done_rounded,
-                        color: palette.tracker,
-                      ),
-                    ),
-                    const SizedBox(width: Insets.md),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            settings.cloudflareUsername ?? 'Cloudflare sync',
-                            style: text.titleMedium,
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            'Signed in to $workerHost',
-                            style: text.bodySmall?.copyWith(
-                              color: palette.mutedText,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: palette.tracker.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(Radii.pill),
-                      ),
-                      child: Text(
-                        'Signed in',
-                        style: text.labelSmall?.copyWith(
-                          color: palette.tracker,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: Insets.md),
-                _DetailLine(
-                  icon: Icons.sync_rounded,
-                  label: statusLine,
-                ),
-                if (connectedAt != null) ...[
-                  const SizedBox(height: 6),
-                  _DetailLine(
-                    icon: Icons.schedule_rounded,
-                    label:
-                        'Connected ${formatDayLong(connectedAt)}, ${formatTime(connectedAt)}',
-                  ),
-                ],
-                const SizedBox(height: 6),
-                _DetailLine(
-                  icon: Icons.shield_outlined,
-                  label:
-                      'Backups are encrypted with your backup passphrase before upload.',
-                ),
-                const SizedBox(height: Insets.lg),
-                Row(
-                  children: [
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed: () => backupToCloudflare(context, ref),
-                        icon: const Icon(Icons.cloud_upload_outlined, size: 18),
-                        label: const Text('Back up now'),
-                      ),
-                    ),
-                    const SizedBox(width: Insets.sm),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () => restoreFromCloudflare(context, ref),
-                        icon: const Icon(Icons.cloud_download_outlined, size: 18),
-                        label: const Text('Restore'),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: Insets.sm),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextButton.icon(
-                        onPressed: () => connectCloudflareSync(context, ref),
-                        icon: const Icon(Icons.manage_accounts_outlined, size: 18),
-                        label: const Text('Account'),
-                      ),
-                    ),
-                    Expanded(
-                      child: TextButton.icon(
-                        onPressed: () => signOutCloudflareSync(context, ref),
-                        icon: Icon(
-                          Icons.logout_rounded,
-                          size: 18,
-                          color: scheme.error,
-                        ),
-                        label: Text(
-                          'Sign out',
-                          style: TextStyle(color: scheme.error),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(Insets.xs, Insets.sm, Insets.xs, 0),
-            child: Text(
-              'Sign in is required to sync. Signing out keeps your local data on this device and your encrypted backup on the Worker.',
-              style: text.bodySmall?.copyWith(color: palette.dimText),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _InfoChip extends StatelessWidget {
-  const _InfoChip({required this.icon, required this.label});
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.palette;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: palette.subtle.withValues(alpha: 0.7),
-        borderRadius: BorderRadius.circular(Radii.pill),
-        border: Border.all(color: palette.border),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: palette.mutedText),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: context.text.labelSmall?.copyWith(color: palette.mutedText),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DetailLine extends StatelessWidget {
-  const _DetailLine({required this.icon, required this.label});
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.palette;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 16, color: palette.mutedText),
-        const SizedBox(width: Insets.sm),
-        Expanded(
-          child: Text(
-            label,
-            style: context.text.bodySmall?.copyWith(color: palette.mutedText),
-          ),
-        ),
-      ],
     );
   }
 }

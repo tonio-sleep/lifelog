@@ -1,8 +1,11 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme/app_theme.dart';
 import '../../app/widgets/common.dart';
+import '../../app/widgets/surfaces.dart';
 import '../../features/insights/insights_screen.dart';
 import '../../features/journal/journal_screen.dart';
 import '../../features/library/library_screen.dart';
@@ -124,7 +127,11 @@ class _AppShellState extends ConsumerState<AppShell> {
       );
     }
 
+    // extendBody lets scrolling content pass under the frosted bar. Scaffold
+    // reports the bar's height through MediaQuery, which ScreenFrame already
+    // uses for its bottom padding.
     return Scaffold(
+      extendBody: true,
       body: SafeArea(
         bottom: false,
         child: _TabStack(
@@ -148,8 +155,9 @@ class _AppShellState extends ConsumerState<AppShell> {
   }
 }
 
-/// Keeps every tab alive (so scroll positions survive) and fades the newly
-/// selected one in.
+/// Keeps visited tabs alive (so scroll positions survive) and fades the newly
+/// selected one in. Tabs are built on first visit, not all at once, and the
+/// tickers of hidden tabs are muted so off-screen animations cost nothing.
 class _TabStack extends StatefulWidget {
   const _TabStack({required this.index, required this.children});
 
@@ -164,13 +172,15 @@ class _TabStackState extends State<_TabStack>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 220),
+    duration: Motion.base,
     value: 1,
   );
+  late final Set<int> _visited = {widget.index};
 
   @override
   void didUpdateWidget(covariant _TabStack oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _visited.add(widget.index);
     if (oldWidget.index != widget.index && !context.reduceMotion) {
       _controller.forward(from: 0);
     }
@@ -185,14 +195,23 @@ class _TabStackState extends State<_TabStack>
   @override
   Widget build(BuildContext context) {
     return FadeTransition(
-      opacity: _controller.drive(CurveTween(curve: Curves.easeOut)),
-      child: IndexedStack(index: widget.index, children: widget.children),
+      opacity: _controller.drive(CurveTween(curve: Motion.out)),
+      child: IndexedStack(
+        index: widget.index,
+        children: [
+          for (var i = 0; i < widget.children.length; i++)
+            if (_visited.contains(i))
+              TickerMode(enabled: i == widget.index, child: widget.children[i])
+            else
+              const SizedBox.shrink(),
+        ],
+      ),
     );
   }
 }
 
-/// Compact bottom bar: four destinations with the add action inline, so there
-/// is no floating button hovering above content.
+/// Floating, frosted tab bar. Four destinations with the add action inline,
+/// so nothing hovers above the content.
 class _BottomBar extends StatelessWidget {
   const _BottomBar({
     required this.selected,
@@ -204,49 +223,50 @@ class _BottomBar extends StatelessWidget {
   final ValueChanged<int> onSelect;
   final VoidCallback onAdd;
 
+  static const _items = <(String, IconData, IconData)>[
+    ('Today', Icons.wb_sunny_outlined, Icons.wb_sunny_rounded),
+    ('Journal', Icons.menu_book_outlined, Icons.menu_book_rounded),
+    ('Habits', Icons.task_alt_outlined, Icons.task_alt_rounded),
+    ('Library', Icons.grid_view_outlined, Icons.grid_view_rounded),
+  ];
+
   @override
   Widget build(BuildContext context) {
-    final palette = context.palette;
-    return Container(
-      decoration: BoxDecoration(
-        color: palette.card,
-        border: Border(top: BorderSide(color: palette.border)),
+    final bottom = MediaQuery.paddingOf(context).bottom;
+    Widget item(int i) => _NavItem(
+      label: _items[i].$1,
+      icon: _items[i].$2,
+      selectedIcon: _items[i].$3,
+      selected: selected == i,
+      onTap: () => onSelect(i),
+    );
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        Insets.lg,
+        0,
+        Insets.lg,
+        math.max(bottom, Insets.md),
       ),
-      padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom),
-      child: SizedBox(
-        height: 60,
-        child: Row(
-          children: [
-            _NavItem(
-              label: 'Today',
-              icon: Icons.wb_sunny_outlined,
-              selectedIcon: Icons.wb_sunny_rounded,
-              selected: selected == 0,
-              onTap: () => onSelect(0),
+      child: Center(
+        heightFactor: 1,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 440),
+          child: GlassSurface(
+            borderRadius: BorderRadius.circular(Radii.xl + 4),
+            shadow: true,
+            child: SizedBox(
+              height: 64,
+              child: Row(
+                children: [
+                  item(0),
+                  item(1),
+                  Expanded(child: Center(child: _AddButton(onTap: onAdd))),
+                  item(2),
+                  item(3),
+                ],
+              ),
             ),
-            _NavItem(
-              label: 'Journal',
-              icon: Icons.menu_book_outlined,
-              selectedIcon: Icons.menu_book_rounded,
-              selected: selected == 1,
-              onTap: () => onSelect(1),
-            ),
-            Expanded(child: Center(child: _AddButton(onTap: onAdd))),
-            _NavItem(
-              label: 'Habits',
-              icon: Icons.task_alt_outlined,
-              selectedIcon: Icons.task_alt_rounded,
-              selected: selected == 2,
-              onTap: () => onSelect(2),
-            ),
-            _NavItem(
-              label: 'Library',
-              icon: Icons.grid_view_outlined,
-              selectedIcon: Icons.grid_view_rounded,
-              selected: selected == 3,
-              onTap: () => onSelect(3),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -274,79 +294,64 @@ class _NavItem extends StatelessWidget {
     final palette = context.palette;
     final color = selected ? scheme.primary : palette.mutedText;
     return Expanded(
-      child: Pressable(
-        scale: 0.92,
-        borderRadius: BorderRadius.circular(Radii.md),
-        onTap: onTap,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            AnimatedContainer(
-              duration: Motion.base,
-              curve: Motion.out,
-              width: selected ? 52 : 32,
-              height: 28,
-              decoration: BoxDecoration(
-                color: selected
-                    ? scheme.primary.withValues(alpha: 0.14)
-                    : Colors.transparent,
-                borderRadius: BorderRadius.circular(14),
+      child: Semantics(
+        button: true,
+        selected: selected,
+        label: label,
+        excludeSemantics: true,
+        child: Pressable(
+          scale: 0.94,
+          haptic: true,
+          borderRadius: BorderRadius.circular(Radii.lg),
+          onTap: onTap,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(selected ? selectedIcon : icon, size: 23, color: color),
+              const SizedBox(height: 3),
+              Text(
+                label,
+                maxLines: 1,
+                style: context.text.labelSmall?.copyWith(
+                  color: color,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                ),
               ),
-              child: Icon(selected ? selectedIcon : icon, size: 22, color: color),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              style: context.text.labelSmall?.copyWith(
-                color: color,
-                fontSize: 10.5,
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
+/// A flat accent circle. No gradient, no coloured glow.
 class _AddButton extends StatelessWidget {
   const _AddButton({required this.onTap});
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.palette;
-    final primary = context.scheme.primary;
+    final scheme = context.scheme;
     return Tooltip(
       message: 'Add',
-      child: Pressable(
-        scale: 0.9,
-        haptic: true,
-        borderRadius: BorderRadius.circular(18),
-        onTap: onTap,
-        child: Container(
-          width: 48,
-          height: 44,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [primary, Color.lerp(primary, palette.music, 0.65)!],
+      child: Semantics(
+        button: true,
+        label: 'Add',
+        excludeSemantics: true,
+        child: Pressable(
+          scale: 0.92,
+          haptic: true,
+          borderRadius: BorderRadius.circular(Radii.pill),
+          onTap: onTap,
+          child: Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: scheme.primary,
+              shape: BoxShape.circle,
             ),
-            boxShadow: [
-              BoxShadow(
-                color: primary.withValues(alpha: palette.isDark ? 0.28 : 0.34),
-                blurRadius: 14,
-                offset: const Offset(0, 5),
-              ),
-            ],
-          ),
-          child: Icon(
-            Icons.add_rounded,
-            size: 26,
-            color: context.scheme.onPrimary,
+            child: Icon(Icons.add_rounded, size: 26, color: scheme.onPrimary),
           ),
         ),
       ),
@@ -397,13 +402,13 @@ class _SideNavigation extends StatelessWidget {
                 children: [
                   const LifelogMark(size: 34),
                   const SizedBox(width: Insets.md),
-                  Text('Lifelog', style: AppTheme.serif(context.text.titleLarge, size: 20)),
+                  Text('Lifelog', style: AppTheme.serif(context.text.titleLarge, size: 20, weight: FontWeight.w500)),
                 ],
               ),
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: Insets.md),
-              child: FilledButton.icon(
+              child: FilledButton.tonalIcon(
                 onPressed: onAdd,
                 icon: const Icon(Icons.add_rounded, size: 20),
                 label: const Text('Add'),
@@ -484,9 +489,7 @@ class _NavTile extends StatelessWidget {
           duration: Motion.fast,
           padding: const EdgeInsets.symmetric(horizontal: Insets.md, vertical: 10),
           decoration: BoxDecoration(
-            color: selected
-                ? scheme.primary.withValues(alpha: 0.12)
-                : Colors.transparent,
+            color: selected ? palette.subtle : Colors.transparent,
             borderRadius: BorderRadius.circular(Radii.md),
           ),
           child: Row(

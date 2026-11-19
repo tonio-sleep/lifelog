@@ -229,7 +229,6 @@ class _CloudflareRequiredAuthScreenState
                 const SizedBox(height: Insets.xl),
               ],
               QuietCard(
-                glass: true,
                 padding: const EdgeInsets.all(Insets.lg),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,

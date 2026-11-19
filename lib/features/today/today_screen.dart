@@ -19,6 +19,7 @@ import '../photos/photo_widgets.dart';
 import '../timeline/timeline_widgets.dart';
 import '../trackers/tracker_widgets.dart';
 import 'quick_add.dart';
+import 'today_composer.dart';
 import 'today_widgets.dart';
 
 class TodayScreen extends ConsumerStatefulWidget {
@@ -75,6 +76,7 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
         calendarOpen: _showMonth,
         onToggleCalendar: () => setState(() => _showMonth = !_showMonth),
         onSearch: () => widget.onNavigate?.call('search'),
+        onAccount: () => widget.onNavigate?.call('settings'),
         onAdd: desktop ? () => showQuickAdd(context, ref) : null,
       ),
       children: [
@@ -152,17 +154,12 @@ class _DayBody extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        ComposerCard(
-          isToday: isToday,
-          entry: dailyEntry,
-          onTap: () => showDailyCheckinSheet(context, ref, day),
-        ),
-        const SizedBox(height: Insets.md),
-        JournalWriteCard(
+        TodayComposer(
           isToday: isToday,
           entry: dailyEntry,
           entryCount: entryCount,
-          onTap: () {
+          onCheckin: () => showDailyCheckinSheet(context, ref, day),
+          onWrite: () {
             if (entryCount > 1) {
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
@@ -173,7 +170,7 @@ class _DayBody extends ConsumerWidget {
               createJournalEntry(context, date: day, focusBody: true);
             }
           },
-          onAdd: () => createJournalEntry(
+          onNewEntry: () => createJournalEntry(
             context,
             date: day,
             focusBody: true,

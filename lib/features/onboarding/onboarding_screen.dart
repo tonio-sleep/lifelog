@@ -93,7 +93,6 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     children: [
                       if (settings.cloudflareConnected)
                         QuietCard(
-                          glass: true,
                           padding: const EdgeInsets.all(Insets.md),
                           child: Row(
                             children: [

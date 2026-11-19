@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../app/providers/settings_provider.dart';
@@ -29,9 +29,12 @@ class LifelogApp extends ConsumerWidget {
         AppThemeMode.light => ThemeMode.light,
         AppThemeMode.dark => ThemeMode.dark,
       },
+      // Account setup is asked for once. After that, signing out or an expired
+      // session never blocks the journal: the data is local, and the sync card
+      // in Settings says what to do.
       home: !settings.onboardingComplete
           ? const OnboardingScreen()
-          : !settings.cloudflareConnected
+          : !settings.cloudflareConnected && !settings.cloudflareSetupDone
               ? const CloudflareRequiredAuthScreen()
               : const LockGate(child: _StartupSync(child: AppShell())),
     );

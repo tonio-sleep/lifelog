@@ -48,8 +48,9 @@ private func blake2bCompress(h: inout [UInt64], m: [UInt64], counter: UInt64, fi
     v[13] ^= 0 // high counter word; Lifelog never hashes more than 2^64 bytes
     v[14] ^= finalBlock
 
-    @inline(__always) func g(_ a: inout UInt64, _ b: inout UInt64, _ c: inout UInt64, _ d: inout UInt64,
-                             _ x: UInt64, _ y: UInt64) {
+    @inline(__always) func g(_ a: UInt64, _ b: UInt64, _ c: UInt64, _ d: UInt64,
+                             _ x: UInt64, _ y: UInt64) -> (UInt64, UInt64, UInt64, UInt64) {
+        var a = a, b = b, c = c, d = d
         a = a &+ b &+ x
         d = rotr64(d ^ a, 32)
         c = c &+ d
@@ -58,18 +59,27 @@ private func blake2bCompress(h: inout [UInt64], m: [UInt64], counter: UInt64, fi
         d = rotr64(d ^ a, 16)
         c = c &+ d
         b = rotr64(b ^ c, 63)
+        return (a, b, c, d)
     }
 
     for r in 0..<12 {
         let s = sigma[r]
-        g(&v[0], &v[4], &v[8], &v[12], m[s[0]], m[s[1]])
-        g(&v[1], &v[5], &v[9], &v[13], m[s[2]], m[s[3]])
-        g(&v[2], &v[6], &v[10], &v[14], m[s[4]], m[s[5]])
-        g(&v[3], &v[7], &v[11], &v[15], m[s[6]], m[s[7]])
-        g(&v[0], &v[5], &v[10], &v[15], m[s[8]], m[s[9]])
-        g(&v[1], &v[6], &v[11], &v[12], m[s[10]], m[s[11]])
-        g(&v[2], &v[7], &v[8], &v[13], m[s[12]], m[s[13]])
-        g(&v[3], &v[4], &v[9], &v[14], m[s[14]], m[s[15]])
+        let r0 = g(v[0], v[4], v[8], v[12], m[s[0]], m[s[1]])
+        v[0] = r0.0; v[4] = r0.1; v[8] = r0.2; v[12] = r0.3
+        let r1 = g(v[1], v[5], v[9], v[13], m[s[2]], m[s[3]])
+        v[1] = r1.0; v[5] = r1.1; v[9] = r1.2; v[13] = r1.3
+        let r2 = g(v[2], v[6], v[10], v[14], m[s[4]], m[s[5]])
+        v[2] = r2.0; v[6] = r2.1; v[10] = r2.2; v[14] = r2.3
+        let r3 = g(v[3], v[7], v[11], v[15], m[s[6]], m[s[7]])
+        v[3] = r3.0; v[7] = r3.1; v[11] = r3.2; v[15] = r3.3
+        let r4 = g(v[0], v[5], v[10], v[15], m[s[8]], m[s[9]])
+        v[0] = r4.0; v[5] = r4.1; v[10] = r4.2; v[15] = r4.3
+        let r5 = g(v[1], v[6], v[11], v[12], m[s[10]], m[s[11]])
+        v[1] = r5.0; v[6] = r5.1; v[11] = r5.2; v[12] = r5.3
+        let r6 = g(v[2], v[7], v[8], v[13], m[s[12]], m[s[13]])
+        v[2] = r6.0; v[7] = r6.1; v[8] = r6.2; v[13] = r6.3
+        let r7 = g(v[3], v[4], v[9], v[14], m[s[14]], m[s[15]])
+        v[3] = r7.0; v[4] = r7.1; v[9] = r7.2; v[14] = r7.3
     }
     for i in 0..<8 { h[i] ^= v[i] ^ v[i + 8] }
 }
@@ -134,7 +144,8 @@ private func blakeRound(_ block: inout ArgonBlock, _ index: [Int]) {
     var w = [UInt64](repeating: 0, count: 16)
     for j in 0..<16 { w[j] = block.v[index[j]] }
 
-    func g(_ a: inout UInt64, _ b: inout UInt64, _ c: inout UInt64, _ d: inout UInt64) {
+    func g(_ a: UInt64, _ b: UInt64, _ c: UInt64, _ d: UInt64) -> (UInt64, UInt64, UInt64, UInt64) {
+        var a = a, b = b, c = c, d = d
         a = fBlaMka(a, b)
         d = rotr64(d ^ a, 32)
         c = fBlaMka(c, d)
@@ -143,16 +154,25 @@ private func blakeRound(_ block: inout ArgonBlock, _ index: [Int]) {
         d = rotr64(d ^ a, 16)
         c = fBlaMka(c, d)
         b = rotr64(b ^ c, 63)
+        return (a, b, c, d)
     }
 
-    g(&w[0], &w[4], &w[8], &w[12])
-    g(&w[1], &w[5], &w[9], &w[13])
-    g(&w[2], &w[6], &w[10], &w[14])
-    g(&w[3], &w[7], &w[11], &w[15])
-    g(&w[0], &w[5], &w[10], &w[15])
-    g(&w[1], &w[6], &w[11], &w[12])
-    g(&w[2], &w[7], &w[8], &w[13])
-    g(&w[3], &w[4], &w[9], &w[14])
+    let r0 = g(w[0], w[4], w[8], w[12])
+    w[0] = r0.0; w[4] = r0.1; w[8] = r0.2; w[12] = r0.3
+    let r1 = g(w[1], w[5], w[9], w[13])
+    w[1] = r1.0; w[5] = r1.1; w[9] = r1.2; w[13] = r1.3
+    let r2 = g(w[2], w[6], w[10], w[14])
+    w[2] = r2.0; w[6] = r2.1; w[10] = r2.2; w[14] = r2.3
+    let r3 = g(w[3], w[7], w[11], w[15])
+    w[3] = r3.0; w[7] = r3.1; w[11] = r3.2; w[15] = r3.3
+    let r4 = g(w[0], w[5], w[10], w[15])
+    w[0] = r4.0; w[5] = r4.1; w[10] = r4.2; w[15] = r4.3
+    let r5 = g(w[1], w[6], w[11], w[12])
+    w[1] = r5.0; w[6] = r5.1; w[11] = r5.2; w[12] = r5.3
+    let r6 = g(w[2], w[7], w[8], w[13])
+    w[2] = r6.0; w[7] = r6.1; w[8] = r6.2; w[13] = r6.3
+    let r7 = g(w[3], w[4], w[9], w[14])
+    w[3] = r7.0; w[4] = r7.1; w[9] = r7.2; w[14] = r7.3
     for j in 0..<16 { block.v[index[j]] = w[j] }
 }
 

@@ -30,18 +30,26 @@ final class AppEnvironment: ObservableObject {
     @Published var usedFallbackKey: Bool = false
 
     init() {
+        let crypto: CryptoService
+        let settings: AppSettings
+        let archive: Archive
+        let usedFallback: Bool
         do {
             try Paths.prepare()
             let vault = try KeyVault.loadOrCreate(in: Paths.root)
-            usedFallbackKey = vault.usedFallback
+            usedFallback = vault.usedFallback
             crypto = CryptoService(key: vault.key)
-            mediaStore = MediaStore(directory: Paths.media, crypto: crypto)
             settings = SettingsStore.load()
             archive = (try ArchiveStore.load(crypto: crypto)) ?? .empty
-            isLocked = settings.lockEnabled && settings.pinHash != nil
         } catch {
             fatalError("Lifelog could not open its encrypted store: \(error.localizedDescription)")
         }
+        self.crypto = crypto
+        self.mediaStore = MediaStore(directory: Paths.media, crypto: crypto)
+        self.settings = settings
+        self.archive = archive
+        self.isLocked = settings.lockEnabled && settings.pinHash != nil
+        self.usedFallbackKey = usedFallback
         lastfm = LastFMService()
         cloudflare = CloudflareService()
         health = HealthService()

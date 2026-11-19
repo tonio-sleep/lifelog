@@ -64,10 +64,9 @@ class _TrackersScreenState extends ConsumerState<TrackersScreen> {
           EmptyState(
             icon: Icons.task_alt_rounded,
             color: palette.tracker,
-            title: 'No activities yet',
-            message: 'Add things you might do in a day. Log them when you do, '
-                'with time or duration if you want. Nothing is required.',
-            actionLabel: 'Choose starters',
+            title: 'Build your daily habits',
+            message: 'Track what matters to you each day — what you ate, brushing your teeth, showering, water, movement, and more. Start with built-in habits or create your own, and log them in a way that fits your life.',
+            actionLabel: 'Add daily essentials',
             onAction: () => _showTemplates(context),
           )
         else
@@ -301,88 +300,234 @@ class _TemplateSheet extends StatefulWidget {
 }
 
 class _TemplateSheetState extends State<_TemplateSheet> {
-  final _selected = <String>{'shower', 'water', 'reading'};
+  final _selected = <String>{'meals', 'brushTeeth', 'shower', 'water'};
 
-  static const _templates =
-      <({String key, String label, String note, IconData icon})>[
-        (key: 'shower', label: 'Shower', note: 'Yes / no', icon: Icons.shower_outlined),
-        (key: 'water', label: 'Water', note: 'Glasses, goal 8', icon: Icons.water_drop_outlined),
-        (key: 'mood', label: 'Mood', note: 'Rating', icon: Icons.sentiment_satisfied_alt_outlined),
-        (key: 'reading', label: 'Reading', note: 'Minutes', icon: Icons.menu_book_outlined),
-        (key: 'walk', label: 'Walk', note: 'Minutes', icon: Icons.directions_walk_rounded),
-        (key: 'restroom', label: 'Restroom', note: 'Count', icon: Icons.wc_rounded),
-        (key: 'coffee', label: 'Coffee', note: 'Count', icon: Icons.coffee_outlined),
-      ];
+  static const _templates = <({
+    String key,
+    String label,
+    String note,
+    String group,
+    IconData icon,
+  })>[
+    (
+      key: 'meals',
+      label: 'What I ate today',
+      note: 'Log meals and snacks with notes',
+      group: 'Daily essentials',
+      icon: Icons.restaurant_outlined,
+    ),
+    (
+      key: 'brushTeeth',
+      label: 'Brushed my teeth',
+      note: 'Goal: 2 times (morning and night)',
+      group: 'Daily essentials',
+      icon: Icons.cleaning_services_outlined,
+    ),
+    (
+      key: 'shower',
+      label: 'Took a shower',
+      note: 'Yes / no',
+      group: 'Daily essentials',
+      icon: Icons.shower_outlined,
+    ),
+    (
+      key: 'water',
+      label: 'Water',
+      note: 'Glasses, goal 8',
+      group: 'Daily essentials',
+      icon: Icons.water_drop_outlined,
+    ),
+    (
+      key: 'skincare',
+      label: 'Skincare',
+      note: 'Yes / no',
+      group: 'Personal care',
+      icon: Icons.spa_outlined,
+    ),
+    (
+      key: 'vitamins',
+      label: 'Vitamins / supplements',
+      note: 'Yes / no',
+      group: 'Health',
+      icon: Icons.medication_outlined,
+    ),
+    (
+      key: 'exercise',
+      label: 'Exercise',
+      note: 'Minutes or sessions',
+      group: 'Health',
+      icon: Icons.fitness_center_rounded,
+    ),
+    (
+      key: 'walk',
+      label: 'Walk',
+      note: 'Minutes',
+      group: 'Health',
+      icon: Icons.directions_walk_rounded,
+    ),
+    (
+      key: 'meditation',
+      label: 'Meditation',
+      note: 'Minutes',
+      group: 'Wellbeing',
+      icon: Icons.self_improvement_rounded,
+    ),
+    (
+      key: 'mood',
+      label: 'Mood reflection',
+      note: '1-5 rating',
+      group: 'Wellbeing',
+      icon: Icons.sentiment_satisfied_alt_outlined,
+    ),
+    (
+      key: 'reading',
+      label: 'Reading',
+      note: 'Minutes',
+      group: 'Growth',
+      icon: Icons.menu_book_outlined,
+    ),
+    (
+      key: 'coffee',
+      label: 'Coffee',
+      note: 'Count',
+      group: 'Daily life',
+      icon: Icons.coffee_outlined,
+    ),
+    (
+      key: 'restroom',
+      label: 'Restroom',
+      note: 'Count',
+      group: 'Health',
+      icon: Icons.wc_rounded,
+    ),
+  ];
 
   List<TrackerDefinition> _build() {
     final out = <TrackerDefinition>[];
-    if (_selected.contains('shower')) out.add(TrackerTemplates.shower());
-    if (_selected.contains('water')) out.add(TrackerTemplates.water());
-    if (_selected.contains('mood')) out.add(TrackerTemplates.mood());
-    if (_selected.contains('reading')) out.add(TrackerTemplates.reading());
-    if (_selected.contains('walk')) out.add(TrackerTemplates.walk());
-    if (_selected.contains('restroom')) out.add(TrackerTemplates.restroom());
-    if (_selected.contains('coffee')) out.add(TrackerTemplates.coffee());
+    for (final key in _selected) {
+      switch (key) {
+        case 'meals':
+          out.add(TrackerTemplates.meals());
+        case 'brushTeeth':
+          out.add(TrackerTemplates.brushTeeth());
+        case 'shower':
+          out.add(TrackerTemplates.shower());
+        case 'water':
+          out.add(TrackerTemplates.water());
+        case 'skincare':
+          out.add(TrackerTemplates.skincare());
+        case 'vitamins':
+          out.add(TrackerTemplates.vitamins());
+        case 'exercise':
+          out.add(TrackerTemplates.exercise());
+        case 'walk':
+          out.add(TrackerTemplates.walk());
+        case 'meditation':
+          out.add(TrackerTemplates.meditation());
+        case 'mood':
+          out.add(TrackerTemplates.mood());
+        case 'reading':
+          out.add(TrackerTemplates.reading());
+        case 'coffee':
+          out.add(TrackerTemplates.coffee());
+        case 'restroom':
+          out.add(TrackerTemplates.restroom());
+      }
+    }
     return out;
   }
 
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
+    final groups = <String,
+        List<
+            ({
+              String key,
+              String label,
+              String note,
+              String group,
+              IconData icon,
+            })>>{};
+    for (final t in _templates) {
+      groups.putIfAbsent(t.group, () => []).add(t);
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        const SheetTitle(title: 'Starter activities'),
-        for (final template in _templates)
-          Pressable(
-            haptic: true,
-            borderRadius: BorderRadius.circular(Radii.md),
-            onTap: () => setState(() {
-              if (!_selected.add(template.key)) _selected.remove(template.key);
-            }),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: Insets.sm),
-              child: Row(
-                children: [
-                  IconBadge(icon: template.icon, color: palette.tracker, size: 40, iconSize: 20),
-                  const SizedBox(width: Insets.md),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(template.label, style: context.text.titleSmall),
-                        Text(
-                          template.note,
-                          style: context.text.labelSmall?.copyWith(color: palette.dimText),
-                        ),
-                      ],
-                    ),
-                  ),
-                  AnimatedContainer(
-                    duration: Motion.fast,
-                    width: 26,
-                    height: 26,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: _selected.contains(template.key)
-                          ? context.scheme.primary
-                          : Colors.transparent,
-                      border: Border.all(
-                        color: _selected.contains(template.key)
-                            ? context.scheme.primary
-                            : palette.border,
-                        width: 1.5,
-                      ),
-                    ),
-                    child: _selected.contains(template.key)
-                        ? Icon(Icons.check_rounded, size: 16, color: context.scheme.onPrimary)
-                        : null,
-                  ),
-                ],
-              ),
+        const SheetTitle(
+          title: 'Daily habits and activities',
+          subtitle:
+              'Choose built-in habits to track. You can customize or create your own anytime.',
+        ),
+        for (final entry in groups.entries) ...[
+          Padding(
+            padding: const EdgeInsets.only(top: Insets.md, bottom: Insets.xs),
+            child: Text(
+              entry.key,
+              style:
+                  context.text.labelLarge?.copyWith(color: palette.mutedText),
             ),
           ),
+          for (final template in entry.value)
+            Pressable(
+              haptic: true,
+              borderRadius: BorderRadius.circular(Radii.md),
+              onTap: () => setState(() {
+                if (!_selected.add(template.key)) _selected.remove(template.key);
+              }),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: Insets.sm),
+                child: Row(
+                  children: [
+                    IconBadge(
+                      icon: template.icon,
+                      color: palette.tracker,
+                      size: 40,
+                      iconSize: 20,
+                    ),
+                    const SizedBox(width: Insets.md),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(template.label,
+                              style: context.text.titleSmall),
+                          Text(
+                            template.note,
+                            style: context.text.labelSmall
+                                ?.copyWith(color: palette.dimText),
+                          ),
+                        ],
+                      ),
+                    ),
+                    AnimatedContainer(
+                      duration: Motion.fast,
+                      width: 26,
+                      height: 26,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: _selected.contains(template.key)
+                            ? context.scheme.primary
+                            : Colors.transparent,
+                        border: Border.all(
+                          color: _selected.contains(template.key)
+                              ? context.scheme.primary
+                              : palette.border,
+                          width: 1.5,
+                        ),
+                      ),
+                      child: _selected.contains(template.key)
+                          ? Icon(Icons.check_rounded,
+                              size: 16, color: context.scheme.onPrimary)
+                          : null,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
         const SizedBox(height: Insets.lg),
         SizedBox(
           width: double.infinity,
@@ -390,7 +535,9 @@ class _TemplateSheetState extends State<_TemplateSheet> {
             onPressed: _selected.isEmpty
                 ? null
                 : () => Navigator.of(context).pop(_build()),
-            child: Text('Add ${_selected.length}'),
+            child: Text(
+              'Add ${_selected.length} ${_selected.length == 1 ? 'habit' : 'habits'}',
+            ),
           ),
         ),
       ],

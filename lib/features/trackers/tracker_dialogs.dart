@@ -13,18 +13,24 @@ import '../../domain/models/trackers.dart';
 const trackerIconChoices = <String>[
   'circle',
   'shower',
+  'teeth',
+  'meal',
   'water',
   'mood',
   'book',
   'walk',
-  'meal',
   'sleep',
+  'exercise',
+  'meditation',
+  'vitamins',
+  'skincare',
   'restroom',
   'star',
   'coffee',
   'work',
   'music',
   'heart',
+  'sun',
 ];
 
 const trackerColorChoices = <int>[
@@ -40,18 +46,24 @@ const trackerColorChoices = <int>[
 
 IconData trackerIcon(String key) => switch (key) {
   'shower' => Icons.shower_outlined,
+  'teeth' => Icons.cleaning_services_outlined,
   'water' => Icons.water_drop_outlined,
   'mood' => Icons.sentiment_satisfied_alt_outlined,
   'book' => Icons.menu_book_outlined,
   'walk' => Icons.directions_walk_rounded,
   'meal' => Icons.restaurant_outlined,
   'sleep' => Icons.bedtime_outlined,
+  'exercise' => Icons.fitness_center_rounded,
+  'meditation' => Icons.self_improvement_rounded,
+  'vitamins' => Icons.medication_outlined,
+  'skincare' => Icons.spa_outlined,
   'restroom' => Icons.wc_rounded,
   'star' => Icons.star_outline_rounded,
   'coffee' => Icons.coffee_outlined,
   'work' => Icons.work_outline_rounded,
   'music' => Icons.music_note_outlined,
   'heart' => Icons.favorite_outline_rounded,
+  'sun' => Icons.wb_sunny_outlined,
   _ => Icons.circle_outlined,
 };
 
@@ -62,39 +74,71 @@ Color trackerColor(int value) => Color(value);
 class TrackerTemplates {
   const TrackerTemplates._();
 
+  /// Meals / eating log for the day (text notes per meal, multiple times a day).
+  static TrackerDefinition meals() => _base(
+    name: 'What I ate today',
+    type: TrackerType.text,
+    icon: 'meal',
+    color: 0xFFE07B39,
+    category: 'Nutrition',
+    multiplePerDay: true,
+  );
+
+  /// Brush teeth with a simple daily goal (e.g. morning & night).
+  static TrackerDefinition brushTeeth() => _base(
+    name: 'Brushed my teeth',
+    type: TrackerType.count,
+    icon: 'teeth',
+    color: 0xFF2F9BD0,
+    category: 'Personal care',
+    target: 2,
+    unit: 'times',
+    multiplePerDay: true,
+  );
+
   static TrackerDefinition shower() => _base(
-    name: 'Shower',
+    name: 'Took a shower',
     type: TrackerType.boolean,
     icon: 'shower',
     color: 0xFF4C7F96,
     category: 'Personal care',
   );
 
+  static TrackerDefinition skincare() => _base(
+    name: 'Skincare',
+    type: TrackerType.boolean,
+    icon: 'skincare',
+    color: 0xFFD6567A,
+    category: 'Personal care',
+  );
+
+  static TrackerDefinition vitamins() => _base(
+    name: 'Vitamins / supplements',
+    type: TrackerType.boolean,
+    icon: 'vitamins',
+    color: 0xFF2FA37A,
+    category: 'Health',
+  );
+
   static TrackerDefinition water() => _base(
     name: 'Water',
     type: TrackerType.count,
     icon: 'water',
-    color: 0xFF4C7F96,
-    category: 'Daily life',
+    color: 0xFF2F9BD0,
+    category: 'Health',
     target: 8,
     unit: 'glasses',
+    multiplePerDay: true,
   );
 
-  static TrackerDefinition mood() => _base(
-    name: 'Mood',
-    type: TrackerType.rating,
-    icon: 'mood',
-    color: 0xFF8A6BA1,
-    category: 'Daily life',
-  );
-
-  static TrackerDefinition reading() => _base(
-    name: 'Reading',
+  static TrackerDefinition exercise() => _base(
+    name: 'Exercise',
     type: TrackerType.duration,
-    icon: 'book',
-    color: 0xFFA08052,
-    category: 'Daily life',
+    icon: 'exercise',
+    color: 0xFF6B8F71,
+    category: 'Health',
     unit: 'min',
+    multiplePerDay: true,
   );
 
   static TrackerDefinition walk() => _base(
@@ -102,16 +146,37 @@ class TrackerTemplates {
     type: TrackerType.duration,
     icon: 'walk',
     color: 0xFF6B8F71,
-    category: 'Daily life',
+    category: 'Health',
     unit: 'min',
+    multiplePerDay: true,
   );
 
-  static TrackerDefinition restroom() => _base(
-    name: 'Restroom',
-    type: TrackerType.count,
-    icon: 'restroom',
-    color: 0xFF6A7A8C,
-    category: 'Bathroom',
+  static TrackerDefinition reading() => _base(
+    name: 'Reading',
+    type: TrackerType.duration,
+    icon: 'book',
+    color: 0xFFA08052,
+    category: 'Growth',
+    unit: 'min',
+    multiplePerDay: true,
+  );
+
+  static TrackerDefinition meditation() => _base(
+    name: 'Meditation',
+    type: TrackerType.duration,
+    icon: 'meditation',
+    color: 0xFF9A62DB,
+    category: 'Wellbeing',
+    unit: 'min',
+    multiplePerDay: true,
+  );
+
+  static TrackerDefinition mood() => _base(
+    name: 'Mood reflection',
+    type: TrackerType.rating,
+    icon: 'mood',
+    color: 0xFF8A6BA1,
+    category: 'Wellbeing',
   );
 
   static TrackerDefinition coffee() => _base(
@@ -120,6 +185,16 @@ class TrackerTemplates {
     icon: 'coffee',
     color: 0xFFA08052,
     category: 'Daily life',
+    multiplePerDay: true,
+  );
+
+  static TrackerDefinition restroom() => _base(
+    name: 'Restroom',
+    type: TrackerType.count,
+    icon: 'restroom',
+    color: 0xFF6A7A8C,
+    category: 'Health',
+    multiplePerDay: true,
   );
 
   static TrackerDefinition _base({
@@ -130,6 +205,7 @@ class TrackerTemplates {
     required String category,
     double? target,
     String unit = '',
+    bool multiplePerDay = true,
   }) {
     return TrackerDefinition(
       id: const Uuid().v4(),
@@ -141,6 +217,7 @@ class TrackerTemplates {
       category: category,
       target: target,
       unit: unit,
+      multiplePerDay: multiplePerDay,
     );
   }
 }
@@ -323,6 +400,14 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
             ],
           ),
         if (needsNumber) ...[
+          if (tracker.icon == 'teeth' || tracker.name.toLowerCase().contains('brush')) ...[
+            Text(
+              'Track brushing times for today (morning, night, or more).',
+              style: context.text.bodySmall
+                  ?.copyWith(color: context.palette.mutedText),
+            ),
+            const SizedBox(height: Insets.sm),
+          ],
           Row(
             children: [
               if (tracker.type == TrackerType.count)
@@ -359,6 +444,19 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
                 ),
             ],
           ),
+          if (tracker.icon == 'teeth' || tracker.name.toLowerCase().contains('brush'))
+            Padding(
+              padding: const EdgeInsets.only(top: Insets.sm),
+              child: Wrap(
+                spacing: Insets.sm,
+                runSpacing: Insets.sm,
+                children: [
+                  ActionChip(label: const Text('Morning'), onPressed: () => setState(() => _valueController.text = _valueController.text.trim().isEmpty || _valueController.text.trim() == '0' ? '1' : _valueController.text)),
+                  ActionChip(label: const Text('Night (+1)'), onPressed: () { final v = (double.tryParse(_valueController.text.trim()) ?? 0) + 1; setState(() => _valueController.text = formatCompactNumber(v)); }),
+                  ActionChip(label: const Text('Both (2)'), onPressed: () => setState(() => _valueController.text = '2')),
+                ],
+              ),
+            ),
           if (tracker.type == TrackerType.duration) ...[
             const SizedBox(height: Insets.md),
             Wrap(
@@ -376,15 +474,88 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
             ),
           ],
         ],
-        if (tracker.type == TrackerType.text)
-          TextField(
-            controller: _textController,
-            autofocus: true,
-            minLines: 3,
-            maxLines: 5,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: const InputDecoration(hintText: 'Write a short note'),
-          ),
+        if (tracker.type == TrackerType.text) ...[
+          Builder(builder: (context) {
+            final isMeal = tracker.icon == 'meal' ||
+                tracker.name.toLowerCase().contains('ate') ||
+                tracker.name.toLowerCase().contains('meal') ||
+                tracker.name.toLowerCase().contains('eat');
+            if (!isMeal) {
+              return TextField(
+                controller: _textController,
+                autofocus: true,
+                minLines: 3,
+                maxLines: 5,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: const InputDecoration(
+                  hintText: 'Write a short note',
+                ),
+              );
+            }
+            final mealTypes = const [
+              'Breakfast',
+              'Lunch',
+              'Dinner',
+              'Snack',
+              'Drink',
+              'Dessert',
+            ];
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'What did you have?',
+                  style: context.text.labelMedium
+                      ?.copyWith(color: context.palette.mutedText),
+                ),
+                const SizedBox(height: Insets.sm),
+                Wrap(
+                  spacing: Insets.sm,
+                  runSpacing: Insets.sm,
+                  children: [
+                    for (final meal in mealTypes)
+                      ActionChip(
+                        label: Text(meal),
+                        onPressed: () {
+                          final current = _textController.text.trim();
+                          if (current.isEmpty) {
+                            _textController.text = '$meal: ';
+                          } else if (!current.toLowerCase().startsWith(meal.toLowerCase())) {
+                            _textController.text = '$meal: $current';
+                          } else {
+                            _textController.text = '$meal: ';
+                          }
+                          _textController.selection = TextSelection.collapsed(
+                            offset: _textController.text.length,
+                          );
+                          setState(() {});
+                        },
+                      ),
+                  ],
+                ),
+                const SizedBox(height: Insets.sm),
+                TextField(
+                  controller: _textController,
+                  autofocus: true,
+                  minLines: 2,
+                  maxLines: 6,
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: const InputDecoration(
+                    labelText: 'Meal details',
+                    hintText: 'e.g. Oatmeal with berries, eggs, and coffee',
+                    alignLabelWithHint: true,
+                  ),
+                ),
+                const SizedBox(height: Insets.xs),
+                Text(
+                  'You can log each meal or snack separately to remember your day.',
+                  style: context.text.bodySmall
+                      ?.copyWith(color: context.palette.mutedText),
+                ),
+              ],
+            );
+          }),
+        ],
         if (tracker.type == TrackerType.rating)
           Row(
             mainAxisAlignment: MainAxisAlignment.center,

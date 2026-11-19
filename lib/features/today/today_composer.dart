@@ -42,12 +42,14 @@ class TodayComposer extends StatelessWidget {
 
     final prompt = hasWriting
         ? (e.excerpt == 'No text' ? e.displayTitle : e.excerpt)
-        : (isToday ? 'What is on your mind?' : 'Write about this day');
+        : (isToday
+            ? 'How was your day? Write a little about it.'
+            : 'Write about this day');
     final meta = multiple
         ? '$entryCount entries ${isToday ? 'today' : 'on this day'}'
         : hasWriting
             ? 'Tap to keep writing'
-            : 'Thoughts, notes or a vocab list';
+            : 'A few words, a note, or a vocab list';
     final checkinDetail = () {
       if (checkinSummary != null) {
         if (checkinCount > 1) {
@@ -56,12 +58,12 @@ class TodayComposer extends StatelessWidget {
         return checkinSummary!;
       }
       if (checkinCount > 0) {
-        return '$checkinCount ${checkinCount == 1 ? 'check-in' : 'check-ins'}';
+        return '$checkinCount ${checkinCount == 1 ? 'check-in' : 'check-ins'} logged';
       }
       return isToday
-          ? 'Add mood, energy, or a note'
+          ? 'How are you feeling right now?'
           : 'Add a check-in for this day';
-    }();
+    }();    }();
 
     return QuietCard(
       padding: EdgeInsets.zero,

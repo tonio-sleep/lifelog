@@ -83,7 +83,7 @@ class _QuickAddSheet extends StatelessWidget {
     final items = <({QuickAddAction action, IconData icon, String label, Color color})>[
       (action: QuickAddAction.write, icon: Icons.edit_note_rounded, label: 'Journal', color: palette.journal),
       (action: QuickAddAction.vocab, icon: Icons.translate_rounded, label: 'Vocab list', color: palette.tracker),
-      (action: QuickAddAction.checkin, icon: Icons.favorite_border_rounded, label: 'New check-in', color: palette.tracker),
+      (action: QuickAddAction.checkin, icon: Icons.favorite_border_rounded, label: 'Check-in', color: palette.tracker),
       (action: QuickAddAction.activity, icon: Icons.bolt_rounded, label: 'Activity', color: palette.tracker),
       (action: QuickAddAction.media, icon: Icons.photo_library_outlined, label: 'Photos', color: palette.photo),
       (action: QuickAddAction.music, icon: Icons.graphic_eq_rounded, label: 'Music', color: palette.music),
@@ -221,6 +221,28 @@ class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
   int? _energy;
   bool _saving = false;
 
+  static const _prompts = <String>[
+    'What is one small thing going well right now?',
+    'How are you feeling in this moment?',
+    'What is on your mind today?',
+    'What are you grateful for right now?',
+    'What would make the rest of today feel a little better?',
+    'What is something you handled well today?',
+    'What do you need more of today: rest, connection, or focus?',
+    'Write one sentence about your day so far.',
+  ];
+
+  static const _energyLabels = <int, String>{
+    1: 'Very low',
+    2: 'Low',
+    3: 'Okay',
+    4: 'Good',
+    5: 'High',
+  };
+
+  String get _prompt =>
+      _prompts[(widget.day.day + (widget.existing?.createdAt.minute ?? DateTime.now().minute)) % _prompts.length];
+
   @override
   void initState() {
     super.initState();
@@ -253,6 +275,8 @@ class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
     );
   }
 
+  bool get isEditing => widget.existing != null;
+
   Future<void> _save() async {
     setState(() => _saving = true);
     final base = _baseEntry();
@@ -273,7 +297,13 @@ class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
     );
     try {
       await ref.read(archiveProvider.notifier).saveEntry(entry);
-      if (mounted) Navigator.of(context).pop();
+      if (mounted) {
+        final message = isEditing
+            ? 'Check-in updated.'
+            : 'Check-in saved. Thanks for taking a moment for yourself.';
+        showSnack(context, message);
+        Navigator.of(context).pop();
+      }
     } catch (e) {
       if (mounted) showSnack(context, 'Could not save check-in: $e');
     } finally {
@@ -305,17 +335,39 @@ class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
   Widget build(BuildContext context) {
     final palette = context.palette;
     final text = context.text;
-    final isEditing = widget.existing != null;
+    final base = _baseEntry();
+    final hasContent =
+        _mood != null || _energy != null || _highlight.text.trim().isNotEmpty;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         SheetTitle(
-          title: isEditing ? 'Edit check-in' : 'New check-in',
+          title: isEditing ? 'Edit check-in' : 'How are you doing?',
           subtitle:
-              '${relativeDayLabel(widget.day)} · ${formatTime(_baseEntry().createdAt)}',
+              '${relativeDayLabel(widget.day)} · ${formatTime(base.createdAt)}',
         ),
-        Text('Mood (1-10)',
+        QuietCard(
+          padding: const EdgeInsets.all(Insets.md),
+          color: palette.subtle.withValues(alpha: 0.55),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.auto_awesome_outlined,
+                  size: 18, color: palette.tracker),
+              const SizedBox(width: Insets.sm),
+              Expanded(
+                child: Text(
+                  _prompt,
+                  style: text.bodySmall
+                      ?.copyWith(color: palette.mutedText, height: 1.4),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: Insets.md),
+        Text('Mood',
             style: text.labelMedium?.copyWith(color: palette.mutedText)),
         const SizedBox(height: Insets.sm),
         MoodScorePicker(
@@ -323,11 +375,23 @@ class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
           onChanged: (value) => setState(() => _mood = value),
         ),
         const SizedBox(height: Insets.md),
-        Text('Energy',
-            style: text.labelMedium?.copyWith(color: palette.mutedText)),
+        Row(
+          children: [
+            Text('Energy',
+                style: text.labelMedium?.copyWith(color: palette.mutedText)),
+            if (_energy != null) ...[
+              const SizedBox(width: Insets.sm),
+              Text(
+                _energyLabels[_energy!] ?? '',
+                style: text.labelSmall?.copyWith(color: palette.tracker),
+              ),
+            ],
+          ],
+        ),
         const SizedBox(height: Insets.sm),
         Wrap(
           spacing: Insets.sm,
+          runSpacing: Insets.sm,
           children: [
             for (var i = 1; i <= 5; i++)
               ChoiceChip(
@@ -341,30 +405,48 @@ class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
         const SizedBox(height: Insets.md),
         TextField(
           controller: _highlight,
-          minLines: 1,
-          maxLines: 4,
+          minLines: 2,
+          maxLines: 5,
           textCapitalization: TextCapitalization.sentences,
+          onChanged: (_) => setState(() {}),
           decoration: const InputDecoration(
-            labelText: 'Highlight or note',
-            hintText: 'How you feel, what is going on, anything to remember',
-            prefixIcon: Icon(Icons.wb_sunny_outlined, size: 18),
+            labelText: 'A note for this moment',
+            hintText:
+                'A feeling, a highlight, or anything you want to remember',
+            alignLabelWithHint: true,
+            prefixIcon: Padding(
+              padding: EdgeInsets.only(bottom: 40),
+              child: Icon(Icons.edit_note_rounded, size: 20),
+            ),
           ),
         ),
         const SizedBox(height: Insets.sm),
-        QuietCard(
-          padding: const EdgeInsets.all(Insets.md),
-          color: palette.subtle.withValues(alpha: 0.6),
-          child: Text(
-            'You can add multiple check-ins in a day. Each check-in can include mood, energy, and a note. Sleep and steps are tracked separately via Health sync (Settings).',
-            style: text.bodySmall?.copyWith(color: palette.mutedText),
-          ),
+        Text(
+          'You can add multiple check-ins in a day. Sleep and steps are tracked separately from Health.',
+          style: text.bodySmall?.copyWith(color: palette.mutedText),
         ),
+        if (!hasContent) ...[
+          const SizedBox(height: Insets.xs),
+          Text(
+            'Even a quick note counts. Save as little or as much as you want.',
+            style: text.bodySmall?.copyWith(color: palette.dimText),
+          ),
+        ],
         const SizedBox(height: Insets.lg),
         SizedBox(
           width: double.infinity,
-          child: FilledButton(
+          child: FilledButton.icon(
             onPressed: _saving ? null : _save,
-            child: Text(_saving ? 'Saving...' : 'Save check-in'),
+            icon: _saving
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.check_rounded),
+            label: Text(_saving
+                ? 'Saving...'
+                : (isEditing ? 'Save changes' : 'Save check-in')),
           ),
         ),
         if (isEditing) ...[

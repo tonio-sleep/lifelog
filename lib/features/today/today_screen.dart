@@ -230,7 +230,7 @@ class _DayBody extends ConsumerWidget {
             TimelineSource.manual,
           },
           emptyMessage: isToday
-              ? 'Nothing yet. Add a check-in, log an activity, write, or add a photo.'
+              ? 'Nothing here yet. A small check-in, a habit, a photo, or a few words is a great way to start.'
               : 'Nothing was recorded on this day.',
         ),
       ],
@@ -319,7 +319,7 @@ class _DayCheckinsCard extends ConsumerWidget {
           ] else ...[
             const SizedBox(height: Insets.xs),
             Text(
-              'No check-ins yet. Add one to record mood, energy, or a quick note.',
+              'No check-ins yet. A quick check-in can help you notice how your day is going.',
               style: text.bodySmall?.copyWith(color: palette.mutedText),
             ),
           ],

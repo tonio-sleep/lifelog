@@ -50,7 +50,7 @@ func searchArchive(_ archive: Archive, rawQuery: String) -> [SearchHit] {
         let endIndex = clean.index(clean.startIndex, offsetBy: end)
         let prefix = start > 0 ? "…" : ""
         let suffix = end < clean.count ? "…" : ""
-        return prefix + clean[startIndex..<endIndex] + suffix
+        return prefix + String(clean[startIndex..<endIndex]) + suffix
     }
 
     var hits: [SearchHit] = []

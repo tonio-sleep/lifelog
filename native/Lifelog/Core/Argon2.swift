@@ -167,7 +167,14 @@ private func fillBlock(prev: ArgonBlock, ref: ArgonBlock, next: inout ArgonBlock
         blakeRound(&blockR, (0..<16).map { 16 * i + $0 })
     }
     for i in 0..<8 {
-        blakeRound(&blockR, (0..<8).flatMap { [2 * i + 16 * $0, 2 * i + 16 * $0 + 1] })
+        var indices: [Int] = []
+        indices.reserveCapacity(16)
+        for j in 0..<8 {
+            let base = 2 * i + 16 * j
+            indices.append(base)
+            indices.append(base + 1)
+        }
+        blakeRound(&blockR, indices)
     }
     for i in 0..<128 { next.v[i] = temp.v[i] ^ blockR.v[i] }
 }

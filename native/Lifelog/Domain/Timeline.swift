@@ -90,8 +90,9 @@ func buildTimelineForDay(_ archive: Archive, _ day: Date, includeHidden: Bool = 
     return items.sorted {
         if $0.at != $1.at { return $0.at < $1.at }
         let all = TimelineSource.allCases
-        let sourceOrder = all.firstIndex(of: $0.source)!.compare(all.firstIndex(of: $1.source)!)
-        if sourceOrder != .orderedSame { return sourceOrder == .orderedAscending }
+        let left = all.firstIndex(of: $0.source) ?? all.count
+        let right = all.firstIndex(of: $1.source) ?? all.count
+        if left != right { return left < right }
         return $0.id < $1.id
     }
 }

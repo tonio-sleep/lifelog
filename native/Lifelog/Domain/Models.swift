@@ -396,8 +396,8 @@ struct MusicScrobble: Identifiable, Codable {
     }
 
     static func manual(artist: String, title: String, album: String = "", playedAt: Date? = nil) -> MusicScrobble {
-        MusicScrobble(artist: artist, title: title, album: album,
-                      playedAt: playedAt ?? Date(), source: "manual")
+        MusicScrobble(artist: artist, title: title,
+                      playedAt: playedAt ?? Date(), album: album, source: "manual")
     }
 
     var dedupeKey: String {

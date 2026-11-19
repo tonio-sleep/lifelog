@@ -31,7 +31,6 @@ enum DateCodec {
         var nanosecond = 0
         if index < chars.count, chars[index] == "." {
             index += 1
-            let start = index
             var fraction = ""
             while index < chars.count, chars[index].isNumber, fraction.count < 6 {
                 fraction.append(chars[index])

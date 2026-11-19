@@ -175,8 +175,10 @@ struct Archive: Codable {
             return 2
         }
         return candidates.sorted {
-            let r = rank($0).compare(rank($1))
-            return r == .orderedAscending ? true : (r == .orderedSame && $0.updatedAt > $1.updatedAt)
+            let left = rank($0)
+            let right = rank($1)
+            if left != right { return left < right }
+            return $0.updatedAt > $1.updatedAt
         }.first
     }
 
@@ -196,9 +198,8 @@ struct Archive: Codable {
 
     var activeTrackers: [TrackerDefinition] {
         trackers.filter { $0.active && !$0.archived }.sorted {
-            let order = $0.sortOrder.compare($1.sortOrder)
-            return order == .orderedAscending ||
-                (order == .orderedSame && $0.createdAt < $1.createdAt)
+            if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
+            return $0.createdAt < $1.createdAt
         }
     }
 

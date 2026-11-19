@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -12,6 +12,7 @@ import '../../app/widgets/components.dart';
 import '../../core/util/dates.dart';
 import '../../domain/models/settings.dart';
 import '../../integrations/cloudflare/cloudflare_sync_service.dart';
+import '../../integrations/cloudflare/sync_status.dart';
 
 bool _isSessionExpired(CloudflareSyncException e) {
   final m = e.message.toLowerCase();
@@ -22,9 +23,10 @@ bool _isSessionExpired(CloudflareSyncException e) {
 
 Future<void> _handleAuthFailure(BuildContext context, WidgetRef ref) async {
   if (!context.mounted) return;
-  await ref.read(settingsProvider.notifier).disconnectCloudflareSync();
-  if (!context.mounted) return;
-  showSnack(context, 'Your session expired. Please sign in again.');
+  // Keep the account, Worker URL and last-sync time. Only the token is no
+  // longer accepted. Local data is untouched.
+  ref.read(syncSessionRejectedProvider.notifier).reject();
+  showSnack(context, 'Your sync session ended. Sign in again to continue.');
   await connectCloudflareSync(context, ref, initialCreateAccount: false);
 }
 
@@ -78,7 +80,7 @@ Future<void> connectCloudflareSync(
         username: username,
         password: password,
       );
-    },
+    }(),
     errorPrefix: result.createAccount
         ? 'Could not create account'
         : 'Could not sign in',
@@ -190,9 +192,10 @@ Future<void> backupToCloudflare(BuildContext context, WidgetRef ref) async {
   final services = ref.read(appServicesProvider);
   final data = await guard<Uint8List>(
     context,
-    services.backup.exportBytes(
-      ref.read(archiveProvider),
+    services.backup.createBackup(
+      archive: ref.read(archiveProvider),
       passphrase: passphrase,
+      mediaStore: services.mediaStore,
     ),
     errorPrefix: 'Could not create encrypted backup',
   );
@@ -314,16 +317,19 @@ Future<void> restoreFromCloudflare(BuildContext context, WidgetRef ref) async {
     return;
   }
 
-  final archive = await guard(
+  final contents = await guard(
     context,
-    services.backup.importBytes(bytes!, passphrase: passphrase),
+    services.backup.readBackup(bytes: bytes, passphrase: passphrase),
     errorPrefix: 'Could not restore backup',
   );
-  if (archive == null || !context.mounted) return;
+  if (contents == null || !context.mounted) return;
 
   await guard(
     context,
-    ref.read(archiveProvider.notifier).replaceAll(archive),
+    ref.read(archiveProvider.notifier).restoreArchive(
+          contents.archive,
+          mediaFiles: contents.mediaFiles,
+        ),
     errorPrefix: 'Could not save restored data',
   );
   if (context.mounted) {
@@ -498,7 +504,6 @@ class _CloudflareConnectSheetState extends State<_CloudflareConnectSheet> {
         ),
         if (widget.alreadySignedIn && widget.signedInAs != null) ...[
           QuietCard(
-            glass: true,
             padding: const EdgeInsets.all(Insets.md),
             child: Row(
               children: [
@@ -526,7 +531,6 @@ class _CloudflareConnectSheetState extends State<_CloudflareConnectSheet> {
         ),
         const SizedBox(height: Insets.md),
         QuietCard(
-          glass: true,
           padding: const EdgeInsets.all(Insets.md),
           child: Column(
             children: [

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -14,6 +15,7 @@ import '../../domain/models/places.dart';
 import '../photos/photo_widgets.dart';
 import '../places/place_dialogs.dart';
 import '../today/quick_add.dart';
+import 'voice_note_sheet.dart';
 
 enum _SaveState { idle, unsaved, saving, saved, error }
 
@@ -334,6 +336,62 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
     });
   }
 
+  Future<void> _addVoiceNote() async {
+    final result = await showVoiceNoteSheet(context);
+    if (result == null || !mounted) return;
+    setState(() => _importing = true);
+    try {
+      if (!await _ensureSaved()) return;
+      final bytes = await File(result.audioPath).readAsBytes();
+      if (!mounted) return;
+      await ref.read(archiveProvider.notifier).importMedia(
+            bytes: Uint8List.fromList(bytes),
+            fileName: result.fileName,
+            mimeType: result.mimeType,
+            caption: 'Voice note',
+            tags: const ['voice-note', 'transcript'],
+            journalEntryId: _id,
+            createdAt: _createdAt,
+          );
+
+      final transcript = result.transcript.trim();
+      if (transcript.isNotEmpty) {
+        final current = _body.text;
+        final needsSpace = current.isNotEmpty && !current.endsWith('\n');
+        final addition = needsSpace ? '\n\n$transcript' : transcript;
+        final selection = _body.selection;
+        if (selection.isValid && selection.start >= 0 && selection.end >= 0) {
+          final start = selection.start.clamp(0, current.length);
+          final end = selection.end.clamp(0, current.length);
+          final updated = current.replaceRange(start, end, addition);
+          _body.value = TextEditingValue(
+            text: updated,
+            selection: TextSelection.collapsed(offset: start + addition.length),
+          );
+        } else {
+          _body.text = '$current$addition';
+          _body.selection = TextSelection.collapsed(offset: _body.text.length);
+        }
+      }
+
+      if (!mounted) return;
+      showSnack(
+        context,
+        transcript.isEmpty
+            ? 'Voice note audio saved to this entry.'
+            : 'Voice note saved with transcript.',
+      );
+    } catch (error) {
+      if (mounted) showSnack(context, 'Could not save voice note: $error');
+    } finally {
+      try {
+        final f = File(result.audioPath);
+        if (await f.exists()) await f.delete();
+      } catch (_) {}
+      if (mounted) setState(() => _importing = false);
+    }
+  }
+
   Future<void> _attachFiles() async {
     setState(() => _importing = true);
     try {
@@ -431,6 +489,90 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
       }
       _state = _SaveState.unsaved;
     });
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () {
+      unawaited(_saveDraft());
+    });
+  }
+
+  Future<void> _editFeeling() async {
+    var mood = _mood;
+    var energy = _energy;
+    final noteController = TextEditingController(text: _highlight);
+    await showLifelogSheet<void>(
+      context,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SheetTitle(
+              title: 'How are you feeling?',
+              subtitle: 'Set mood and a note for this entry (optional).',
+            ),
+            Text(
+              'Mood (1-10)',
+              style: sheetContext.text.labelMedium
+                  ?.copyWith(color: sheetContext.palette.mutedText),
+            ),
+            const SizedBox(height: Insets.sm),
+            MoodScorePicker(
+              value: mood,
+              onChanged: (value) => setSheetState(() => mood = value),
+            ),
+            const SizedBox(height: Insets.md),
+            Text(
+              'Energy',
+              style: sheetContext.text.labelMedium
+                  ?.copyWith(color: sheetContext.palette.mutedText),
+            ),
+            const SizedBox(height: Insets.sm),
+            Wrap(
+              spacing: Insets.sm,
+              children: [
+                for (var i = 1; i <= 5; i++)
+                  ChoiceChip(
+                    label: Text('$i'),
+                    selected: energy == i,
+                    onSelected: (_) =>
+                        setSheetState(() => energy = energy == i ? null : i),
+                  ),
+              ],
+            ),
+            const SizedBox(height: Insets.md),
+            TextField(
+              controller: noteController,
+              minLines: 1,
+              maxLines: 3,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(
+                labelText: 'Feeling note (optional)',
+                hintText: 'What is on your mind right now?',
+              ),
+            ),
+            const SizedBox(height: Insets.lg),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () => Navigator.of(sheetContext).pop(),
+                child: const Text('Done'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) {
+      noteController.dispose();
+      return;
+    }
+    setState(() {
+      _mood = mood;
+      _energy = energy;
+      _highlight = noteController.text.trim();
+      _state = _SaveState.unsaved;
+    });
+    Future<void>.delayed(const Duration(milliseconds: 400), noteController.dispose);
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 300), () {
       unawaited(_saveDraft());
@@ -778,7 +920,7 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                           child: Text(
                             _kind == JournalEntryKind.vocab
                                 ? 'Use this vocab entry for words, phrases, and meanings. You can add more entries to the same day to keep notes and vocab together.'
-                                : 'You can add multiple entries to the same day (notes, journal, vocab). Daily details like mood, energy, sleep, steps, and meals are in your Daily check-in on Today.',
+                                : 'Add entries to the same day, set how you feel for this entry, or use the mic to record a voice note with transcription. Sleep and steps sync separately from Health.',
                             style: text.bodySmall
                                 ?.copyWith(color: palette.mutedText),
                           ),
@@ -879,6 +1021,11 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                             color: palette.photo),
                   ),
                   IconButton(
+                    tooltip: 'Voice note (record & transcribe)',
+                    onPressed: _importing ? null : _addVoiceNote,
+                    icon: Icon(Icons.mic_none_rounded, color: palette.journal),
+                  ),
+                  IconButton(
                     tooltip: _placeLabel ?? 'Add a place',
                     onPressed: _pickPlace,
                     icon: Icon(
@@ -887,6 +1034,18 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                           : Icons.place_rounded,
                       color: palette.place,
                     ),
+                  ),
+                  IconButton(
+                    tooltip: _mood == null
+                        ? 'How you feel'
+                        : 'Feeling: ${MoodScore.label(_mood!)}',
+                    onPressed: _editFeeling,
+                    icon: _mood == null
+                        ? Icon(Icons.mood_outlined, color: palette.tracker)
+                        : Icon(
+                            Icons.mood_rounded,
+                            color: moodColor(_mood!, context.scheme),
+                          ),
                   ),
                   IconButton(
                     tooltip: 'Tags',

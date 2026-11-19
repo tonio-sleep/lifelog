@@ -210,7 +210,8 @@ class SettingsScreen extends ConsumerWidget {
         ),
         ListGroup(
           title: 'Permissions',
-          footer: 'Location is used when you save places or visits. You can set access to Always in device Settings. '
+          footer:
+              'Location can be used to save places/visits and, if you turn on day tracking in Places, to estimate where you spend time while the app is in use. '
               'Health access is read-only and lets Lifelog sync sleep and steps automatically. '
               'Screen Time/app usage is not available to regular iPhone apps without special Apple Family Controls entitlement and approval.',
           children: [
@@ -218,7 +219,8 @@ class SettingsScreen extends ConsumerWidget {
               icon: Icons.location_on_outlined,
               iconColor: palette.place,
               title: 'Location access',
-              subtitle: 'Allow Always location for saving places and visits',
+              subtitle:
+                  'Allow location access for places and day tracking (Always optional)',
               chevron: true,
               onTap: () => _requestLocationPermission(context),
             ),
@@ -244,13 +246,14 @@ class SettingsScreen extends ConsumerWidget {
         if (services.healthSteps.isSupported)
           ListGroup(
             title: 'Health sync',
-            footer: 'Sleep and steps are read from Health and saved to your daily check-in. Read-only; nothing is written to Health.',
+            footer:
+                'Sleep and steps are read from Health and saved as day health metrics (separate from check-ins). Read-only; nothing is written to Health. On iPhone, Health does not reveal read permission status.',
             children: [
               ListRow(
                 icon: Icons.sync_rounded,
                 iconColor: palette.place,
                 title: 'Sync today from Health',
-                subtitle: 'Update today\'s sleep and steps automatically',
+                subtitle: 'Update today\'s sleep and steps from Health',
                 chevron: true,
                 onTap: () => _syncTodayFromHealth(context, ref),
               ),
@@ -554,46 +557,57 @@ class SettingsScreen extends ConsumerWidget {
   }
 
   void _showScreenTimeInfo(BuildContext context) {
+    final isAndroid = Theme.of(context).platform == TargetPlatform.android;
     showLifelogSheet<void>(
       context,
       builder: (sheetContext) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          const SheetTitle(
-            title: 'Screen Time (advanced)',
-            subtitle: 'Why app usage data is restricted on iPhone',
+          SheetTitle(
+            title: 'Screen Time and app usage (advanced)',
+            subtitle: isAndroid
+                ? 'How Android app usage access works'
+                : 'How iPhone Screen Time access works',
           ),
           const _PrivacyPoint(
             icon: Icons.phone_iphone_rounded,
-            title: 'What Screen Time data includes',
-            body: 'Screen Time and app usage can include device pickups, app/category usage time, notifications, and related activity. On iPhone this data is protected by Apple.',
+            title: 'iPhone (Screen Time API)',
+            body:
+                'Reading Screen Time/app usage on iOS requires Apple Screen Time APIs (Family Controls, DeviceActivity, ManagedSettings). The app needs the Family Controls capability/entitlement (com.apple.developer.family-controls), Apple approval for distribution, and explicit user authorization on device. Implementations often require Screen Time extension targets (report/monitor/shield) and must follow strict Apple use-case and privacy rules. A regular journaling app cannot access Screen Time stats like Health steps without this approved setup.',
           ),
           const _PrivacyPoint(
-            icon: Icons.extension_outlined,
-            title: 'Apple frameworks involved',
-            body: 'Access is provided through Family Controls, ManagedSettings, and DeviceActivity (Screen Time API). These are designed for approved use cases such as parental controls and certain wellbeing/focus experiences, not general-purpose data export.',
+            icon: Icons.android_rounded,
+            title: 'Android (Usage Access)',
+            body:
+                'On Android, app usage/screen time can be read via UsageStatsManager with the special PACKAGE_USAGE_STATS permission. This cannot be granted by a normal runtime prompt: the user must enable Usage access for the app in system Settings. Once granted, apps can query aggregated usage (such as daily foreground time per app) locally. This build declares the permission; a full in-app usage stats integration may vary by device/build.',
           ),
           const _PrivacyPoint(
             icon: Icons.verified_user_outlined,
-            title: 'Entitlement and approval required',
-            body: 'Apps must request the Family Controls entitlement (com.apple.developer.family-controls) and receive Apple approval before distributing Screen Time features. Users must also explicitly grant Family Controls authorization on device.',
-          ),
-          const _PrivacyPoint(
-            icon: Icons.build_circle_outlined,
-            title: 'Implementation constraints',
-            body: 'Even with approval, integrations typically require additional capabilities/configuration (for example Device Activity report/monitor extensions and app groups) and must follow Apple privacy and use-case requirements. A regular journaling app cannot read Screen Time stats the way it can read Health steps.',
-          ),
-          const _PrivacyPoint(
-            icon: Icons.block_outlined,
             title: 'Current status in Lifelog',
-            body: 'This build does not have Apple Family Controls entitlement or approval, so it cannot retrieve Screen Time or per-app usage data automatically.',
+            body:
+                'Automatic Screen Time/app usage import is not enabled in this build. iPhone access requires Apple Family Controls entitlement and approval that this app does not currently have.',
           ),
           const _PrivacyPoint(
             icon: Icons.lightbulb_outline_rounded,
             title: 'What you can do now',
-            body: 'View your usage in iPhone Settings > Screen Time. If helpful, you can manually record a daily note or tracker entry in Lifelog based on what you see there.',
+            body:
+                'iPhone: view usage in Settings > Screen Time. Android: view Digital Wellbeing or enable/check Usage access in system settings. You can manually record a daily note or tracker in Lifelog. To ship true iPhone Screen Time features, request Family Controls entitlement/approval from Apple and implement the required Screen Time authorization and extensions.',
           ),
+          if (isAndroid) ...[
+            const SizedBox(height: Insets.sm),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () async {
+                  Navigator.of(sheetContext).pop();
+                  await Geolocator.openAppSettings();
+                },
+                icon: const Icon(Icons.settings_outlined, size: 18),
+                label: const Text('Open app settings'),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -602,7 +616,10 @@ class SettingsScreen extends ConsumerWidget {
   Future<void> _syncTodayFromHealth(BuildContext context, WidgetRef ref) async {
     final services = ref.read(appServicesProvider);
     if (!services.healthSteps.isSupported) {
-      showSnack(context, 'Health sync is available on supported devices with Health access.');
+      showSnack(
+        context,
+        'Health sync is available on supported devices (Apple Health / Health Connect).',
+      );
       return;
     }
     final granted = await guard<bool>(
@@ -611,8 +628,10 @@ class SettingsScreen extends ConsumerWidget {
       errorPrefix: 'Could not access Health data',
     );
     final hasPermission = await services.healthSteps.hasPermission();
-    if ((granted != true && hasPermission != true) || !context.mounted) {
-      if (context.mounted) showSnack(context, 'Health access was not granted.');
+    if (granted != true && hasPermission != true) {
+      if (context.mounted) {
+        await _showHealthAccessHelp(context);
+      }
       return;
     }
     final today = DateTime.now();
@@ -623,23 +642,30 @@ class SettingsScreen extends ConsumerWidget {
     );
     if (!context.mounted || summary == null) return;
     if (summary.steps == null && summary.sleepHours == null) {
-      showSnack(context, 'No sleep or step data found in Health for today.');
+      showSnack(
+        context,
+        'No sleep or step data found in Health for today. If access is enabled, make sure data exists in Health.',
+      );
       return;
     }
     final archive = ref.read(archiveProvider);
-    final existing = archive.dailyEntryFor(today);
+    final metricsId = 'day-${dayKey(today)}';
+    final existing =
+        archive.entryById(metricsId) ?? archive.dayMetricsEntryFor(today);
     final base = existing ??
         JournalEntry(
-          id: 'day-${dayKey(today)}',
+          id: metricsId,
           createdAt: momentForDay(today),
           updatedAt: DateTime.now(),
           title: '',
           body: '',
-          draft: true,
+          draft: false,
         );
     var next = base.copyWith(updatedAt: DateTime.now());
     if (summary.steps != null) next = next.copyWith(steps: summary.steps);
-    if (summary.sleepHours != null) next = next.copyWith(sleepHours: summary.sleepHours);
+    if (summary.sleepHours != null) {
+      next = next.copyWith(sleepHours: summary.sleepHours);
+    }
     await guard(
       context,
       ref.read(archiveProvider.notifier).saveEntry(next),
@@ -649,10 +675,15 @@ class SettingsScreen extends ConsumerWidget {
     final parts = <String>[];
     if (summary.sleepHours != null) {
       final v = summary.sleepHours!;
-      parts.add('sleep ${v == v.roundToDouble() ? v.toInt().toString() : v.toStringAsFixed(1)} hr');
+      parts.add(
+        'sleep ${v == v.roundToDouble() ? v.toInt().toString() : v.toStringAsFixed(1)} hr',
+      );
+      if (summary.sleepSampleCount > 0) {
+        parts.add('${summary.sleepSampleCount} sleep samples merged');
+      }
     }
     if (summary.steps != null) parts.add('${summary.steps} steps');
-    showSnack(context, 'Synced ${parts.join(' and ')} for today.');
+    showSnack(context, 'Synced ${parts.join(' · ')} for today (Health).');
   }
 
   Future<void> _editReminder(
@@ -909,9 +940,11 @@ class SettingsScreen extends ConsumerWidget {
                 'Your main archive stays encrypted in app storage.',
           ),
           const _PrivacyPoint(
-            icon: Icons.gps_off_outlined,
+            icon: Icons.my_location_outlined,
             title: 'Location & permissions',
-            body: 'Location is only read when you choose to use it (for example, saving a place). '
+            body:
+                'Location is used when you save places/visits and, if you enable day tracking in Places, to record where you spend time while the app is in use. '
+                'Location samples stay in your encrypted local archive. '
                 'Screen Time/usage data is not accessible on iPhone without special Apple entitlements.',
           ),
           const _PrivacyPoint(
@@ -990,7 +1023,7 @@ class _LimitationsSheet extends StatelessWidget {
           'Screen Time/app usage data cannot be read by this app on iPhone without Apple Family Controls entitlement and approval (Family Controls, ManagedSettings, DeviceActivity). This is not currently available in this build.',
           'Automatic steps require Health access on supported devices. Other step sources are not imported automatically.',
           'Encrypted backups can include media and may become large depending on your library. Keep an extra local backup copy for recovery.',
-          'No background location tracking or automatic visit detection. Location is only used when you choose to save a place or visit.',
+          'Day location tracking is optional and, when enabled, records location while the app is in use to estimate visits and time spent. Continuous tracking when the app is closed is not guaranteed without additional platform background-location setup. You can also save places and log visits manually.',
           'Last.fm import is optional and read-only; syncing may require an API key depending on Last.fm.',
           'The PIN is an app-level privacy screen, not a key-derivation step. A forgotten backup passphrase cannot be recovered.',
         ])

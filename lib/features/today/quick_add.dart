@@ -83,7 +83,7 @@ class _QuickAddSheet extends StatelessWidget {
     final items = <({QuickAddAction action, IconData icon, String label, Color color})>[
       (action: QuickAddAction.write, icon: Icons.edit_note_rounded, label: 'Journal', color: palette.journal),
       (action: QuickAddAction.vocab, icon: Icons.translate_rounded, label: 'Vocab list', color: palette.tracker),
-      (action: QuickAddAction.checkin, icon: Icons.favorite_border_rounded, label: 'Daily check-in', color: palette.tracker),
+      (action: QuickAddAction.checkin, icon: Icons.favorite_border_rounded, label: 'New check-in', color: palette.tracker),
       (action: QuickAddAction.activity, icon: Icons.bolt_rounded, label: 'Activity', color: palette.tracker),
       (action: QuickAddAction.media, icon: Icons.photo_library_outlined, label: 'Photos', color: palette.photo),
       (action: QuickAddAction.music, icon: Icons.graphic_eq_rounded, label: 'Music', color: palette.music),
@@ -197,26 +197,25 @@ Future<void> pickAndLogHabit(
 Future<void> showDailyCheckinSheet(
   BuildContext context,
   WidgetRef ref,
-  DateTime day,
-) async {
+  DateTime day, {
+  JournalEntry? existing,
+}) async {
   await showLifelogSheet<void>(
     context,
-    builder: (_) => _DailyCheckinSheet(day: day),
+    builder: (_) => _DailyCheckinSheet(day: day, existing: existing),
   );
 }
 
 class _DailyCheckinSheet extends ConsumerStatefulWidget {
-  const _DailyCheckinSheet({required this.day});
+  const _DailyCheckinSheet({required this.day, this.existing});
   final DateTime day;
+  final JournalEntry? existing;
 
   @override
   ConsumerState<_DailyCheckinSheet> createState() => _DailyCheckinSheetState();
 }
 
 class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
-  late final TextEditingController _sleep;
-  late final TextEditingController _steps;
-  late final TextEditingController _meals;
   late final TextEditingController _highlight;
   int? _mood;
   int? _energy;
@@ -225,197 +224,52 @@ class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
   @override
   void initState() {
     super.initState();
-    final entry = ref.read(archiveProvider).dailyEntryFor(widget.day);
-    _sleep = TextEditingController(
-      text: entry?.sleepHours == null ? '' : _fmtNum(entry!.sleepHours!),
-    );
-    _steps = TextEditingController(text: entry?.steps?.toString() ?? '');
-    _meals = TextEditingController(text: entry?.meals ?? '');
+    final entry = widget.existing;
     _highlight = TextEditingController(text: entry?.highlight ?? '');
     _mood = entry?.mood;
     _energy = entry?.energy;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _healthAutoLoaded) return;
-      _healthAutoLoaded = true;
-      final services = ref.read(appServicesProvider);
-      if (services.healthSteps.isSupported) {
-        _importFromHealth();
-      }
-    });
   }
 
   @override
   void dispose() {
-    _sleep.dispose();
-    _steps.dispose();
-    _meals.dispose();
     _highlight.dispose();
     super.dispose();
   }
 
-  String _fmtNum(double v) {
-    if (v == v.roundToDouble()) return v.toInt().toString();
-    return v.toStringAsFixed(v * 10 % 10 == 0 ? 1 : 2);
-  }
-
   JournalEntry _baseEntry() {
-    final archive = ref.read(archiveProvider);
-    final existing = archive.dailyEntryFor(widget.day);
-    return existing ??
-        JournalEntry(
-          id: 'day-${dayKey(widget.day)}',
-          createdAt: momentForDay(widget.day),
-          updatedAt: DateTime.now(),
-          title: '',
-          body: '',
-          draft: true,
-        );
-  }
-
-  bool _loadingHealth = false;
-  bool _healthAutoLoaded = false;
-  bool _healthEditable = false;
-  String? _healthMessage;
-  bool _stepsFromHealth = false;
-  bool _sleepFromHealth = false;
-
-  Future<void> _importFromHealth({bool interactive = false}) async {
-    final services = ref.read(appServicesProvider);
-    if (!services.healthSteps.isSupported) {
-      if (interactive && mounted) {
-        showSnack(context, 'Health data is available on supported devices with Health access enabled.');
-      }
-      return;
-    }
-    setState(() {
-      _loadingHealth = true;
-      _healthMessage = null;
-    });
-    try {
-      final granted = await services.healthSteps.requestPermission();
-      if (!mounted) return;
-      if (!granted) {
-        setState(() {
-          _healthMessage = interactive
-              ? 'Health access was not granted.'
-              : 'Allow Health access to auto-fill sleep and steps.';
-        });
-        if (interactive) showSnack(context, 'Health access was not granted.');
-        return;
-      }
-      final summary = await services.healthSteps.getDailySummary(widget.day);
-      if (!mounted) return;
-      var updated = false;
-      setState(() {
-        if (summary.steps != null) {
-          _steps.text = summary.steps.toString();
-          _stepsFromHealth = true;
-          updated = true;
-        }
-        if (summary.sleepHours != null) {
-          _sleep.text = _fmtNum(summary.sleepHours!);
-          _sleepFromHealth = true;
-          updated = true;
-        }
-        _healthMessage = updated
-            ? 'Sleep and steps synced from Health.'
-            : 'No Health sleep or step data found for this day.';
-      });
-      if (interactive) {
-        showSnack(
-          context,
-          updated
-              ? 'Synced sleep and steps from Health.'
-              : 'No Health sleep or step data found for this day.',
-        );
-      }
-    } catch (error) {
-      if (!mounted) return;
-      setState(() => _healthMessage = 'Could not read Health data.');
-      if (interactive) showSnack(context, 'Could not read Health data: $error');
-    } finally {
-      if (mounted) setState(() => _loadingHealth = false);
-    }
-  }
-
-  List<String> _mealLines() {
-    return _meals.text
-        .split('\n')
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
-  }
-
-  Future<void> _addMeal() async {
-    final controller = TextEditingController();
-    final added = await showLifelogSheet<String>(
-      context,
-      builder: (ctx) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SheetTitle(
-            title: 'Add food or drink',
-            subtitle: 'Log it as you go through the day',
-          ),
-          TextField(
-            controller: controller,
-            autofocus: true,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: const InputDecoration(
-              hintText: 'e.g. Breakfast: oats and coffee',
-              labelText: 'Meal or item',
-            ),
-            onSubmitted: (value) => Navigator.of(ctx).pop(value),
-          ),
-          const SizedBox(height: Insets.lg),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(controller.text),
-              child: const Text('Add'),
-            ),
-          ),
-        ],
-      ),
+    final existing = widget.existing;
+    if (existing != null) return existing;
+    final now = DateTime.now();
+    final createdAt = sameDay(widget.day, now)
+        ? now
+        : DateTime(widget.day.year, widget.day.month, widget.day.day, 12);
+    return JournalEntry(
+      id: 'checkin-${now.microsecondsSinceEpoch}',
+      createdAt: createdAt,
+      updatedAt: now,
+      title: '',
+      body: '',
+      draft: false,
     );
-    Future<void>.delayed(const Duration(milliseconds: 400), controller.dispose);
-    final text = added?.trim() ?? '';
-    if (text.isEmpty || !mounted) return;
-    final now = TimeOfDay.fromDateTime(DateTime.now());
-    final timeLabel =
-        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
-    final line = '$timeLabel  $text';
-    final lines = _mealLines()..add(line);
-    setState(() => _meals.text = lines.join('\n'));
   }
 
   Future<void> _save() async {
     setState(() => _saving = true);
-    // Refresh from Health if supported so saved values stay current.
-    if (ref.read(appServicesProvider).healthSteps.isSupported) {
-      try {
-        final summary =
-            await ref.read(appServicesProvider).healthSteps.getDailySummary(widget.day);
-        if (summary.steps != null) _steps.text = summary.steps.toString();
-        if (summary.sleepHours != null) _sleep.text = _fmtNum(summary.sleepHours!);
-      } catch (_) {}
-    }
-    final steps = int.tryParse(_steps.text.trim());
-    final sleep = double.tryParse(_sleep.text.trim().replaceAll(',', '.'));
     final base = _baseEntry();
     final entry = base.copyWith(
       mood: _mood,
       clearMood: _mood == null,
       energy: _energy,
       clearEnergy: _energy == null,
-      sleepHours: sleep,
-      clearSleepHours: _sleep.text.trim().isEmpty,
-      steps: steps,
-      clearSteps: _steps.text.trim().isEmpty,
-      meals: _meals.text.trim(),
       highlight: _highlight.text.trim(),
+      // Sleep/steps/meals are tracked outside daily check-ins.
+      clearSleepHours: true,
+      sleepHours: null,
+      clearSteps: true,
+      steps: null,
+      meals: '',
       updatedAt: DateTime.now(),
+      draft: false,
     );
     try {
       await ref.read(archiveProvider.notifier).saveEntry(entry);
@@ -427,26 +281,50 @@ class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
     }
   }
 
+  Future<void> _delete() async {
+    final existing = widget.existing;
+    if (existing == null) return;
+    final ok = await confirm(
+      context,
+      title: 'Delete this check-in?',
+      message: 'This check-in will be removed from this day.',
+    );
+    if (!ok || !mounted) return;
+    setState(() => _saving = true);
+    try {
+      await ref.read(archiveProvider.notifier).deleteEntry(existing.id);
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) showSnack(context, 'Could not delete check-in: $e');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
     final text = context.text;
+    final isEditing = widget.existing != null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         SheetTitle(
-          title: 'Daily check-in',
-          subtitle: relativeDayLabel(widget.day),
+          title: isEditing ? 'Edit check-in' : 'New check-in',
+          subtitle:
+              '${relativeDayLabel(widget.day)} · ${formatTime(_baseEntry().createdAt)}',
         ),
-        Text('Mood (1-10)', style: text.labelMedium?.copyWith(color: palette.mutedText)),
+        Text('Mood (1-10)',
+            style: text.labelMedium?.copyWith(color: palette.mutedText)),
         const SizedBox(height: Insets.sm),
         MoodScorePicker(
           value: _mood,
           onChanged: (value) => setState(() => _mood = value),
         ),
         const SizedBox(height: Insets.md),
-        Text('Energy', style: text.labelMedium?.copyWith(color: palette.mutedText)),
+        Text('Energy',
+            style: text.labelMedium?.copyWith(color: palette.mutedText)),
         const SizedBox(height: Insets.sm),
         Wrap(
           spacing: Insets.sm,
@@ -455,133 +333,30 @@ class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
               ChoiceChip(
                 label: Text('$i'),
                 selected: _energy == i,
-                onSelected: (_) => setState(() => _energy = _energy == i ? null : i),
+                onSelected: (_) =>
+                    setState(() => _energy = _energy == i ? null : i),
               ),
           ],
         ),
-        const SizedBox(height: Insets.md),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                'Sleep & steps',
-                style: text.labelMedium?.copyWith(color: palette.mutedText),
-              ),
-            ),
-            if (_loadingHealth)
-              const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            else
-              TextButton.icon(
-                onPressed: () => _importFromHealth(interactive: true),
-                icon: const Icon(Icons.sync_rounded, size: 16),
-                label: const Text('Sync from Health'),
-              ),
-          ],
-        ),
-        const SizedBox(height: Insets.xs),
-        QuietCard(
-          padding: const EdgeInsets.all(Insets.md),
-          color: palette.subtle.withValues(alpha: 0.6),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: _MetricTile(
-                      icon: Icons.bedtime_outlined,
-                      label: 'Sleep',
-                      value: _sleep.text.trim().isEmpty
-                          ? 'Not available'
-                          : '${_sleep.text.trim()} hr',
-                    ),
-                  ),
-                  const SizedBox(width: Insets.md),
-                  Expanded(
-                    child: _MetricTile(
-                      icon: Icons.directions_walk_rounded,
-                      label: 'Steps',
-                      value: _steps.text.trim().isEmpty
-                          ? 'Not available'
-                          : _steps.text.trim(),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: Insets.xs),
-              Text(
-                _healthMessage ??
-                    (ref.read(appServicesProvider).healthSteps.isSupported
-                        ? 'Sleep and steps are automatically synced from Health when available.'
-                        : 'Automatic Health sync is available on supported devices.'),
-                style: text.bodySmall?.copyWith(color: palette.mutedText),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: Insets.md),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                'What I ate',
-                style: text.labelMedium?.copyWith(color: palette.mutedText),
-              ),
-            ),
-            TextButton.icon(
-              onPressed: _addMeal,
-              icon: const Icon(Icons.add_rounded, size: 16),
-              label: const Text('Add'),
-            ),
-          ],
-        ),
-        const SizedBox(height: Insets.xs),
-        if (_meals.text.trim().isEmpty)
-          QuietCard(
-            padding: const EdgeInsets.all(Insets.md),
-            color: palette.subtle.withValues(alpha: 0.6),
-            child: Text(
-              'No meals added yet. Add items as you go through the day.',
-              style: text.bodySmall?.copyWith(color: palette.mutedText),
-            ),
-          )
-        else
-          QuietCard(
-            padding: const EdgeInsets.all(Insets.md),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                for (final line in _mealLines()) ...[
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(Icons.restaurant_outlined,
-                            size: 16, color: palette.mutedText),
-                        const SizedBox(width: Insets.sm),
-                        Expanded(child: Text(line, style: text.bodyMedium)),
-                      ],
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
         const SizedBox(height: Insets.md),
         TextField(
           controller: _highlight,
           minLines: 1,
-          maxLines: 3,
+          maxLines: 4,
           textCapitalization: TextCapitalization.sentences,
           decoration: const InputDecoration(
             labelText: 'Highlight or note',
-            hintText: 'Best part, plans, or anything to remember',
+            hintText: 'How you feel, what is going on, anything to remember',
             prefixIcon: Icon(Icons.wb_sunny_outlined, size: 18),
+          ),
+        ),
+        const SizedBox(height: Insets.sm),
+        QuietCard(
+          padding: const EdgeInsets.all(Insets.md),
+          color: palette.subtle.withValues(alpha: 0.6),
+          child: Text(
+            'You can add multiple check-ins in a day. Each check-in can include mood, energy, and a note. Sleep and steps are tracked separately via Health sync (Settings).',
+            style: text.bodySmall?.copyWith(color: palette.mutedText),
           ),
         ),
         const SizedBox(height: Insets.lg),
@@ -592,6 +367,16 @@ class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
             child: Text(_saving ? 'Saving...' : 'Save check-in'),
           ),
         ),
+        if (isEditing) ...[
+          const SizedBox(height: Insets.sm),
+          SizedBox(
+            width: double.infinity,
+            child: TextButton(
+              onPressed: _saving ? null : _delete,
+              child: const Text('Delete check-in'),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -911,3 +696,5 @@ class _MetricTile extends StatelessWidget {
     );
   }
 }
+
+

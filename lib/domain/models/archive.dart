@@ -19,6 +19,7 @@ class Archive {
     List<Place>? places,
     List<Visit>? visits,
     List<MusicScrobble>? scrobbles,
+    List<LocationSample>? locationSamples,
   }) : entries = entries ?? [],
        media = media ?? [],
        trackers = trackers ?? [],
@@ -26,7 +27,8 @@ class Archive {
        events = events ?? [],
        places = places ?? [],
        visits = visits ?? [],
-       scrobbles = scrobbles ?? [];
+       scrobbles = scrobbles ?? [],
+       locationSamples = locationSamples ?? [];
 
   final List<JournalEntry> entries;
   final List<MediaItem> media;
@@ -36,6 +38,7 @@ class Archive {
   final List<Place> places;
   final List<Visit> visits;
   final List<MusicScrobble> scrobbles;
+  final List<LocationSample> locationSamples;
 
   factory Archive.empty() => Archive();
 
@@ -48,6 +51,7 @@ class Archive {
     places: [...places],
     visits: [...visits],
     scrobbles: [...scrobbles],
+    locationSamples: [...locationSamples],
   );
 
   bool get isEmpty =>
@@ -58,7 +62,8 @@ class Archive {
       events.isEmpty &&
       places.isEmpty &&
       visits.isEmpty &&
-      scrobbles.isEmpty;
+      scrobbles.isEmpty &&
+      locationSamples.isEmpty;
 
   // ---------------------------------------------------------------------------
   // Lookups
@@ -126,28 +131,69 @@ class Archive {
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
   }
 
-  /// The primary/check-in journal entry for a day. Multiple entries per day are
-  /// supported; daily check-in data (mood, sleep, steps, meals, highlight) is
-  /// kept on this entry. Prefers entries that already hold check-in data, then
-  /// non-draft/non-archived, then drafts, then newest-updated.
+  /// Backward-compatible primary entry lookup for a day.
+  /// Prefers a writing/vocab entry, then a check-in/metrics entry.
   JournalEntry? dailyEntryFor(DateTime day) {
-    final dayEntries = entries.where((e) => sameDay(e.createdAt, day)).toList();
-    if (dayEntries.isEmpty) return null;
+    return primaryWritingEntryFor(day) ??
+        latestCheckinOn(day) ??
+        dayMetricsEntryFor(day) ??
+        (entriesOn(day, includeDrafts: true).isEmpty
+            ? null
+            : entriesOn(day, includeDrafts: true).last);
+  }
+
+  /// Entry that carries day-level health metrics (sleep/steps) when synced.
+  /// Prefers the stable `day-<dayKey>` entry, then any entry with sleep/steps.
+  JournalEntry? dayMetricsEntryFor(DateTime day) {
+    final stableId = 'day-${dayKey(day)}';
+    final byId = entryById(stableId);
+    if (byId != null) return byId;
+    final candidates = entries
+        .where((e) =>
+            sameDay(e.createdAt, day) &&
+            (e.sleepHours != null || e.steps != null))
+        .toList();
+    if (candidates.isEmpty) return null;
+    candidates.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    return candidates.first;
+  }
+
+  /// Best entry to resume for writing (journal/note/vocab), excluding pure check-ins.
+  JournalEntry? primaryWritingEntryFor(DateTime day) {
+    final candidates = entriesOn(day, includeDrafts: true).where((e) {
+      if (e.isVocab) return true;
+      if (e.body.trim().isNotEmpty || e.title.trim().isNotEmpty) return true;
+      // Draft placeholder with no check-in-only intent.
+      if (e.draft && !e.isCheckinEntry) return true;
+      return false;
+    }).toList();
+    if (candidates.isEmpty) return null;
     int rank(JournalEntry e) {
       if (!e.archived && !e.draft) return 0;
       if (!e.archived && e.draft) return 1;
       return 2;
     }
 
-    dayEntries.sort((a, b) {
-      final aHas = a.hasCheckinData ? 0 : 1;
-      final bHas = b.hasCheckinData ? 0 : 1;
-      if (aHas != bHas) return aHas.compareTo(bHas);
+    candidates.sort((a, b) {
       final r = rank(a).compareTo(rank(b));
       if (r != 0) return r;
       return b.updatedAt.compareTo(a.updatedAt);
     });
-    return dayEntries.first;
+    return candidates.first;
+  }
+
+  /// Check-in entries for a day (mood/energy/highlight snapshots), newest last.
+  List<JournalEntry> checkinsOn(DateTime day) {
+    return entriesOn(day, includeDrafts: true)
+        .where((e) => e.isCheckinEntry)
+        .toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  }
+
+  JournalEntry? latestCheckinOn(DateTime day) {
+    final items = checkinsOn(day);
+    if (items.isEmpty) return null;
+    return items.last;
   }
 
   List<JournalEntry> get drafts {
@@ -176,6 +222,11 @@ class Archive {
   List<Visit> visitsOn(DateTime day) {
     return visits.where((v) => sameDay(v.startAt, day)).toList()
       ..sort((a, b) => a.startAt.compareTo(b.startAt));
+  }
+
+  List<LocationSample> locationSamplesOn(DateTime day) {
+    return locationSamples.where((s) => sameDay(s.recordedAt, day)).toList()
+      ..sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
   }
 
   List<TimelineEvent> eventsOn(DateTime day, {bool includeHidden = false}) {
@@ -225,7 +276,7 @@ class Archive {
   String get signature =>
       '${entries.length}:${media.length}:${trackerRecords.length}:'
       '${visits.length}:${scrobbles.length}:${events.length}:'
-      '${places.length}:${trackers.length}';
+      '${places.length}:${trackers.length}:${locationSamples.length}';
 
   // ---------------------------------------------------------------------------
   // Serialisation
@@ -243,6 +294,7 @@ class Archive {
     'places': places.map((p) => p.toJson()).toList(),
     'visits': visits.map((v) => v.toJson()).toList(),
     'scrobbles': scrobbles.map((s) => s.toJson()).toList(),
+    'locationSamples': locationSamples.map((s) => s.toJson()).toList(),
   };
 
   factory Archive.fromJson(Map<String, dynamic> json) {
@@ -263,6 +315,7 @@ class Archive {
       places: list('places').map(Place.fromJson).toList(),
       visits: list('visits').map(Visit.fromJson).toList(),
       scrobbles: list('scrobbles').map(MusicScrobble.fromJson).toList(),
+      locationSamples: list('locationSamples').map(LocationSample.fromJson).toList(),
     );
   }
 }

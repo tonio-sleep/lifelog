@@ -8,6 +8,7 @@ import '../features/onboarding/onboarding_screen.dart';
 import '../features/security/lock_screen.dart';
 import '../integrations/cloudflare/cloudflare_sync.dart';
 import '../integrations/lastfm/lastfm_sync.dart';
+import '../integrations/location/location_tracking_controller.dart';
 import 'shell/app_shell.dart';
 import 'theme/app_theme.dart';
 
@@ -36,7 +37,11 @@ class LifelogApp extends ConsumerWidget {
           ? const OnboardingScreen()
           : !settings.cloudflareConnected && !settings.cloudflareSetupDone
               ? const CloudflareRequiredAuthScreen()
-              : const LockGate(child: _StartupSync(child: AppShell())),
+              : const LockGate(
+                  child: LocationTrackingHost(
+                    child: _StartupSync(child: AppShell()),
+                  ),
+                ),
     );
   }
 }

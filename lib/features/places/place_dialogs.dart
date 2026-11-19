@@ -529,9 +529,9 @@ class _VisitEditorDialogState extends ConsumerState<_VisitEditorDialog> {
               ),
               const SizedBox(height: Insets.md),
               Text(
-                'Visits are entered manually or captured on demand. This build '
-                'does not record background GPS, so no visit is inferred '
-                'without your action.',
+                'You can log visits manually. If day tracking is turned on in Places, '
+                'Lifelog can also estimate visits from your location while the app is in use. '
+                'Location data stays on this device.',
                 style: Theme.of(
                   context,
                 ).textTheme.bodySmall?.copyWith(color: palette.mutedText),

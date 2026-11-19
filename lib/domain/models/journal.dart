@@ -161,6 +161,21 @@ class JournalEntry {
       meals.trim().isNotEmpty ||
       highlight.trim().isNotEmpty;
 
+  /// A standalone check-in snapshot (can be multiple per day).
+  /// Excludes entries that carry writing/vocab content or day-level health metrics.
+  bool get isCheckinEntry {
+    if (isVocab) return false;
+    if (title.trim().isNotEmpty || body.trim().isNotEmpty) return false;
+    final hasSnapshot =
+        mood != null || energy != null || highlight.trim().isNotEmpty;
+    if (!hasSnapshot) return false;
+    // Sleep/steps/meals belong to health/legacy day metrics, not check-in snapshots.
+    if (sleepHours != null || steps != null || meals.trim().isNotEmpty) {
+      return false;
+    }
+    return true;
+  }
+
   bool get hasVocabContent => vocabItems.any((v) => !v.isEmpty);
 
   bool get isEmpty =>

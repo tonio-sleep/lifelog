@@ -33,6 +33,9 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setShowArtwork(bool value) =>
       update((current) => current.copyWith(showArtwork: value));
 
+  Future<void> setLocationTrackingEnabled(bool value) =>
+      update((current) => current.copyWith(locationTrackingEnabled: value));
+
   Future<void> completeOnboarding() =>
       update((current) => current.copyWith(onboardingComplete: true));
 

@@ -9,6 +9,7 @@ import '../../app/widgets/common.dart';
 import '../../app/widgets/components.dart';
 import '../../core/util/dates.dart';
 import '../../domain/memories.dart';
+import '../../domain/models/journal.dart';
 import '../../domain/models/music.dart';
 import '../../domain/models/timeline.dart';
 import '../journal/journal_widgets.dart';
@@ -145,19 +146,33 @@ class _DayBody extends ConsumerWidget {
     }
     final listening = summary.scrobbles.isEmpty ? null : summary.music;
 
-    final dailyEntry = archive.dailyEntryFor(day);
+    final writingEntry = archive.primaryWritingEntryFor(day);
     final dayEntries = archive.entriesOn(day, includeDrafts: true);
-    final journalEntries = dayEntries
-        .where((e) => e.body.trim().isNotEmpty || e.title.trim().isNotEmpty || e.hasVocabContent)
-        .toList();
+    final checkins = archive.checkinsOn(day);
+    final latestCheckin = checkins.isEmpty ? null : checkins.last;
+    final metrics = archive.dayMetricsEntryFor(day);
     final entryCount = dayEntries.length;
+
+    String? checkinSummary;
+    if (latestCheckin != null) {
+      final parts = <String>[
+        if (latestCheckin.mood != null) MoodScore.label(latestCheckin.mood!),
+        if (latestCheckin.energy != null) 'Energy ${latestCheckin.energy}/5',
+        if (latestCheckin.highlight.trim().isNotEmpty)
+          latestCheckin.highlight.trim(),
+      ];
+      checkinSummary = parts.isEmpty ? null : parts.join(' · ');
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         TodayComposer(
           isToday: isToday,
-          entry: dailyEntry,
+          entry: writingEntry,
           entryCount: entryCount,
+          checkinCount: checkins.length,
+          checkinSummary: checkinSummary,
           onCheckin: () => showDailyCheckinSheet(context, ref, day),
           onWrite: () {
             if (entryCount > 1) {
@@ -177,6 +192,10 @@ class _DayBody extends ConsumerWidget {
             createNew: true,
           ),
         ),
+        if (checkins.isNotEmpty || metrics != null) ...[
+          const SizedBox(height: Insets.md),
+          _DayCheckinsCard(day: day, checkins: checkins, metrics: metrics),
+        ],
         if (latest != null) ...[
           const SizedBox(height: Insets.md),
           NowPlayingCard(scrobble: latest, onTap: () => onNavigate?.call('music')),
@@ -215,6 +234,167 @@ class _DayBody extends ConsumerWidget {
               : 'Nothing was recorded on this day.',
         ),
       ],
+    );
+  }
+}
+
+class _DayCheckinsCard extends ConsumerWidget {
+  const _DayCheckinsCard({
+    required this.day,
+    required this.checkins,
+    required this.metrics,
+  });
+
+  final DateTime day;
+  final List<JournalEntry> checkins;
+  final JournalEntry? metrics;
+
+  static String _fmtNum(double v) {
+    if (v == v.roundToDouble()) return v.toInt().toString();
+    return v.toStringAsFixed(v * 10 % 10 == 0 ? 1 : 2);
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final palette = context.palette;
+    final text = context.text;
+    final hasMetrics = metrics != null &&
+        (metrics!.sleepHours != null || metrics!.steps != null);
+    return QuietCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(child: Text('Check-ins', style: text.titleSmall)),
+              if (checkins.isNotEmpty)
+                Text(
+                  '${checkins.length}',
+                  style: text.labelMedium?.copyWith(color: palette.mutedText),
+                ),
+            ],
+          ),
+          if (hasMetrics) ...[
+            const SizedBox(height: Insets.sm),
+            Wrap(
+              spacing: Insets.sm,
+              runSpacing: Insets.xs,
+              children: [
+                if (metrics!.sleepHours != null)
+                  SourceChip(
+                    label: 'Sleep ${_fmtNum(metrics!.sleepHours!)}h (Health)',
+                    color: palette.place,
+                    dense: true,
+                  ),
+                if (metrics!.steps != null)
+                  SourceChip(
+                    label: '${metrics!.steps} steps (Health)',
+                    color: palette.music,
+                    dense: true,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Sleep and steps are synced from Health, separate from check-ins.',
+              style: text.bodySmall?.copyWith(color: palette.mutedText),
+            ),
+          ],
+          if (checkins.isNotEmpty) ...[
+            const SizedBox(height: Insets.sm),
+            for (final entry in checkins) ...[
+              _CheckinRow(
+                day: day,
+                entry: entry,
+                onTap: () => showDailyCheckinSheet(
+                  context,
+                  ref,
+                  day,
+                  existing: entry,
+                ),
+              ),
+              if (entry != checkins.last)
+                Divider(height: 1, color: palette.border),
+            ],
+          ] else ...[
+            const SizedBox(height: Insets.xs),
+            Text(
+              'No check-ins yet. Add one to record mood, energy, or a quick note.',
+              style: text.bodySmall?.copyWith(color: palette.mutedText),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _CheckinRow extends StatelessWidget {
+  const _CheckinRow({
+    required this.day,
+    required this.entry,
+    required this.onTap,
+  });
+  final DateTime day;
+  final JournalEntry entry;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final text = context.text;
+    final parts = <String>[
+      if (entry.mood != null) MoodScore.label(entry.mood!),
+      if (entry.energy != null) 'Energy ${entry.energy}/5',
+    ];
+    final summary = parts.join(' · ');
+    final highlight = entry.highlight.trim();
+    return InkWell(
+      borderRadius: BorderRadius.circular(Radii.md),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: Insets.sm),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 52,
+              child: Text(
+                formatTime(entry.createdAt),
+                style: text.labelMedium?.copyWith(
+                  color: palette.mutedText,
+                  fontFeatures: tabularFigures,
+                ),
+              ),
+            ),
+            const SizedBox(width: Insets.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (summary.isNotEmpty)
+                    Text(summary, style: text.bodyMedium),
+                  if (highlight.isNotEmpty)
+                    Text(
+                      highlight,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: text.bodySmall?.copyWith(
+                        color: summary.isEmpty ? null : palette.mutedText,
+                      ),
+                    ),
+                  if (summary.isEmpty && highlight.isEmpty)
+                    Text(
+                      'Check-in',
+                      style: text.bodyMedium?.copyWith(color: palette.mutedText),
+                    ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded, size: 18, color: palette.dimText),
+          ],
+        ),
+      ),
     );
   }
 }

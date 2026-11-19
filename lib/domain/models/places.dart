@@ -77,8 +77,53 @@ class Place {
   }
 }
 
-/// A confirmed or suggested visit. Raw GPS samples are intentionally not
-/// invented here; visits are manually logged or captured on demand.
+/// A recorded location sample used for on-device visit tracking.
+/// Samples are stored locally in the encrypted archive and can be used to
+/// estimate where time was spent during the day.
+class LocationSample {
+  const LocationSample({
+    required this.id,
+    required this.recordedAt,
+    required this.latitude,
+    required this.longitude,
+    this.accuracyMeters,
+    this.speedMps,
+  });
+
+  final String id;
+  final DateTime recordedAt;
+  final double latitude;
+  final double longitude;
+  final double? accuracyMeters;
+
+  /// Device-reported speed in meters/second, when available and reliable.
+  final double? speedMps;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'recordedAt': recordedAt.toIso8601String(),
+        'latitude': latitude,
+        'longitude': longitude,
+        'accuracyMeters': accuracyMeters,
+        'speedMps': speedMps,
+      };
+
+  factory LocationSample.fromJson(Map<String, dynamic> json) {
+    return LocationSample(
+      id: json['id'] as String? ?? _uuid.v4(),
+      recordedAt:
+          DateTime.tryParse(json['recordedAt'] as String? ?? '') ??
+          DateTime.now(),
+      latitude: (json['latitude'] as num?)?.toDouble() ?? 0,
+      longitude: (json['longitude'] as num?)?.toDouble() ?? 0,
+      accuracyMeters: (json['accuracyMeters'] as num?)?.toDouble(),
+      speedMps: (json['speedMps'] as num?)?.toDouble(),
+    );
+  }
+}
+
+/// A confirmed or suggested visit. Visits can be logged manually or
+/// generated on-device from location samples when tracking is enabled.
 class Visit {
   const Visit({
     required this.id,

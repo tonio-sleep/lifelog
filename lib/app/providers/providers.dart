@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../core/backup/backup_service.dart';
+import '../../core/util/dates.dart';
 import '../../domain/models/archive.dart';
 import '../../domain/models/journal.dart';
 import '../../domain/models/media.dart';
@@ -12,7 +14,6 @@ import '../../domain/models/places.dart';
 import '../../domain/models/timeline.dart';
 import '../../domain/models/trackers.dart';
 import '../app_services.dart';
-import '../../core/backup/backup_service.dart';
 
 final appServicesProvider = Provider<AppServices>((ref) {
   throw UnimplementedError('AppServices must be overridden at bootstrap.');
@@ -364,6 +365,41 @@ class ArchiveController extends Notifier<Archive> {
 
   Future<void> deleteVisit(String id) async {
     final next = state.copy()..visits.removeWhere((v) => v.id == id);
+    await _persist(next);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Location tracking
+  // ---------------------------------------------------------------------------
+
+  Future<void> addLocationSample(LocationSample sample) async {
+    final next = state.copy();
+    // Avoid exact duplicates in quick succession.
+    final last = next.locationSamples.isEmpty ? null : next.locationSamples.last;
+    if (last != null) {
+      final dt = sample.recordedAt.difference(last.recordedAt).inSeconds.abs();
+      final sameSpot = (sample.latitude - last.latitude).abs() < 0.00001 &&
+          (sample.longitude - last.longitude).abs() < 0.00001;
+      if (dt < 30 && sameSpot) return;
+    }
+    next.locationSamples.add(sample);
+    // Keep samples bounded to avoid unbounded growth (retain ~90 days worth).
+    const maxSamples = 20000;
+    if (next.locationSamples.length > maxSamples) {
+      next.locationSamples.sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
+      next.locationSamples.removeRange(0, next.locationSamples.length - maxSamples);
+    }
+    await _persist(next);
+  }
+
+  /// Replaces auto-tracked visits for [day] with [visits]. Manual visits are kept.
+  Future<void> replaceAutoVisitsForDay(DateTime day, List<Visit> visits) async {
+    final key = dayKey(day);
+    final next = state.copy();
+    next.visits.removeWhere(
+      (v) => v.id.startsWith('auto-loc-$key') && _sameDay(v.startAt, day),
+    );
+    next.visits.addAll(visits);
     await _persist(next);
   }
 

@@ -160,13 +160,45 @@ class _DayStory extends ConsumerWidget {
               ],
             ),
           ),
-        for (final entry in entries)
+        for (var i = 0; i < entries.length; i++) ...[
+          Padding(
+            padding: const EdgeInsets.only(
+              left: Insets.xs,
+              bottom: Insets.xs,
+              top: Insets.xs,
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.schedule_rounded, size: 14, color: palette.mutedText),
+                const SizedBox(width: 6),
+                Text(
+                  formatTime(entries[i].createdAt),
+                  style: text.labelMedium?.copyWith(
+                    color: palette.mutedText,
+                    fontFeatures: tabularFigures,
+                  ),
+                ),
+                const SizedBox(width: Insets.sm),
+                Expanded(
+                  child: Divider(color: palette.border),
+                ),
+                if (entries.length > 1) ...[
+                  const SizedBox(width: Insets.sm),
+                  Text(
+                    'Entry ${i + 1}',
+                    style: text.labelSmall?.copyWith(color: palette.dimText),
+                  ),
+                ],
+              ],
+            ),
+          ),
           JournalEntryCard(
-            key: ValueKey(entry.id),
-            entry: entry,
+            key: ValueKey(entries[i].id),
+            entry: entries[i],
             showDate: false,
             heroScope: 'day',
           ),
+        ],
         if (looseMedia.isNotEmpty) ...[
           const SectionHeader(
             title: 'Moments',

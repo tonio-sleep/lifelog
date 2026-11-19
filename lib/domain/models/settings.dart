@@ -178,6 +178,7 @@ class AppSettings {
     this.cloudflareLastSyncAt,
     this.cloudflareSetupDone = false,
     this.reminders = const [],
+    this.locationTrackingEnabled = false,
   });
 
   final bool onboardingComplete;
@@ -228,6 +229,10 @@ class AppSettings {
   /// In-app reminders (time + message), stored locally in encrypted settings.
   final List<ReminderItem> reminders;
 
+  /// When enabled, the app can record location samples on-device (with
+  /// permission) to estimate visits and where time was spent each day.
+  final bool locationTrackingEnabled;
+
   bool get lastfmConnected =>
       lastfmUsername != null && lastfmUsername!.trim().isNotEmpty;
 
@@ -272,6 +277,7 @@ class AppSettings {
     DateTime? cloudflareLastSyncAt,
     bool? cloudflareSetupDone,
     List<ReminderItem>? reminders,
+    bool? locationTrackingEnabled,
   }) {
     final clearCloud = clearCloudflareSession;
     return AppSettings(
@@ -320,6 +326,8 @@ class AppSettings {
           clearCloud ? null : (cloudflareLastSyncAt ?? this.cloudflareLastSyncAt),
       cloudflareSetupDone: cloudflareSetupDone ?? this.cloudflareSetupDone,
       reminders: reminders ?? this.reminders,
+      locationTrackingEnabled:
+          locationTrackingEnabled ?? this.locationTrackingEnabled,
     );
   }
 
@@ -348,6 +356,7 @@ class AppSettings {
         'cloudflareLastSyncAt': cloudflareLastSyncAt?.toIso8601String(),
         'cloudflareSetupDone': cloudflareSetupDone,
         'reminders': reminders.map((r) => r.toJson()).toList(),
+        'locationTrackingEnabled': locationTrackingEnabled,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
@@ -406,6 +415,7 @@ class AppSettings {
           .map((e) => ReminderItem.fromJson(Map<String, dynamic>.from(e)))
           .where((r) => r.id.isNotEmpty)
           .toList(),
+      locationTrackingEnabled: json['locationTrackingEnabled'] as bool? ?? false,
     );
   }
 }

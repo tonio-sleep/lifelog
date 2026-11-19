@@ -37,15 +37,17 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Lifelog can capture photos and videos you choose to add to your journal and daily records.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Lifelog uses the microphone when you choose to record a video for your journal or daily records.</string>
+	<string>Lifelog uses the microphone when you choose to record audio or video for your journal and daily records.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Lifelog can transcribe your voice to text when you choose voice journaling. Transcription is processed by your device speech services when available.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Lifelog uses your location when you choose to save a place or visit.</string>
+	<string>Lifelog uses your location, when you allow it, to record where you spend time during the day and to save places or visits. Location data stays on this device in your encrypted archive.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Lifelog uses your location to help you save places and visits. You can choose Always access in Settings for the best experience.</string>
+	<string>Lifelog can use your location to help track where you spend time during the day and to save places or visits. You can choose Always access in Settings for the best experience. Location data stays on this device in your encrypted archive.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
-	<string>Lifelog uses your location to help you save places and visits when you allow Always access.</string>
+	<string>Lifelog can use your location to help track where you spend time during the day and to save places or visits when you allow Always access. Location data stays on this device in your encrypted archive.</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Lifelog can read your sleep and step data from Apple Health, if you choose, to automatically fill your daily check-in. This access is read-only.</string>
+	<string>Lifelog can read your sleep and step data from Apple Health, if you choose, to track your daily health metrics in the app. This access is read-only and data stays on your device.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>Lifelog does not write health data to Apple Health.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>

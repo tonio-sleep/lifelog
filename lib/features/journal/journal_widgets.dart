@@ -125,7 +125,6 @@ class JournalEntryCard extends ConsumerWidget {
           if (entry.energy != null ||
               entry.sleepHours != null ||
               entry.steps != null ||
-              entry.meals.trim().isNotEmpty ||
               entry.highlight.trim().isNotEmpty) ...[
             const SizedBox(height: Insets.sm),
             Wrap(
@@ -150,12 +149,6 @@ class JournalEntryCard extends ConsumerWidget {
                     icon: Icons.directions_walk_rounded,
                     label: '${entry.steps} steps',
                     color: palette.music,
-                  ),
-                if (entry.meals.trim().isNotEmpty)
-                  _MetaChip(
-                    icon: Icons.restaurant_outlined,
-                    label: _shortText(entry.meals),
-                    color: palette.journal,
                   ),
                 if (entry.highlight.trim().isNotEmpty)
                   _MetaChip(
@@ -278,7 +271,7 @@ Future<void> openJournalEntry(BuildContext context, String entryId) async {
 
 /// Opens a journal entry for [date] (or today). Multiple entries per day are
 /// supported and grouped together by day. By default this resumes the day's
-/// primary/check-in entry if one exists; pass [createNew] to always start a new
+/// primary writing entry if one exists; pass [createNew] to always start a new
 /// entry in that day's folder.
 Future<void> createJournalEntry(
   BuildContext context, {
@@ -290,7 +283,7 @@ Future<void> createJournalEntry(
   final targetDay = date ?? DateTime.now();
   if (!createNew) {
     final archive = ProviderScope.containerOf(context).read(archiveProvider);
-    final existing = archive.dailyEntryFor(targetDay);
+    final existing = archive.primaryWritingEntryFor(targetDay);
     if (existing != null) {
       await openJournalEntry(context, existing.id);
       return;

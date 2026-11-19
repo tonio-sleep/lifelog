@@ -86,11 +86,15 @@ List<TimelineItem> buildTimelineForDay(
       if (duration != null) formatDurationMinutes(duration.inMinutes),
       if (visit.notes.trim().isNotEmpty) visit.notes.trim(),
     ].join(' · ');
+    final label = visit.label.trim();
+    final isTravel = label == 'Traveling' ||
+        label == 'On the road' ||
+        label.startsWith('Traveling');
     items.add(
       TimelineItem(
         id: 'visit:${visit.id}',
         at: visit.startAt,
-        title: 'At ${visit.label}',
+        title: isTravel ? (label.isEmpty ? 'Traveling' : label) : 'At $label',
         subtitle: subtitle,
         source: TimelineSource.location,
         confidence: visit.confidence,

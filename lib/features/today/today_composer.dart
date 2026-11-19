@@ -1,14 +1,10 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
 import '../../app/theme/app_theme.dart';
 import '../../app/widgets/common.dart';
 import '../../domain/models/journal.dart';
 
-/// The one primary card on Today: write, with the daily check-in beside it.
-///
-/// Replaces two near-identical cards (check-in, journal) so the page has a
-/// single obvious first action. Check-in values are plain text, not a row of
-/// differently coloured chips.
+/// The one primary card on Today: write, with check-in access beside it.
 class TodayComposer extends StatelessWidget {
   const TodayComposer({
     super.key,
@@ -18,38 +14,27 @@ class TodayComposer extends StatelessWidget {
     required this.onWrite,
     required this.onNewEntry,
     required this.onCheckin,
+    this.checkinSummary,
+    this.checkinCount = 0,
   });
 
   final bool isToday;
+
+  /// Primary writing/vocab entry for prompt preview (may be null).
   final JournalEntry? entry;
   final int entryCount;
   final VoidCallback onWrite;
   final VoidCallback onNewEntry;
   final VoidCallback onCheckin;
-
-  static String _num(double v) =>
-      v == v.roundToDouble() ? '${v.toInt()}' : v.toStringAsFixed(1);
-
-  /// "Good · 7.5h sleep · 8,204 steps", or null when nothing is logged.
-  String? _checkinSummary() {
-    final e = entry;
-    if (e == null) return null;
-    final parts = <String>[
-      if (e.mood != null) e.mood!.label,
-      if (e.energy != null) 'Energy ${e.energy}/5',
-      if (e.sleepHours != null) '${_num(e.sleepHours!)}h sleep',
-      if (e.steps != null) '${e.steps} steps',
-    ];
-    return parts.isEmpty ? null : parts.join(' · ');
-  }
+  final String? checkinSummary;
+  final int checkinCount;
 
   @override
   Widget build(BuildContext context) {
     final text = context.text;
     final palette = context.palette;
     final e = entry;
-    final hasWriting =
-        e != null &&
+    final hasWriting = e != null &&
         (e.title.trim().isNotEmpty ||
             e.body.trim().isNotEmpty ||
             e.hasVocabContent);
@@ -61,9 +46,22 @@ class TodayComposer extends StatelessWidget {
     final meta = multiple
         ? '$entryCount entries ${isToday ? 'today' : 'on this day'}'
         : hasWriting
-        ? 'Tap to keep writing'
-        : 'Thoughts, notes or a vocab list';
-    final summary = _checkinSummary();
+            ? 'Tap to keep writing'
+            : 'Thoughts, notes or a vocab list';
+    final checkinDetail = () {
+      if (checkinSummary != null) {
+        if (checkinCount > 1) {
+          return '$checkinSummary · $checkinCount check-ins';
+        }
+        return checkinSummary!;
+      }
+      if (checkinCount > 0) {
+        return '$checkinCount ${checkinCount == 1 ? 'check-in' : 'check-ins'}';
+      }
+      return isToday
+          ? 'Add mood, energy, or a note'
+          : 'Add a check-in for this day';
+    }();
 
     return QuietCard(
       padding: EdgeInsets.zero,
@@ -114,8 +112,8 @@ class TodayComposer extends StatelessWidget {
               children: [
                 Expanded(
                   child: _FooterAction(
-                    label: 'Check-in',
-                    detail: summary ?? (isToday ? 'Mood, sleep, steps' : 'Add this day'),
+                    label: checkinCount > 0 ? 'New check-in' : 'Check-in',
+                    detail: checkinDetail,
                     onTap: onCheckin,
                   ),
                 ),

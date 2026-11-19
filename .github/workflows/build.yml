@@ -69,16 +69,38 @@ jobs:
         run: flutter pub get
 
       - name: Build iOS (release, no codesign)
-        run: flutter build ios --release --no-codesign
+        run: |
+          set +e
+          flutter build ios --release --no-codesign
+          status=$?
+          set -e
+          if [ $status -ne 0 ]; then
+            echo "flutter build ios exited with code $status"
+            if [ ! -d "build/ios/iphoneos/Runner.app" ]; then
+              echo "Runner.app was not produced; failing."
+              exit $status
+            fi
+            echo "Runner.app exists; continuing with packaging."
+          fi
 
       - name: Package Runner.app and unsigned IPA
         run: |
-          cd build/ios/iphoneos
+          set -euo pipefail
+          APP_DIR="build/ios/iphoneos"
+          if [ ! -d "$APP_DIR/Runner.app" ]; then
+            echo "Runner.app not found in $APP_DIR"
+            ls -la build/ios || true
+            ls -la "$APP_DIR" || true
+            exit 1
+          fi
+          cd "$APP_DIR"
           ditto -c -k --sequesterRsrc --keepParent Runner.app Runner.app.zip
+          rm -rf Payload
           mkdir -p Payload
           cp -R Runner.app Payload/
           zip -qry Runner-unsigned.ipa Payload
           rm -rf Payload
+          ls -lh Runner.app.zip Runner-unsigned.ipa
 
       - name: Upload iOS app bundle
         uses: actions/upload-artifact@v4

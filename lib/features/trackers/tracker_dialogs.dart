@@ -486,6 +486,9 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
                 autofocus: true,
                 minLines: 3,
                 maxLines: 5,
+                textInputAction: TextInputAction.done,
+                onEditingComplete: () =>
+                    FocusManager.instance.primaryFocus?.unfocus(),
                 textCapitalization: TextCapitalization.sentences,
                 decoration: const InputDecoration(
                   hintText: 'Write a short note',
@@ -539,6 +542,9 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
                   autofocus: true,
                   minLines: 2,
                   maxLines: 6,
+                  textInputAction: TextInputAction.done,
+                  onEditingComplete: () =>
+                      FocusManager.instance.primaryFocus?.unfocus(),
                   textCapitalization: TextCapitalization.sentences,
                   decoration: const InputDecoration(
                     labelText: 'Meal details',
@@ -711,6 +717,9 @@ class _TrackerLogSheetState extends ConsumerState<_TrackerLogSheet> {
                       controller: _noteController,
                       minLines: 1,
                       maxLines: 3,
+                      textInputAction: TextInputAction.done,
+                      onEditingComplete: () =>
+                          FocusManager.instance.primaryFocus?.unfocus(),
                       decoration: const InputDecoration(
                         hintText: 'Add a note',
                       ),

@@ -10,12 +10,12 @@ import '../../app/widgets/common.dart';
 import '../../app/widgets/components.dart';
 import '../../core/util/dates.dart';
 import '../../domain/models/journal.dart';
+import '../../integrations/location/location_tracking_controller.dart';
 import '../../domain/models/settings.dart';
 import '../music/lastfm_screen.dart';
 import '../security/pin_dialogs.dart';
 import 'account_sync_card.dart';
 import 'backup_actions.dart';
-import 'cloudflare_sync_actions.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -211,7 +211,8 @@ class SettingsScreen extends ConsumerWidget {
         ListGroup(
           title: 'Permissions',
           footer:
-              'Location can be used to save places/visits and, if you turn on day tracking in Places, to estimate where you spend time while the app is in use. '
+              'While Using access powers the day map and manual location fixes. For automatic background visits, turn on Background visits in Places and set Location Access to Always in iOS Settings. '
+              'iOS cannot upgrade to Always from inside the app, so this row opens Settings when needed. '
               'Health access is read-only and lets Lifelog sync sleep and steps automatically. '
               'Screen Time/app usage is not available to regular iPhone apps without special Apple Family Controls entitlement and approval.',
           children: [
@@ -220,9 +221,9 @@ class SettingsScreen extends ConsumerWidget {
               iconColor: palette.place,
               title: 'Location access',
               subtitle:
-                  'Allow location access for places and day tracking (Always optional)',
+                  'While Using for day tracking · Always for background visits',
               chevron: true,
-              onTap: () => _requestLocationPermission(context),
+              onTap: () => _requestLocationPermission(context, ref),
             ),
             if (services.healthSteps.isSupported)
               ListRow(
@@ -438,36 +439,39 @@ class SettingsScreen extends ConsumerWidget {
     if (context.mounted) showSnack(context, 'PIN changed.');
   }
 
-  Future<void> _requestLocationPermission(BuildContext context) async {
+  Future<void> _requestLocationPermission(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled && context.mounted) {
         showSnack(context, 'Location services are turned off. Enable Location Services in device Settings.');
       }
-      var permission = await Geolocator.checkPermission();
 
+      // iOS only ever grants While Using from this prompt. Upgrading to Always
+      // must be done by the person in Settings, so don't ask twice here.
+      var permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
       }
-      // Try to upgrade to Always (iOS may show an upgrade prompt after While Using is granted).
-      if (permission == LocationPermission.whileInUse) {
-        permission = await Geolocator.requestPermission();
-      }
-
       if (!context.mounted) return;
-      if (permission == LocationPermission.deniedForever) {
-        showSnack(context, 'Location permission is turned off. Open device Settings and set Lifelog location access to Always.');
-        await Geolocator.openAppSettings();
-        return;
-      }
+
       if (permission == LocationPermission.always) {
         showSnack(context, 'Location access is set to Always.');
-      } else if (permission == LocationPermission.whileInUse) {
-        showSnack(context, 'Location access is currently While Using. Set it to Always in Settings > Lifelog > Location for the best experience.');
-        await Geolocator.openAppSettings();
-      } else {
-        showSnack(context, 'Location access was not granted. You can allow Always in device Settings.');
+        return;
       }
+      if (permission == LocationPermission.whileInUse) {
+        showSnack(context, 'While Using is on. For automatic background visits, turn on Background visits in Places, then choose Always in iOS Settings.');
+        await ref.read(backgroundLocationChannelProvider).openSettings();
+        return;
+      }
+      if (permission == LocationPermission.deniedForever) {
+        showSnack(context, 'Location permission is off. Open iOS Settings and set Lifelog to Always.');
+        await ref.read(backgroundLocationChannelProvider).openSettings();
+        return;
+      }
+      showSnack(context, 'Location access was not granted. You can allow it in iOS Settings.');
     } catch (error) {
       if (context.mounted) {
         showSnack(context, 'Could not request location access: $error');
@@ -1018,12 +1022,12 @@ class _LimitationsSheet extends StatelessWidget {
       children: [
         const SheetTitle(title: 'Known limitations'),
         for (final item in const <String>[
-          'Data is saved locally on this device. Cloudflare sync is optional and stores a client-side encrypted backup via your Worker (records, text, and media).',
+          'Data is saved locally on this device. Cloudflare sync is optional and stores a client-side encrypted backup via your Worker. The backup passphrase never leaves this device.',
           'No automatic multi-device merge. Restoring from a backup replaces local data on that device.',
           'Screen Time/app usage data cannot be read by this app on iPhone without Apple Family Controls entitlement and approval (Family Controls, ManagedSettings, DeviceActivity). This is not currently available in this build.',
           'Automatic steps require Health access on supported devices. Other step sources are not imported automatically.',
-          'Encrypted backups can include media and may become large depending on your library. Keep an extra local backup copy for recovery.',
-          'Day location tracking is optional and, when enabled, records location while the app is in use to estimate visits and time spent. Continuous tracking when the app is closed is not guaranteed without additional platform background-location setup. You can also save places and log visits manually.',
+          'Encrypted backups exclude media bytes. Keep an extra local copy of your media folder for recovery.',
+          'Day location tracking records location while the app is in use. With Background visits on and Location Access set to Always, iOS can report places you visit while the app is closed using place monitoring, not continuous GPS. Events stay in your encrypted local archive.',
           'Last.fm import is optional and read-only; syncing may require an API key depending on Last.fm.',
           'The PIN is an app-level privacy screen, not a key-derivation step. A forgotten backup passphrase cannot be recovered.',
         ])

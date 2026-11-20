@@ -655,12 +655,18 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
     final palette = context.palette;
     final text = context.text;
     final scheme = context.scheme;
-    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final keyboardHeight = MediaQuery.viewInsetsOf(context).bottom;
+    final keyboardOpen = keyboardHeight > 0;
 
     return PopScope(
       canPop: _allowPop,
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
+        // First back lowers the keyboard instead of closing the editor.
+        if (FocusManager.instance.primaryFocus?.hasFocus ?? false) {
+          FocusManager.instance.primaryFocus?.unfocus();
+          return;
+        }
         await _saveDraft();
         if (!mounted) return;
         _allowPop = true;
@@ -821,6 +827,8 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                           controller: _title,
                           style: text.headlineMedium,
                           textCapitalization: TextCapitalization.sentences,
+                          textInputAction: TextInputAction.next,
+                          onSubmitted: (_) => _bodyFocus.requestFocus(),
                           decoration: InputDecoration(
                             hintText: _titleHint(),
                             border: InputBorder.none,
@@ -876,6 +884,9 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                             minLines: 2,
                             maxLines: null,
                             keyboardType: TextInputType.multiline,
+                            textInputAction: TextInputAction.done,
+                            onEditingComplete: () =>
+                                FocusManager.instance.primaryFocus?.unfocus(),
                             textCapitalization: TextCapitalization.sentences,
                             style: AppTheme.serif(text.bodyLarge, size: 16)
                                 .copyWith(height: 1.6),
@@ -899,6 +910,9 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                             minLines: 8,
                             maxLines: null,
                             keyboardType: TextInputType.multiline,
+                            textInputAction: TextInputAction.done,
+                            onEditingComplete: () =>
+                                FocusManager.instance.primaryFocus?.unfocus(),
                             textCapitalization: TextCapitalization.sentences,
                             style: AppTheme.serif(text.bodyLarge, size: 17)
                                 .copyWith(height: 1.65),
@@ -1007,11 +1021,13 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
             ],
           ),
         ),
-        bottomNavigationBar: Container(
-          decoration: BoxDecoration(
-            color: palette.card,
-            border: Border(top: BorderSide(color: palette.border)),
-          ),
+        bottomNavigationBar: Padding(
+          padding: EdgeInsets.only(bottom: keyboardHeight),
+          child: Container(
+            decoration: BoxDecoration(
+              color: palette.card,
+              border: Border(top: BorderSide(color: palette.border)),
+            ),
           child: SafeArea(
             top: false,
             child: Padding(
@@ -1116,6 +1132,7 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
           ),
         ),
       ),
+      ),
     );
   }
 }
@@ -1180,6 +1197,8 @@ class _VocabEditor extends StatelessWidget {
                         controller: termControllers[i],
                         focusNode: termFocuses[i],
                         textCapitalization: TextCapitalization.sentences,
+                        textInputAction: TextInputAction.next,
+                        onSubmitted: (_) => FocusScope.of(context).nextFocus(),
                         decoration: const InputDecoration(
                           hintText: 'Word or phrase',
                           isDense: true,
@@ -1189,6 +1208,9 @@ class _VocabEditor extends StatelessWidget {
                       TextField(
                         controller: meaningControllers[i],
                         textCapitalization: TextCapitalization.sentences,
+                        textInputAction: TextInputAction.done,
+                        onEditingComplete: () =>
+                            FocusManager.instance.primaryFocus?.unfocus(),
                         decoration: const InputDecoration(
                           hintText: 'Meaning / translation / note',
                           isDense: true,

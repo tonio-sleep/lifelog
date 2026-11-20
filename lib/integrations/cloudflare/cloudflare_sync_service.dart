@@ -3,6 +3,8 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
+typedef UploadByteProgress = void Function(int sent, int total);
+
 class CloudflareSyncException implements Exception {
   CloudflareSyncException(this.message, [this.cause]);
   final String message;
@@ -175,12 +177,38 @@ class CloudflareSyncService {
     required String baseUrl,
     required String token,
     required Uint8List bytes,
+    UploadByteProgress? onByteProgress,
   }) async {
-    final resp = await _http.put(
+    final request = http.StreamedRequest(
+      'PUT',
       _uri(baseUrl, '/api/backup'),
-      headers: _authHeaders(token, extra: const {'Content-Type': 'application/octet-stream'}),
-      body: bytes,
     );
+    request.headers.addAll(
+      _authHeaders(
+        token,
+        extra: const {'Content-Type': 'application/octet-stream'},
+      ),
+    );
+
+    // Start the send first so the HTTP client attaches to the request body
+    // stream before bytes are written. Closing the sink earlier can leave a
+    // synchronous StreamController with no listener and hang the PUT.
+    final response = _http.send(request);
+
+    // Stream the exact same bytes as the old single PUT; Workers read the
+    // body with arrayBuffer(), so chunked transfer stays wire-compatible.
+    const chunkSize = 64 * 1024;
+    for (var offset = 0; offset < bytes.length; offset += chunkSize) {
+      final end = offset + chunkSize < bytes.length
+          ? offset + chunkSize
+          : bytes.length;
+      request.sink.add(Uint8List.sublistView(bytes, offset, end));
+      onByteProgress?.call(end, bytes.length);
+    }
+    await request.sink.close();
+
+    final streamed = await response;
+    final resp = await http.Response.fromStream(streamed);
     if (resp.statusCode == 401) {
       throw CloudflareSyncException('Session expired. Please sign in again.');
     }

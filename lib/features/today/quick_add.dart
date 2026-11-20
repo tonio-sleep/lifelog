@@ -16,13 +16,24 @@ import '../../core/util/dates.dart';
 import '../../domain/models/journal.dart';
 import '../../domain/models/trackers.dart';
 import '../journal/journal_widgets.dart';
+import '../meals/meal_dialogs.dart';
 import '../music/music_dialogs.dart';
 import '../photos/photo_widgets.dart';
 import '../places/place_dialogs.dart';
 import '../timeline/event_dialogs.dart';
 import '../trackers/tracker_dialogs.dart';
 
-enum QuickAddAction { write, vocab, checkin, activity, media, music, place, event }
+enum QuickAddAction {
+  write,
+  vocab,
+  checkin,
+  meal,
+  activity,
+  media,
+  music,
+  place,
+  event,
+}
 
 /// The one place where "add something" starts. Writes to whichever day Today
 /// is showing.
@@ -60,6 +71,8 @@ Future<void> runQuickAdd(
       );
     case QuickAddAction.checkin:
       await showDailyCheckinSheet(context, ref, day);
+    case QuickAddAction.meal:
+      await showMealEditor(context, ref, day);
     case QuickAddAction.activity:
       await pickAndLogHabit(context, ref, day);
     case QuickAddAction.media:
@@ -84,6 +97,7 @@ class _QuickAddSheet extends StatelessWidget {
       (action: QuickAddAction.write, icon: Icons.edit_note_rounded, label: 'Journal', color: palette.journal),
       (action: QuickAddAction.vocab, icon: Icons.translate_rounded, label: 'Vocab list', color: palette.tracker),
       (action: QuickAddAction.checkin, icon: Icons.favorite_border_rounded, label: 'Check-in', color: palette.tracker),
+      (action: QuickAddAction.meal, icon: Icons.restaurant_outlined, label: 'Meal / drink', color: palette.warning),
       (action: QuickAddAction.activity, icon: Icons.bolt_rounded, label: 'Activity', color: palette.tracker),
       (action: QuickAddAction.media, icon: Icons.photo_library_outlined, label: 'Photos', color: palette.photo),
       (action: QuickAddAction.music, icon: Icons.graphic_eq_rounded, label: 'Music', color: palette.music),
@@ -286,12 +300,11 @@ class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
       energy: _energy,
       clearEnergy: _energy == null,
       highlight: _highlight.text.trim(),
-      // Sleep/steps/meals are tracked outside daily check-ins.
+      // Sleep/steps are tracked separately; legacy meal text is preserved.
       clearSleepHours: true,
       sleepHours: null,
       clearSteps: true,
       steps: null,
-      meals: '',
       updatedAt: DateTime.now(),
       draft: false,
     );
@@ -407,6 +420,9 @@ class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
           controller: _highlight,
           minLines: 2,
           maxLines: 5,
+          textInputAction: TextInputAction.done,
+          onEditingComplete: () =>
+              FocusManager.instance.primaryFocus?.unfocus(),
           textCapitalization: TextCapitalization.sentences,
           onChanged: (_) => setState(() {}),
           decoration: const InputDecoration(
@@ -578,9 +594,9 @@ Future<List<XFile>> pickMediaFromPhotosOrFiles(BuildContext context) async {
         final file = await picker.pickVideo(source: ImageSource.camera);
         return file == null ? const [] : [file];
       case _MediaPickSource.library:
-        return picker.pickMultipleMedia();
+        return await picker.pickMultipleMedia();
       case _MediaPickSource.files:
-        return openFiles();
+        return await openFiles();
     }
   } catch (_) {
     if (choice == _MediaPickSource.library ||
@@ -742,41 +758,6 @@ class _ImportProgress {
   final int total;
   final int current;
   final String label;
-}
-
-class _MetricTile extends StatelessWidget {
-  const _MetricTile({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.palette;
-    final text = context.text;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(icon, size: 16, color: palette.mutedText),
-            const SizedBox(width: 6),
-            Text(label, style: text.labelSmall?.copyWith(color: palette.mutedText)),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: text.titleSmall?.copyWith(fontFeatures: tabularFigures),
-        ),
-      ],
-    );
-  }
 }
 
 

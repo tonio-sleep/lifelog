@@ -112,6 +112,9 @@ class _TimelineEventDialogState extends ConsumerState<_TimelineEventDialog> {
               TextField(
                 controller: _notes,
                 maxLines: 3,
+                textInputAction: TextInputAction.done,
+                onEditingComplete: () =>
+                    FocusManager.instance.primaryFocus?.unfocus(),
                 decoration: const InputDecoration(
                   labelText: 'Notes (optional)',
                 ),

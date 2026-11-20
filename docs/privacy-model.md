@@ -15,9 +15,11 @@ be checked against the code and the network.
 
 ## What is not encrypted
 
-- `settings.json` contains preferences and the Last.fm username. It does not
-  contain journal text, media bytes or tracker values. It does contain the
-  Last.fm API key, encrypted with the archive key and a separate AAD.
+- `settings.json` contains preferences, the Last.fm username and the Cloudflare
+  username. It does not contain journal text, media bytes or tracker values.
+  The Last.fm API key, Cloudflare session token and remembered backup passphrase
+  are encrypted with the archive key and separate AADs; no plaintext secret is
+  stored there.
 - The PIN salt and hash.
 - The application support directory name and file layout.
 - Anything displayed on screen while the archive is unlocked.
@@ -42,15 +44,22 @@ The optional PIN is a convenience lock for the running app:
 
 ## Network traffic
 
-- There is no analytics, crash reporting, update check, cloud sync, account
-  system or map tile service.
-- The only optional outbound request is Last.fm's `user.getrecenttracks`, made
-  only when you connect an account and press sync. It sends your username and
-  API key to Last.fm. Your archive is never sent.
+- There is no analytics, crash reporting, update check or map tile service.
+- Optional Cloudflare sync talks only to the Worker URL you configure. It sends
+  account credentials when you sign in and uploads or downloads one
+  passphrase-encrypted backup blob. The session token authenticates those
+  requests. The backup passphrase never leaves the device; the Worker and R2
+  see only ciphertext, request timing and object size.
+- Optional Last.fm sync calls `user.getrecenttracks` only when you connect an
+  account and press sync. It sends your username and API key to Last.fm. Your
+  archive is never sent.
 - The map is a local canvas. It does not request tiles and does not send
   coordinates to any provider.
-- Background location is not collected. A location fix happens only when you
-  press the button in a place editor, and the result is stored locally.
+- Location samples stay on the device in the encrypted archive. While-in-use
+  samples are recorded only when day tracking is on. If you also enable
+  Background visits and choose Always in iOS Settings, iOS queues visit and
+  significant-change events; the app flushes them locally on next launch or
+  resume. Coordinates are never uploaded or sent to a map provider.
 
 ## Threat model
 
@@ -79,7 +88,11 @@ files.
 ## Backups
 
 Backups use a separate key derived from the backup passphrase with Argon2id, so
-the archive key is never reused. Media bytes are excluded in this build. See
+the archive key is never reused. Media bytes are excluded in this build. The
+same encrypted blob can be uploaded to Cloudflare R2 through the configured
+Worker; the passphrase is remembered encrypted on this device so sync and
+restore do not ask for it again, and it is never sent to the server. Switching
+accounts clears the remembered passphrase. See
 [backup-and-recovery.md](backup-and-recovery.md).
 
 ## Honest limits

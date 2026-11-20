@@ -11,6 +11,8 @@ import '../../domain/models/journal.dart';
 import '../../domain/models/timeline.dart';
 import '../../domain/models/trackers.dart';
 import '../journal/journal_widgets.dart';
+import '../meals/meal_dialogs.dart';
+import '../meals/meal_widgets.dart';
 import '../music/music_screen.dart';
 import '../photos/photo_widgets.dart';
 import '../timeline/event_dialogs.dart';
@@ -52,6 +54,11 @@ class _DayDetailScreenState extends ConsumerState<DayDetailScreen> {
           icon: Icons.mood_outlined,
           tooltip: 'Add check-in',
           onPressed: () => showDailyCheckinSheet(context, ref, _day),
+        ),
+        HeaderButton(
+          icon: Icons.restaurant_outlined,
+          tooltip: 'Log meal or drink',
+          onPressed: () => showMealEditor(context, ref, _day),
         ),
         HeaderButton(
           icon: Icons.bolt_rounded,
@@ -161,6 +168,10 @@ class _DayStory extends ConsumerWidget {
         if (summary.photos.isNotEmpty) ...[
           const SectionHeader(title: 'Photos and videos'),
           StoryStrip(items: summary.photos, scope: 'day-all', height: 150),
+        ],
+        if (archive.mealsOn(day).isNotEmpty) ...[
+          const SectionHeader(title: 'Meals'),
+          MealsDayCard(day: day),
         ],
         if (trackers.isNotEmpty) ...[
           const SectionHeader(title: 'Habits'),

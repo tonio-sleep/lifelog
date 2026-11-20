@@ -109,6 +109,9 @@ class _PlaceEditorDialogState extends ConsumerState<_PlaceEditorDialog> {
               TextField(
                 controller: _notes,
                 maxLines: 2,
+                textInputAction: TextInputAction.done,
+                onEditingComplete: () =>
+                    FocusManager.instance.primaryFocus?.unfocus(),
                 decoration: const InputDecoration(
                   labelText: 'Notes (optional)',
                 ),
@@ -523,6 +526,9 @@ class _VisitEditorDialogState extends ConsumerState<_VisitEditorDialog> {
               TextField(
                 controller: _notes,
                 maxLines: 2,
+                textInputAction: TextInputAction.done,
+                onEditingComplete: () =>
+                    FocusManager.instance.primaryFocus?.unfocus(),
                 decoration: const InputDecoration(
                   labelText: 'Notes (optional)',
                 ),

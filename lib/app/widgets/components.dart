@@ -770,16 +770,19 @@ class SegmentedPills<T> extends StatelessWidget {
 Future<T?> showLifelogSheet<T>(
   BuildContext context, {
   required WidgetBuilder builder,
+  bool isDismissible = true,
+  bool enableDrag = true,
 }) {
   return showModalBottomSheet<T>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
+    isDismissible: isDismissible,
+    enableDrag: enableDrag,
     constraints: const BoxConstraints(maxWidth: 560),
     builder: (sheetContext) {
       final keyboardHeight = MediaQuery.viewInsetsOf(sheetContext).bottom;
       final keyboardOpen = keyboardHeight > 0;
-      final palette = sheetContext.palette;
       return GestureDetector(
         // Tapping anywhere that is not a field lowers the keyboard without
         // dismissing the sheet, like a native iOS keyboard.
@@ -806,32 +809,8 @@ Future<T?> showLifelogSheet<T>(
               // Multiline fields show a newline key instead of "Done" on iOS,
               // so give every sheet an explicit accessory bar with Done.
               if (keyboardOpen)
-                Container(
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: palette.glass,
-                    border: Border(
-                      top: BorderSide(color: palette.border, width: 0.5),
-                    ),
-                  ),
-                  child: Align(
-                    alignment: Alignment.centerRight,
-                    child: Padding(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: Insets.lg),
-                      child: TextButton(
-                        onPressed: () =>
-                            FocusScope.of(sheetContext).unfocus(),
-                        child: Text(
-                          'Done',
-                          style: sheetContext.text.labelLarge?.copyWith(
-                            color: sheetContext.scheme.primary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
+                KeyboardDoneBar(
+                  onDone: () => FocusScope.of(sheetContext).unfocus(),
                 ),
             ],
           ),
@@ -839,6 +818,47 @@ Future<T?> showLifelogSheet<T>(
       );
     },
   );
+}
+
+/// Sticky accessory bar that guarantees a visible way to lower the keyboard.
+/// It only unfocuses — sheets and pages keep their own explicit Cancel/Save.
+class KeyboardDoneBar extends StatelessWidget {
+  const KeyboardDoneBar({super.key, this.onDone, this.trailing});
+
+  final VoidCallback? onDone;
+  final List<Widget>? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return Container(
+      height: 44,
+      decoration: BoxDecoration(
+        color: palette.glass,
+        border: Border(top: BorderSide(color: palette.border, width: 0.5)),
+      ),
+      child: Row(
+        children: [
+          const Spacer(),
+          if (trailing != null) ...trailing!,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: Insets.lg),
+            child: TextButton(
+              onPressed: onDone ??
+                  () => FocusManager.instance.primaryFocus?.unfocus(),
+              child: Text(
+                'Done',
+                style: context.text.labelLarge?.copyWith(
+                  color: context.scheme.primary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class SheetTitle extends StatelessWidget {

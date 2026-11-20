@@ -645,6 +645,9 @@ class _MediaViewerPageState extends ConsumerState<MediaViewerPage> {
             autofocus: true,
             minLines: 2,
             maxLines: 4,
+            textInputAction: TextInputAction.done,
+            onEditingComplete: () =>
+                FocusManager.instance.primaryFocus?.unfocus(),
             textCapitalization: TextCapitalization.sentences,
             decoration: const InputDecoration(hintText: 'What was happening?'),
           ),

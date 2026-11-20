@@ -6,7 +6,7 @@ file. All three live under `<application support>/lifelog`.
 ```text
 lifelog/
   archive.lifelog        AES-256-GCM encrypted archive document
-  settings.json          plaintext preferences (no journal content)
+  settings.json          preferences plus encrypted secret ciphers
   master.key             fallback root key, only if secure storage is unavailable
   media/
     <media-id>.bin       encrypted original
@@ -29,6 +29,8 @@ lifelog/
   "events": [],
   "places": [],
   "visits": [],
+  "locationSamples": [],
+  "meals": [],
   "scrobbles": []
 }
 ```
@@ -94,6 +96,23 @@ The actual bytes never appear in the archive document.
 
 `TrackerMath` derives totals, averages, daily labels and series from these
 records. Nothing is precomputed in storage.
+
+### MealRecord (`meals`)
+
+Food and drink are first-class records, not a habit. This key is additive and
+missing in older archives, which read as an empty list. Legacy meal tracker
+records and text embedded in journal entries are migrated once on launch.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `id` | string | UUID |
+| `at`, `createdAt` | ISO string | when eaten and when recorded |
+| `day` | string? | optional local day key override |
+| `kind` | string | `meal`, `drink` or `snack` |
+| `name` | string | what was eaten or drunk |
+| `amount`, `unit` | double?, string | optional quantity |
+| `notes`, `tags` | string, string[] | free-form details |
+| `legacyRef` | string? | source record for idempotent migration |
 
 ### TimelineEvent (`events`)
 

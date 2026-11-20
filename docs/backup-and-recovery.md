@@ -1,6 +1,7 @@
 # Backup and recovery
 
-Lifelog has no cloud backup. Backups are files you create and store yourself.
+Backups are encrypted files you create yourself. You can keep them locally or,
+if you opt in, sync the same encrypted blob to Cloudflare R2 through a Worker.
 
 ## Creating a backup
 
@@ -35,7 +36,8 @@ container. The archive key is never reused for backups.
 ## What is included
 
 - The entire structured archive: journal entries, media metadata, trackers and
-  records, timeline events, places, visits, scrobbles.
+  records, meals, timeline events, places, visits, scrobbles, check-ins,
+  location samples and reminders.
 
 ## What is excluded
 
@@ -59,6 +61,16 @@ separately while the source install can still read it.
 
 Restoring is destructive and cannot be undone. Create a backup of the current
 archive first if you are unsure.
+
+## Cloudflare sync
+
+In Settings → Cloudflare you can register or sign in, then upload and download
+the same encrypted backup container. The session token authenticates requests
+to your Worker; the backup passphrase is used only on the device to encrypt or
+decrypt the payload. It is remembered encrypted with the archive key so later
+syncs and restores do not ask again, but it is never sent to the Worker or R2.
+Switching accounts clears the remembered passphrase. Upload progress is shown
+in Settings as the encrypted bytes stream.
 
 ## Recovery limits
 

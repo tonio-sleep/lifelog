@@ -15,6 +15,7 @@ import '../../domain/models/timeline.dart';
 import '../journal/journal_widgets.dart';
 import '../memories/calendar.dart';
 import '../memories/day_detail_screen.dart';
+import '../meals/meal_widgets.dart';
 import '../music/music_sync.dart';
 import '../photos/photo_widgets.dart';
 import '../timeline/timeline_widgets.dart';
@@ -198,6 +199,8 @@ class _DayBody extends ConsumerWidget {
           const SizedBox(height: Insets.md),
           _DayCheckinsCard(day: day, checkins: checkins, metrics: metrics),
         ],
+        const SizedBox(height: Insets.md),
+        MealsDayCard(day: day, maxItems: 4),
         const SizedBox(height: Insets.md),
         TodayHabits(day: day, onSeeAll: () => onNavigate?.call('trackers')),
         if (summary.photos.isNotEmpty) ...[

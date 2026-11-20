@@ -300,7 +300,8 @@ class _TemplateSheet extends StatefulWidget {
 }
 
 class _TemplateSheetState extends State<_TemplateSheet> {
-  final _selected = <String>{'meals', 'brushTeeth', 'shower', 'water'};
+  // Meals are a first-class record now, so no longer seeded as a habit.
+  final _selected = <String>{'brushTeeth', 'shower', 'water'};
 
   static const _templates = <({
     String key,
@@ -309,13 +310,6 @@ class _TemplateSheetState extends State<_TemplateSheet> {
     String group,
     IconData icon,
   })>[
-    (
-      key: 'meals',
-      label: 'What I ate today',
-      note: 'Log meals and snacks with notes',
-      group: 'Daily essentials',
-      icon: Icons.restaurant_outlined,
-    ),
     (
       key: 'brushTeeth',
       label: 'Brushed my teeth',

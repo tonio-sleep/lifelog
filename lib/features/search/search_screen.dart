@@ -7,8 +7,10 @@ import '../../app/widgets/common.dart';
 import '../../app/widgets/components.dart';
 import '../../core/util/dates.dart';
 import '../../domain/search.dart';
+import '../../domain/models/meals.dart';
 import '../../domain/models/timeline.dart';
 import '../journal/journal_widgets.dart';
+import '../meals/meal_dialogs.dart';
 import '../music/music_screen.dart';
 import '../photos/photo_widgets.dart';
 import '../places/place_dialogs.dart';
@@ -215,6 +217,17 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         if (event != null && mounted) {
           await showTimelineEventEditor(context, ref, existing: event);
         }
+      case SearchKind.meal:
+        MealRecord? meal;
+        for (final candidate in archive.meals) {
+          if (candidate.id == hit.sourceId) {
+            meal = candidate;
+            break;
+          }
+        }
+        if (meal != null && mounted) {
+          await showMealEditor(context, ref, hit.date, existing: meal);
+        }
     }
   }
 
@@ -252,6 +265,7 @@ class _SearchResult extends StatelessWidget {
       SearchKind.visit => (Icons.directions_walk_rounded, palette.place),
       SearchKind.music => (Icons.graphic_eq_rounded, palette.music),
       SearchKind.event => (Icons.bolt_rounded, palette.manual),
+      SearchKind.meal => (Icons.restaurant_rounded, palette.manual),
     };
 
     return Padding(

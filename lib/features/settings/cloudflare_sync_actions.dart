@@ -11,6 +11,7 @@ import '../../app/widgets/common.dart';
 import '../../app/widgets/components.dart';
 import '../../core/util/dates.dart';
 import '../../domain/models/settings.dart';
+import '../../integrations/cloudflare/backup_upload_progress.dart';
 import '../../integrations/cloudflare/cloudflare_sync_service.dart';
 import '../../integrations/cloudflare/sync_status.dart';
 
@@ -240,26 +241,38 @@ Future<void> backupToCloudflare(BuildContext context, WidgetRef ref) async {
   }
 
   final services = ref.read(appServicesProvider);
-  final data = await guard<Uint8List>(
-    context,
-    services.backup.createBackup(
+  final progress = ref.read(backupUploadProvider.notifier);
+  progress.begin();
+
+  late Uint8List data;
+  try {
+    data = await services.backup.createBackup(
       archive: ref.read(archiveProvider),
       passphrase: passphrase,
       mediaStore: services.mediaStore,
-    ),
-    errorPrefix: 'Could not create encrypted backup',
-  );
-  if (data == null || !context.mounted) return;
+      onProgress: progress.packed,
+    );
+  } catch (e) {
+    progress.fail('Could not create encrypted backup: $e');
+    if (context.mounted) {
+      showSnack(context, 'Could not create encrypted backup: $e');
+    }
+    return;
+  }
+  if (!context.mounted) {
+    progress.fail('Sync cancelled');
+    return;
+  }
 
-  bool uploaded = false;
   try {
     await services.cloudflareSync.uploadBackup(
       baseUrl: auth.workerUrl,
       token: auth.token,
       bytes: data,
+      onByteProgress: progress.uploading,
     );
-    uploaded = true;
   } on CloudflareSyncException catch (e) {
+    progress.fail('Could not upload backup: ${e.message}');
     if (!context.mounted) return;
     if (_isSessionExpired(e)) {
       await _handleAuthFailure(context, ref);
@@ -268,15 +281,16 @@ Future<void> backupToCloudflare(BuildContext context, WidgetRef ref) async {
     showSnack(context, 'Could not upload backup: ${e.message}');
     return;
   } catch (e) {
+    progress.fail('Could not upload backup: $e');
     if (context.mounted) showSnack(context, 'Could not upload backup: $e');
     return;
   }
 
-  if (!uploaded) return;
   if (!passphraseWasRemembered) {
     await settings.rememberCloudflareBackupPassphrase(passphrase);
   }
   await settings.recordCloudflareSync(DateTime.now());
+  progress.finish();
   if (context.mounted) {
     showSnack(
       context,

@@ -9,7 +9,8 @@ enum SearchKind {
   place,
   visit,
   music,
-  event;
+  event,
+  meal;
 
   String get label => switch (this) {
     SearchKind.journal => 'Journal',
@@ -19,6 +20,7 @@ enum SearchKind {
     SearchKind.visit => 'Visits',
     SearchKind.music => 'Music',
     SearchKind.event => 'Events',
+    SearchKind.meal => 'Meals',
   };
 }
 
@@ -203,6 +205,27 @@ List<SearchHit> searchArchive(Archive archive, String rawQuery) {
               : snippet(event.notes),
           date: event.occurredAt,
           sourceId: event.id,
+        ),
+      );
+    }
+  }
+
+  for (final meal in archive.meals) {
+    if (matches(meal.name) ||
+        matches(meal.notes) ||
+        matches(meal.tags.join(' ')) ||
+        matches(meal.kind.label)) {
+      hits.add(
+        SearchHit(
+          kind: SearchKind.meal,
+          title: '${meal.kind.label}: ${meal.name}',
+          subtitle: [
+            meal.amountLabel,
+            if (meal.notes.trim().isNotEmpty) snippet(meal.notes),
+            if (meal.tags.isNotEmpty) meal.tags.map((t) => '#$t').join(' '),
+          ].where((value) => value.isNotEmpty).join(' · '),
+          date: meal.at,
+          sourceId: meal.id,
         ),
       );
     }

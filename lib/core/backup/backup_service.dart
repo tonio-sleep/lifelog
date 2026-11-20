@@ -6,6 +6,17 @@ import '../../domain/models/archive.dart';
 import '../crypto/crypto_service.dart';
 import '../storage/media_store.dart';
 
+/// Phases reported while an encrypted backup is assembled. This is local
+/// progress only — the wire format and encryption are unchanged.
+enum BackupPackStage { preparing, media, packing, encrypting, done }
+
+typedef BackupProgressCallback = void Function(
+  BackupPackStage stage,
+  int current,
+  int total,
+  String label,
+);
+
 class BackupException implements Exception {
   BackupException(this.message, [this.cause]);
   final String message;
@@ -49,8 +60,24 @@ class BackupContents {
     'places': archive.places.length,
     'visits': archive.visits.length,
     'scrobbles': archive.scrobbles.length,
+    'locationSamples': archive.locationSamples.length,
+    'meals': archive.meals.length,
   };
 }
+
+String _packLabel(String key) => switch (key) {
+      'journalEntries' => 'Organizing journal entries',
+      'photos' => 'Organizing photos',
+      'trackers' => 'Organizing habits',
+      'trackerRecords' => 'Organizing habit records',
+      'timelineEvents' => 'Organizing timeline events',
+      'places' => 'Organizing places',
+      'visits' => 'Organizing visits',
+      'scrobbles' => 'Organizing music',
+      'locationSamples' => 'Organizing location history',
+      'meals' => 'Organizing meals and drinks',
+      _ => 'Organizing records',
+    };
 
 /// Versioned, passphrase-encrypted archive exports.
 /// The archive (and included media bytes, when present) is encrypted with a key
@@ -74,11 +101,18 @@ class BackupService {
     required Archive archive,
     required String passphrase,
     MediaStore? mediaStore,
+    BackupProgressCallback? onProgress,
   }) async {
     if (passphrase.trim().length < 8) {
       throw BackupException('Use a backup passphrase of at least 8 characters.');
     }
 
+    onProgress?.call(
+      BackupPackStage.preparing,
+      0,
+      1,
+      'Preparing encrypted backup',
+    );
     final salt = _secureSalt();
     final key = await CryptoService.deriveBackupKey(
       passphrase: passphrase,
@@ -87,8 +121,16 @@ class BackupService {
     final crypto = CryptoService(key);
 
     final mediaFiles = <Map<String, dynamic>>[];
+    final mediaTotal = archive.media.length;
     if (mediaStore != null && archive.media.isNotEmpty) {
-      for (final item in archive.media) {
+      for (var i = 0; i < mediaTotal; i++) {
+        final item = archive.media[i];
+        onProgress?.call(
+          BackupPackStage.media,
+          i + 1,
+          mediaTotal,
+          'Including photo ${i + 1} of $mediaTotal',
+        );
         try {
           final original = await mediaStore.readOriginal(item);
           final thumb = await mediaStore.readThumbnailBytesIfExists(item);
@@ -104,14 +146,39 @@ class BackupService {
     }
     final includesMedia = mediaFiles.isNotEmpty;
 
+    final counts = BackupContents(
+      archive: archive,
+      createdAt: DateTime.now(),
+      includesMedia: includesMedia,
+      mediaFiles: const [],
+    ).counts;
+    final totalItems = counts.values.fold<int>(0, (sum, value) => sum + value);
+    var packed = 0;
+    for (final entry in counts.entries) {
+      packed += entry.value;
+      onProgress?.call(
+        BackupPackStage.packing,
+        packed,
+        totalItems,
+        _packLabel(entry.key),
+      );
+    }
+
+    final archiveJson = archive.toJson();
     final payload = {
       'format': 'lifelog-archive',
       'version': 2,
       'createdAt': DateTime.now().toUtc().toIso8601String(),
       'includesMedia': includesMedia,
-      'archive': archive.toJson(),
+      'archive': archiveJson,
       'mediaFiles': mediaFiles,
     };
+    onProgress?.call(
+      BackupPackStage.encrypting,
+      0,
+      1,
+      'Encrypting backup',
+    );
     final encrypted = await crypto.encryptBytes(
       utf8.encode(jsonEncode(payload)),
       aad: _aadV2,
@@ -134,6 +201,7 @@ class BackupService {
     };
 
     final pretty = const JsonEncoder.withIndent('  ').convert(container);
+    onProgress?.call(BackupPackStage.done, 1, 1, 'Backup ready');
     return Uint8List.fromList(utf8.encode(pretty));
   }
 

@@ -6,6 +6,7 @@ import '../../app/theme/app_theme.dart';
 import '../../app/widgets/common.dart';
 import '../../app/widgets/surfaces.dart';
 import '../../core/util/dates.dart';
+import '../../integrations/cloudflare/backup_upload_progress.dart';
 import '../../integrations/cloudflare/sync_status.dart';
 import 'cloudflare_sync_actions.dart';
 
@@ -25,16 +26,21 @@ class AccountSyncCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final status = watchSyncStatus(ref);
+    final upload = ref.watch(backupUploadProvider);
     final palette = context.palette;
     final text = context.text;
     final phase = status.phase;
 
-    final (label, tone) = switch (phase) {
+    var (label, tone) = switch (phase) {
       SyncPhase.signedOut => ('Not signed in', StatusTone.neutral),
       SyncPhase.active => ('Signed in', StatusTone.positive),
       SyncPhase.expiresSoon => (_expiresLabel(status), StatusTone.attention),
       SyncPhase.expired => ('Session expired', StatusTone.attention),
     };
+    if (upload.active) {
+      label = 'Uploading…';
+      tone = StatusTone.accent;
+    }
 
     final title = status.signedIn
         ? (status.username ?? 'Cloud sync')
@@ -86,7 +92,11 @@ class AccountSyncCard extends ConsumerWidget {
                       ),
                     ),
                     const SizedBox(width: Insets.sm),
-                    StatusPill(label: label, tone: tone),
+                    StatusPill(
+                      label: label,
+                      tone: tone,
+                      pulse: upload.active,
+                    ),
                     if (status.signedIn)
                       PopupMenuButton<_AccountAction>(
                         tooltip: 'Account options',
@@ -253,6 +263,7 @@ class _SignedInBody extends ConsumerWidget {
     final lastLabel = last == null
         ? 'No cloud backup yet'
         : '${relativeDayLabel(dayStart(last))}, ${formatTime(last)}';
+    final upload = ref.watch(backupUploadProvider);
     final passphraseRemembered =
         ref.watch(settingsProvider).cloudflarePassphraseCipher?.isNotEmpty ??
             false;
@@ -282,6 +293,10 @@ class _SignedInBody extends ConsumerWidget {
           'Includes entries, notes, vocab, photos/videos, habits, places, music, and timeline.',
           style: text.bodySmall?.copyWith(color: palette.mutedText),
         ),
+        if (upload.stage != BackupUploadStage.idle) ...[
+          const SizedBox(height: Insets.md),
+          _UploadProgressBlock(progress: upload),
+        ],
         if (passphraseRemembered) ...[
           const SizedBox(height: Insets.xs),
           Row(
@@ -304,7 +319,9 @@ class _SignedInBody extends ConsumerWidget {
             Expanded(
               flex: 3,
               child: FilledButton.icon(
-                onPressed: () => backupToCloudflare(context, ref),
+                onPressed: upload.active
+                    ? null
+                    : () => backupToCloudflare(context, ref),
                 icon: const Icon(Icons.cloud_upload_outlined, size: 18),
                 label: const Text('Sync now'),
               ),
@@ -320,6 +337,153 @@ class _SignedInBody extends ConsumerWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+String _formatBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
+  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+}
+
+class _UploadProgressBlock extends StatelessWidget {
+  const _UploadProgressBlock({required this.progress});
+
+  final BackupUploadProgress progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final text = context.text;
+    final uploading = progress.stage == BackupUploadStage.uploading;
+    final fraction = uploading
+        ? progress.byteFraction
+        : (progress.active ? progress.itemFraction : 1.0);
+    final detail = uploading
+        ? '${_formatBytes(progress.bytesSent)} of '
+            '${_formatBytes(progress.bytesTotal)}'
+        : progress.total > 0
+            ? '${progress.current} of ${progress.total} items'
+            : '';
+
+    return Container(
+      padding: const EdgeInsets.all(Insets.md),
+      decoration: BoxDecoration(
+        color: palette.subtle,
+        borderRadius: BorderRadius.circular(Radii.md),
+        border: Border.all(color: palette.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(
+                progress.stage == BackupUploadStage.failed
+                    ? Icons.error_outline_rounded
+                    : Icons.cloud_upload_outlined,
+                size: 16,
+                color: progress.stage == BackupUploadStage.failed
+                    ? context.scheme.error
+                    : context.scheme.primary,
+              ),
+              const SizedBox(width: Insets.sm),
+              Expanded(
+                child: Text(
+                  progress.label.isEmpty
+                      ? progress.stage.label
+                      : progress.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: text.labelMedium?.copyWith(fontWeight: FontWeight.w600),
+                ),
+              ),
+              if (detail.isNotEmpty)
+                Text(
+                  detail,
+                  style: text.labelSmall?.copyWith(color: palette.mutedText),
+                ),
+            ],
+          ),
+          const SizedBox(height: Insets.sm),
+          LinearProgressIndicator(
+            value: progress.stage == BackupUploadStage.failed ? null : fraction,
+            minHeight: 4,
+            backgroundColor: palette.border,
+            color: progress.stage == BackupUploadStage.failed
+                ? context.scheme.error
+                : context.scheme.primary,
+          ),
+          Theme(
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              title: Text(
+                'Upload details',
+                style: text.labelSmall?.copyWith(color: palette.mutedText),
+              ),
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: EdgeInsets.zero,
+              children: [
+                _DetailRow(
+                  label: 'Stage',
+                  value: progress.stage.label,
+                ),
+                _DetailRow(
+                  label: 'Items packed',
+                  value: '${progress.current} / ${progress.total}',
+                ),
+                _DetailRow(
+                  label: 'Bytes sent',
+                  value: '${_formatBytes(progress.bytesSent)} / '
+                      '${_formatBytes(progress.bytesTotal)}',
+                ),
+                if (progress.startedAt != null)
+                  _DetailRow(
+                    label: 'Started',
+                    value: formatTime(progress.startedAt!),
+                  ),
+                if (progress.error != null)
+                  _DetailRow(label: 'Error', value: progress.error!),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DetailRow extends StatelessWidget {
+  const _DetailRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          Text(
+            label,
+            style: context.text.labelSmall?.copyWith(
+              color: context.palette.dimText,
+            ),
+          ),
+          const Spacer(),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: context.text.labelSmall,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

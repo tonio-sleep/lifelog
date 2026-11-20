@@ -5,9 +5,10 @@ journal entries, custom trackers, a unified timeline, encrypted photos and
 files, places and visits, listening history, memories, insights and search in
 one archive that stays on your device.
 
-There is no Lifelog account, no analytics, no cloud sync and no background
-location tracking. The structured archive and every media file are encrypted
-at rest with AES-256-GCM.
+There is no analytics, crash reporting or map tile service. Optional encrypted
+backup sync to Cloudflare R2 and optional iOS background visit monitoring are
+available. The structured archive and every media file are encrypted at rest
+with AES-256-GCM; location samples stay in that encrypted local archive.
 
 ## What is implemented
 
@@ -21,46 +22,56 @@ at rest with AES-256-GCM.
   derived into one chronological day view. Manual events are stored separately.
 - **Photos and files** — imported files and generated thumbnails are encrypted
   before they touch disk. Captions, tags and favourites live in the archive.
-- **Places and visits** — saved places with optional coordinates, manually
-  confirmed visits, an optional single on-demand location fix and a schematic
-  map that downloads no tiles.
+- **Meals** — first-class meal, drink and snack records with amount, notes and
+  tags, plus a one-time migration from the old meal habit and entry text.
+- **Places and visits** — saved places with optional coordinates, day-tracking
+  samples, iOS background visit monitoring when you opt in with Always access,
+  manually confirmed visits and a schematic map that downloads no tiles.
 - **Music** — optional read-only Last.fm sync using your own API key, plus
   manual track entry.
 - **Memories** — a real activity calendar, on-this-day records and day detail.
 - **Insights** — counts, ranges, weekday rhythm, tracker trends and coverage
   rows. Nothing is modelled or predicted.
 - **Search** — literal local search across journal text, tags, tracker notes,
-  places, visits, music and manual events.
+  meals, places, visits, music and manual events.
 - **Settings** — appearance, week start, PIN privacy screen with auto-lock,
-  key/data details, backup and restore, Last.fm, onboarding replay and wipe.
+  key/data details, local and Cloudflare backup sync with per-file progress,
+  Last.fm, onboarding replay and wipe.
 - **Backup** — passphrase-encrypted, versioned exports derived with Argon2id.
+  The passphrase is remembered encrypted on the same device and is never sent
+  to the sync server.
 
 ## Requirements
 
-- Flutter 3.47 or newer (Dart 3.13 or newer)
-- Windows 10/11 for the primary desktop target (macOS and Linux are supported
-  by Flutter; only Windows has been built and smoke-tested here)
+- Flutter 3.47.4 (Dart 3.13 or newer)
+- macOS 15 with Xcode 26.1.1 for iOS builds (the CI runner provides this)
+- iOS 15 or newer on the target device
 - A Last.fm API key only if you want music sync
 
 ## Run
 
-```powershell
+On a Mac with a connected iOS device:
+
+```bash
 flutter pub get
-flutter run -d windows
+flutter run -d <ios-device-id>
 ```
 
 Run the checks:
 
-```powershell
+```bash
 flutter analyze
 flutter test
 ```
 
-Build a Windows executable:
+Build an unsigned iOS app bundle:
 
-```powershell
-flutter build windows --release
+```bash
+flutter build ios --release --no-codesign
 ```
+
+`.github/workflows/build.yml` runs the checks, builds the app and packages the
+unsigned IPA as the `lifelog-ios-unsigned-ipa` artifact.
 
 See [docs/setup.md](docs/setup.md) for prerequisites, data locations and
 troubleshooting.
@@ -77,13 +88,16 @@ troubleshooting.
 
 These are real limits of the current build, not placeholders:
 
-- **No cloud sync or multi-device merge.** The archive belongs to one install.
+- **Cloud sync is one encrypted backup blob, not a live merge.** The archive
+  belongs to one install; uploading and restoring replaces it.
 - **Backups exclude media bytes.** A restore replaces the archive and clears
   the current encrypted media vault. Copy media separately if you need it.
-- **No background GPS or automatic visit detection.** Visits are manual, with
-  an optional single on-demand location fix.
-- **The map is schematic.** It draws saved places and visits on a local canvas
-  and requests no map tiles.
+- **Background visits are not continuous GPS.** With Background visits on and
+  Location Access set to Always, iOS reports visits and significant location
+  changes. Arrival/departure still needs the app to run to flush the local
+  queue into the archive.
+- **The map is schematic.** It draws saved places, tracked samples and stops
+  on a local canvas and requests no map tiles.
 - **Last.fm is optional and read-only.** It needs your own API key and a
   username with public recent tracks. It may lag behind other scrobbling
   sources.

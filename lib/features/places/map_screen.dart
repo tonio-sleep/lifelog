@@ -45,10 +45,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             icon: Icons.my_location_rounded,
             title: 'Location tracking (optional)',
             body:
-                'When you turn on day tracking, Lifelog can record your location '
-                'while the app is in use to estimate where you spent time. '
-                'Samples and visits stay in your encrypted local archive. '
-                'You can also save places and log visits manually at any time.',
+                'When you turn on day tracking, Lifelog records your location '
+                'while the app is in use. With “Background visits” enabled and '
+                'Location Access set to Always in iOS Settings, iOS also reports '
+                'places you arrive at or leave even when the app is closed. '
+                'No continuous GPS is used. Samples and visits stay in your '
+                'encrypted local archive and are never uploaded.',
           ),
           SizedBox(height: Insets.lg),
           _PrivacyPoint(
@@ -80,6 +82,34 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       showSnack(context, 'Location tracking is off. Your saved visits remain.');
     }
   }
+
+  Future<void> _toggleBackgroundTracking(bool value) async {
+    final controller = ref.read(locationTrackingControllerProvider);
+    await controller.setBackgroundEnabled(value);
+    if (!mounted) return;
+    if (value) {
+      final status = await ref
+          .read(backgroundLocationChannelProvider)
+          .authorizationStatus();
+      if (!mounted) return;
+      if (status == 'always') {
+        showSnack(
+          context,
+          'Background visits are on. iOS will add places you visit to your private map.',
+        );
+      } else {
+        showSnack(
+          context,
+          'Background visits are on. Open iOS Settings → Location → Always to track while the app is closed.',
+        );
+      }
+    } else {
+      showSnack(context, 'Background visits are off. Saved places remain.');
+    }
+  }
+
+  Future<void> _openLocationSettings() =>
+      ref.read(backgroundLocationChannelProvider).openSettings();
 
   Future<void> _recordLocationNow() async {
     final settings = ref.read(settingsProvider);
@@ -142,7 +172,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         ListGroup(
           title: 'Day tracking',
           footer:
-              'When on, Lifelog checks your location while the app is in use to show where you are, when you are on the road, and how long you stay in each place. For best results, open the app during the day or tap Record now when you arrive or start traveling. Everything stays on this device in your encrypted archive.',
+              'Day tracking records your route while the app is in use. Background visits use iOS place monitoring (not continuous GPS) and need Location Access set to Always in iOS Settings. All of it stays on this device in your encrypted archive — nothing is sent to a server.',
           children: [
             ListRow(
               icon: Icons.location_searching_rounded,
@@ -164,6 +194,27 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 subtitle: 'Capture your current location and update today',
                 chevron: true,
                 onTap: _recordLocationNow,
+              ),
+            ListRow(
+              icon: Icons.hourglass_top_rounded,
+              iconColor: palette.place,
+              title: 'Background visits',
+              subtitle: settings.backgroundLocationEnabled
+                  ? 'On · iOS reports places you visit while the app is closed'
+                  : 'Off',
+              trailing: Switch.adaptive(
+                value: settings.backgroundLocationEnabled,
+                onChanged: _toggleBackgroundTracking,
+              ),
+            ),
+            if (settings.backgroundLocationEnabled)
+              ListRow(
+                icon: Icons.settings_outlined,
+                iconColor: palette.place,
+                title: 'Location Access in iOS Settings',
+                subtitle: 'Choose Always for background visit tracking',
+                chevron: true,
+                onTap: _openLocationSettings,
               ),
           ],
         ),
@@ -197,6 +248,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 SchematicMap(
                   places: places,
                   visits: visits,
+                  samples: archive.locationSamplesOn(day),
                   privateMode: _privateMode,
                 ),
                 const SectionHeader(title: 'Today\'s journey'),
@@ -226,6 +278,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       segment: segment,
                       isToday: isToday,
                     ),
+                if (visits.any((v) => v.id.startsWith('auto-loc-'))) ...[
+                  const SectionHeader(title: 'Auto-tracked places'),
+                  for (final visit
+                      in visits.where((v) => v.id.startsWith('auto-loc-')))
+                    _VisitCard(visit: visit, day: day),
+                ],
                 if (visits.any((v) => !v.id.startsWith('auto-loc-'))) ...[
                   const SectionHeader(title: 'Manual visits'),
                   for (final visit
@@ -458,7 +516,6 @@ class _StatChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = context.text;
-    final palette = context.palette;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: Insets.sm, vertical: 8),
       decoration: BoxDecoration(

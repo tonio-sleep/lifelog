@@ -180,6 +180,8 @@ class AppSettings {
     this.cloudflareSetupDone = false,
     this.reminders = const [],
     this.locationTrackingEnabled = false,
+    this.backgroundLocationEnabled = false,
+    this.mealsMigrated = false,
   });
 
   final bool onboardingComplete;
@@ -239,6 +241,13 @@ class AppSettings {
   /// permission) to estimate visits and where time was spent each day.
   final bool locationTrackingEnabled;
 
+  /// Opt-in for iOS visit/significant-change monitoring while the app is not
+  /// foregrounded. Events are queued locally and flushed into the archive.
+  final bool backgroundLocationEnabled;
+
+  /// Set after the one-time migration of old meal habits and entry meal text.
+  final bool mealsMigrated;
+
   bool get lastfmConnected =>
       lastfmUsername != null && lastfmUsername!.trim().isNotEmpty;
 
@@ -286,6 +295,8 @@ class AppSettings {
     bool? cloudflareSetupDone,
     List<ReminderItem>? reminders,
     bool? locationTrackingEnabled,
+    bool? backgroundLocationEnabled,
+    bool? mealsMigrated,
   }) {
     final clearCloud = clearCloudflareSession;
     return AppSettings(
@@ -339,6 +350,9 @@ class AppSettings {
       reminders: reminders ?? this.reminders,
       locationTrackingEnabled:
           locationTrackingEnabled ?? this.locationTrackingEnabled,
+      backgroundLocationEnabled:
+          backgroundLocationEnabled ?? this.backgroundLocationEnabled,
+      mealsMigrated: mealsMigrated ?? this.mealsMigrated,
     );
   }
 
@@ -369,6 +383,8 @@ class AppSettings {
         'cloudflareSetupDone': cloudflareSetupDone,
         'reminders': reminders.map((r) => r.toJson()).toList(),
         'locationTrackingEnabled': locationTrackingEnabled,
+        'backgroundLocationEnabled': backgroundLocationEnabled,
+        'mealsMigrated': mealsMigrated,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
@@ -430,6 +446,9 @@ class AppSettings {
           .where((r) => r.id.isNotEmpty)
           .toList(),
       locationTrackingEnabled: json['locationTrackingEnabled'] as bool? ?? false,
+      backgroundLocationEnabled:
+          json['backgroundLocationEnabled'] as bool? ?? false,
+      mealsMigrated: json['mealsMigrated'] as bool? ?? false,
     );
   }
 }

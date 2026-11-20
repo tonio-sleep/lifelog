@@ -92,6 +92,7 @@ class _AppShellState extends ConsumerState<AppShell> {
   @override
   Widget build(BuildContext context) {
     final desktop = MediaQuery.sizeOf(context).width >= 900;
+    final keyboardHeight = MediaQuery.viewInsetsOf(context).bottom;
 
     if (desktop) {
       return Scaffold(
@@ -128,7 +129,7 @@ class _AppShellState extends ConsumerState<AppShell> {
     // The translucent tab bar sits over the scroll view; ScreenFrame reserves
     // its height so the last card is never hidden behind it.
     return Scaffold(
-      extendBody: true,
+      extendBody: keyboardHeight == 0,
       body: SafeArea(
         bottom: false,
         child: _TabStack(
@@ -142,11 +143,14 @@ class _AppShellState extends ConsumerState<AppShell> {
           ],
         ),
       ),
-      bottomNavigationBar: _BottomBar(
-        selected: _tab,
-        onSelect: (index) {
-          if (index != _tab) setState(() => _tab = index);
-        },
+      bottomNavigationBar: Padding(
+        padding: EdgeInsets.only(bottom: keyboardHeight),
+        child: _BottomBar(
+          selected: _tab,
+          onSelect: (index) {
+            if (index != _tab) setState(() => _tab = index);
+          },
+        ),
       ),
     );
   }

@@ -6,19 +6,21 @@ import '../../app/theme/app_theme.dart';
 import '../../domain/models/places.dart';
 
 /// A deliberately schematic map. Lifelog does not send precise location
-/// history to a tile provider in this build, so saved places and confirmed
-/// visits are plotted on a local canvas instead.
+/// history to a tile provider in this build, so saved places, tracked samples
+/// and unsaved stops are plotted on a local canvas instead.
 class SchematicMap extends StatelessWidget {
   const SchematicMap({
     super.key,
     required this.places,
     required this.visits,
     required this.privateMode,
+    this.samples = const [],
     this.height = 230,
   });
 
   final List<Place> places;
   final List<Visit> visits;
+  final List<LocationSample> samples;
   final bool privateMode;
   final double height;
 
@@ -27,7 +29,7 @@ class SchematicMap extends StatelessWidget {
     final palette = LifelogPalette.of(context);
     final scheme = Theme.of(context).colorScheme;
     final located = places.where((p) => p.hasCoordinates).toList();
-    if (located.isEmpty) {
+    if (located.isEmpty && samples.isEmpty) {
       return Container(
         height: height,
         alignment: Alignment.center,
@@ -44,13 +46,12 @@ class SchematicMap extends StatelessWidget {
               Icon(Icons.public_off_rounded, color: scheme.primary, size: 30),
               const SizedBox(height: Insets.md),
               Text(
-                'No coordinates saved',
+                'No location on this day',
                 style: Theme.of(context).textTheme.titleSmall,
               ),
               const SizedBox(height: Insets.xs),
               Text(
-                'Add a place and optionally capture its position. A named '
-                'place works without coordinates too.',
+                'Turn on day tracking or allow background visits to see the places you went. Named places work without coordinates too.',
                 textAlign: TextAlign.center,
                 style: Theme.of(
                   context,
@@ -75,6 +76,7 @@ class SchematicMap extends StatelessWidget {
           painter: _MapPainter(
             places: located,
             visits: visits,
+            samples: privateMode ? const [] : samples,
             privateMode: privateMode,
             gridColor: palette.border,
             surface: palette.subtle,
@@ -93,6 +95,7 @@ class _MapPainter extends CustomPainter {
   _MapPainter({
     required this.places,
     required this.visits,
+    required this.samples,
     required this.privateMode,
     required this.gridColor,
     required this.surface,
@@ -103,6 +106,7 @@ class _MapPainter extends CustomPainter {
 
   final List<Place> places;
   final List<Visit> visits;
+  final List<LocationSample> samples;
   final bool privateMode;
   final Color gridColor;
   final Color surface;
@@ -135,8 +139,12 @@ class _MapPainter extends CustomPainter {
       minLon = math.min(minLon, place.longitude!);
       maxLon = math.max(maxLon, place.longitude!);
     }
-    // Expand the bounds so a single place does not divide by zero and labels
-    // have breathing room.
+    for (final sample in samples) {
+      minLat = math.min(minLat, sample.latitude);
+      maxLat = math.max(maxLat, sample.latitude);
+      minLon = math.min(minLon, sample.longitude);
+      maxLon = math.max(maxLon, sample.longitude);
+    }
     final latSpan = math.max(maxLat - minLat, 0.01);
     final lonSpan = math.max(maxLon - minLon, 0.01);
     const padding = 46.0;
@@ -149,16 +157,42 @@ class _MapPainter extends CustomPainter {
       return Offset(x, y);
     }
 
+    final orderedSamples = [...samples]
+      ..sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
+
+    // Raw journey: one line through the actual samples, plus small dots.
+    if (orderedSamples.isNotEmpty) {
+      final pathPaint = Paint()
+        ..color = accent.withValues(alpha: 0.38)
+        ..strokeWidth = 1.8
+        ..style = PaintingStyle.stroke;
+      final path = Path();
+      for (var i = 0; i < orderedSamples.length; i++) {
+        final point = project(
+          orderedSamples[i].latitude,
+          orderedSamples[i].longitude,
+        );
+        if (i == 0) {
+          path.moveTo(point.dx, point.dy);
+        } else {
+          path.lineTo(point.dx, point.dy);
+        }
+        canvas.drawCircle(
+          point,
+          2.4,
+          Paint()..color = accent.withValues(alpha: 0.55),
+        );
+      }
+      canvas.drawPath(path, pathPaint);
+      _drawUnsavedStops(canvas, orderedSamples, project, accent);
+    }
+
     final byPlace = <String, List<Visit>>{};
     for (final visit in visits) {
       if (visit.placeId == null) continue;
       byPlace.putIfAbsent(visit.placeId!, () => []).add(visit);
     }
 
-    final pathPaint = Paint()
-      ..color = accent.withValues(alpha: 0.35)
-      ..strokeWidth = 1.6
-      ..style = PaintingStyle.stroke;
     final visitPoints = <Offset>[];
     for (final place in places) {
       final dayVisits = byPlace[place.id];
@@ -173,7 +207,13 @@ class _MapPainter extends CustomPainter {
       for (var i = 1; i < visitPoints.length; i++) {
         path.lineTo(visitPoints[i].dx, visitPoints[i].dy);
       }
-      canvas.drawPath(path, pathPaint);
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = accent.withValues(alpha: 0.35)
+          ..strokeWidth = 1.6
+          ..style = PaintingStyle.stroke,
+      );
     }
 
     for (final place in places) {
@@ -215,7 +255,7 @@ class _MapPainter extends CustomPainter {
 
     final note = privateMode
         ? 'Privacy mode · exact coordinates hidden'
-        : 'Schematic local map · no map tiles requested';
+        : 'Schematic local map · ${samples.length} tracked points · no map tiles';
     final notePainter = TextPainter(
       text: TextSpan(
         text: note,
@@ -226,10 +266,58 @@ class _MapPainter extends CustomPainter {
     notePainter.paint(canvas, Offset(8, size.height - notePainter.height - 6));
   }
 
+  /// Highlights clusters where the device stayed put — including stops that
+  /// were never matched to a saved place.
+  void _drawUnsavedStops(
+    Canvas canvas,
+    List<LocationSample> samples,
+    Offset Function(double, double) project,
+    Color accent,
+  ) {
+    const clusterDegrees = 0.0012; // roughly 130 metres
+    var clusterStart = 0;
+    void drawCluster(int end) {
+      final cluster = samples.sublist(clusterStart, end);
+      if (cluster.length < 2) return;
+      final duration = cluster.last.recordedAt.difference(cluster.first.recordedAt);
+      if (duration.inMinutes < 4) return;
+      final lat = cluster.map((s) => s.latitude).reduce((a, b) => a + b) /
+          cluster.length;
+      final lon = cluster.map((s) => s.longitude).reduce((a, b) => a + b) /
+          cluster.length;
+      final point = project(lat, lon);
+      canvas.drawCircle(
+        point,
+        11,
+        Paint()..color = accent.withValues(alpha: 0.14),
+      );
+      canvas.drawCircle(
+        point,
+        6,
+        Paint()
+          ..color = accent.withValues(alpha: 0.85)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.6,
+      );
+    }
+
+    for (var i = 1; i < samples.length; i++) {
+      final previous = samples[i - 1];
+      final current = samples[i];
+      if ((current.latitude - previous.latitude).abs() > clusterDegrees ||
+          (current.longitude - previous.longitude).abs() > clusterDegrees) {
+        drawCluster(i);
+        clusterStart = i;
+      }
+    }
+    drawCluster(samples.length);
+  }
+
   @override
   bool shouldRepaint(covariant _MapPainter oldDelegate) {
     return oldDelegate.places != places ||
         oldDelegate.visits != visits ||
+        oldDelegate.samples != samples ||
         oldDelegate.privateMode != privateMode;
   }
 }

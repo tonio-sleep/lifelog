@@ -3,6 +3,7 @@
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../domain/meals_migration.dart';
 import '../domain/models/archive.dart';
 import '../domain/models/settings.dart';
 import '../integrations/cloudflare/cloudflare_sync_service.dart';
@@ -72,8 +73,22 @@ class AppServices {
       crypto: crypto,
     );
     final settingsStore = SettingsStore(directory: root);
-    final settings = await settingsStore.load();
-    final archive = await archiveStore.load() ?? Archive.empty();
+    var settings = await settingsStore.load();
+    var archive = await archiveStore.load() ?? Archive.empty();
+
+    // Additive, one-time migration of legacy meal habits and entry meal text.
+    // Old JSON keys stay readable; only the archive's new `meals` list is added.
+    if (!settings.mealsMigrated) {
+      try {
+        final migrated = migrateLegacyMeals(archive);
+        await archiveStore.save(migrated);
+        archive = migrated;
+        settings = settings.copyWith(mealsMigrated: true);
+        await settingsStore.save(settings);
+      } catch (_) {
+        // Retry on the next launch; the original archive is left untouched.
+      }
+    }
 
     return AppServices(
       rootDirectory: root,

@@ -1,5 +1,6 @@
 import '../../core/util/dates.dart';
 import 'journal.dart';
+import 'meals.dart';
 import 'media.dart';
 import 'music.dart';
 import 'places.dart';
@@ -20,6 +21,7 @@ class Archive {
     List<Visit>? visits,
     List<MusicScrobble>? scrobbles,
     List<LocationSample>? locationSamples,
+    List<MealRecord>? meals,
   }) : entries = entries ?? [],
        media = media ?? [],
        trackers = trackers ?? [],
@@ -28,7 +30,8 @@ class Archive {
        places = places ?? [],
        visits = visits ?? [],
        scrobbles = scrobbles ?? [],
-       locationSamples = locationSamples ?? [];
+       locationSamples = locationSamples ?? [],
+       meals = meals ?? [];
 
   final List<JournalEntry> entries;
   final List<MediaItem> media;
@@ -39,6 +42,7 @@ class Archive {
   final List<Visit> visits;
   final List<MusicScrobble> scrobbles;
   final List<LocationSample> locationSamples;
+  final List<MealRecord> meals;
 
   factory Archive.empty() => Archive();
 
@@ -52,6 +56,7 @@ class Archive {
     visits: [...visits],
     scrobbles: [...scrobbles],
     locationSamples: [...locationSamples],
+    meals: [...meals],
   );
 
   bool get isEmpty =>
@@ -63,7 +68,8 @@ class Archive {
       places.isEmpty &&
       visits.isEmpty &&
       scrobbles.isEmpty &&
-      locationSamples.isEmpty;
+      locationSamples.isEmpty &&
+      meals.isEmpty;
 
   // ---------------------------------------------------------------------------
   // Lookups
@@ -229,6 +235,11 @@ class Archive {
       ..sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
   }
 
+  List<MealRecord> mealsOn(DateTime day) {
+    return meals.where((m) => sameDay(m.at, day)).toList()
+      ..sort((a, b) => a.at.compareTo(b.at));
+  }
+
   List<TimelineEvent> eventsOn(DateTime day, {bool includeHidden = false}) {
     return events
         .where(
@@ -268,6 +279,9 @@ class Archive {
     for (final record in trackerRecords) {
       addIfInMonth(record.recordedAt);
     }
+    for (final meal in meals) {
+      addIfInMonth(meal.at);
+    }
     return days;
   }
 
@@ -276,7 +290,8 @@ class Archive {
   String get signature =>
       '${entries.length}:${media.length}:${trackerRecords.length}:'
       '${visits.length}:${scrobbles.length}:${events.length}:'
-      '${places.length}:${trackers.length}:${locationSamples.length}';
+      '${places.length}:${trackers.length}:${locationSamples.length}:'
+      '${meals.length}';
 
   // ---------------------------------------------------------------------------
   // Serialisation
@@ -295,6 +310,7 @@ class Archive {
     'visits': visits.map((v) => v.toJson()).toList(),
     'scrobbles': scrobbles.map((s) => s.toJson()).toList(),
     'locationSamples': locationSamples.map((s) => s.toJson()).toList(),
+    'meals': meals.map((m) => m.toJson()).toList(),
   };
 
   factory Archive.fromJson(Map<String, dynamic> json) {
@@ -316,6 +332,7 @@ class Archive {
       visits: list('visits').map(Visit.fromJson).toList(),
       scrobbles: list('scrobbles').map(MusicScrobble.fromJson).toList(),
       locationSamples: list('locationSamples').map(LocationSample.fromJson).toList(),
+      meals: list('meals').map(MealRecord.fromJson).toList(),
     );
   }
 }

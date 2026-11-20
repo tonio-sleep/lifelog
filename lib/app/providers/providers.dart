@@ -9,6 +9,7 @@ import '../../core/util/dates.dart';
 import '../../domain/models/archive.dart';
 import '../../domain/models/journal.dart';
 import '../../domain/models/media.dart';
+import '../../domain/models/meals.dart';
 import '../../domain/models/music.dart';
 import '../../domain/models/places.dart';
 import '../../domain/models/timeline.dart';
@@ -115,6 +116,27 @@ class ArchiveController extends Notifier<Archive> {
       draft: true,
     );
     await saveEntry(copy);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Meals and drinks
+  // ---------------------------------------------------------------------------
+
+  Future<void> saveMeal(MealRecord meal) async {
+    final next = state.copy();
+    final index = next.meals.indexWhere((m) => m.id == meal.id);
+    if (index >= 0) {
+      next.meals[index] = meal;
+    } else {
+      next.meals.add(meal);
+    }
+    next.meals.sort((a, b) => a.at.compareTo(b.at));
+    await _persist(next);
+  }
+
+  Future<void> deleteMeal(String id) async {
+    final next = state.copy()..meals.removeWhere((m) => m.id == id);
+    await _persist(next);
   }
 
   // ---------------------------------------------------------------------------
@@ -373,6 +395,11 @@ class ArchiveController extends Notifier<Archive> {
   // ---------------------------------------------------------------------------
 
   Future<void> addLocationSample(LocationSample sample) async {
+    // Background events have deterministic ids and may arrive both from the
+    // event stream and the pending queue. Never store the same event twice.
+    if (state.locationSamples.any((existing) => existing.id == sample.id)) {
+      return;
+    }
     final next = state.copy();
     // Avoid exact duplicates in quick succession.
     final last = next.locationSamples.isEmpty ? null : next.locationSamples.last;

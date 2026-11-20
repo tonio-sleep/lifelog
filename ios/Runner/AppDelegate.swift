@@ -36,7 +36,7 @@ private final class LocationVisitManager: NSObject, CLLocationManagerDelegate {
     if enabled { startMonitoring() }
   }
 
-  func register(with registrar: NSObject<FlutterPluginRegistrar>) {
+  func register(with registrar: FlutterPluginRegistrar) {
     let messenger = registrar.messenger()
     let methodChannel = FlutterMethodChannel(
       name: methodChannelName,

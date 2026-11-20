@@ -89,7 +89,12 @@ struct RootView: View {
         Binding(
             get: {
                 if env.persistenceBlocked { return .recovery }
-                if !env.settings.onboardingComplete { return .onboarding }
+                #if DEBUG
+                let preview = ProcessInfo.processInfo.environment["LIFELOG_PREVIEW"] == "1"
+                #else
+                let preview = false
+                #endif
+                if !preview && !env.settings.onboardingComplete { return .onboarding }
                 return nil
             },
             set: { _ in }

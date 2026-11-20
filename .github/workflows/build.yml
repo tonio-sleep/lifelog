@@ -1,4 +1,4 @@
-name: Build
+name: Build iOS IPA
 
 on:
   push:
@@ -7,27 +7,23 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: build-${{ github.ref }}
+  group: ios-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  android:
-    name: Android APK
-    runs-on: ubuntu-latest
+  ios:
+    name: iOS unsigned IPA
+    runs-on: macos-15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
+      # Pin the SDK so CI matches the version this project is developed with.
+      # `stable` drifts between runner images and changes iOS build behaviour.
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: "3.47.4"
           cache: true
 
       - name: Flutter version
@@ -42,113 +38,39 @@ jobs:
       - name: Test
         run: flutter test
 
-      - name: Build APK (release)
-        run: flutter build apk --release
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: lifelog-android-apk
-          path: build/app/outputs/flutter-apk/*.apk
-          if-no-files-found: error
-
-  ios:
-    name: iOS (no codesign)
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-      - name: Flutter version
-        run: flutter --version
-
-      - name: Get dependencies
-        run: flutter pub get
-
       - name: Build iOS (release, no codesign)
         run: |
-          set +e
-          flutter build ios --release --no-codesign
-          status=$?
-          set -e
-          if [ $status -ne 0 ]; then
-            echo "flutter build ios exited with code $status"
-            if [ ! -d "build/ios/iphoneos/Runner.app" ]; then
-              echo "Runner.app was not produced; failing."
-              exit $status
-            fi
-            echo "Runner.app exists; continuing with packaging."
-          fi
+          set -o pipefail
+          flutter build ios --release --no-codesign -v 2>&1 | tee ios-build.log
 
-      - name: Package Runner.app and unsigned IPA
+      - name: Package unsigned IPA
         run: |
           set -euo pipefail
           APP_DIR="build/ios/iphoneos"
           if [ ! -d "$APP_DIR/Runner.app" ]; then
             echo "Runner.app not found in $APP_DIR"
             ls -la build/ios || true
-            ls -la "$APP_DIR" || true
             exit 1
           fi
           cd "$APP_DIR"
-          ditto -c -k --sequesterRsrc --keepParent Runner.app Runner.app.zip
           rm -rf Payload
           mkdir -p Payload
           cp -R Runner.app Payload/
-          zip -qry Runner-unsigned.ipa Payload
+          zip -qry lifelog-unsigned.ipa Payload
           rm -rf Payload
-          ls -lh Runner.app.zip Runner-unsigned.ipa
+          ls -lh lifelog-unsigned.ipa
 
-      - name: Upload iOS app bundle
+      - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: lifelog-ios-runner-app-unsigned
-          path: |
-            build/ios/iphoneos/Runner.app.zip
-            build/ios/iphoneos/Runner-unsigned.ipa
+          name: lifelog-ios-unsigned-ipa
+          path: build/ios/iphoneos/lifelog-unsigned.ipa
           if-no-files-found: error
 
-  windows:
-    name: Windows
-    runs-on: windows-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-      - name: Flutter version
-        run: flutter --version
-
-      - name: Enable Windows desktop
-        run: flutter config --enable-windows-desktop
-
-      - name: Get dependencies
-        run: flutter pub get
-
-      - name: Build Windows (release)
-        run: flutter build windows --release
-
-      - name: Package Windows release
-        shell: pwsh
-        run: |
-          $out = "build/windows/x64/runner/Release"
-          if (!(Test-Path $out)) { throw "Release output not found at $out" }
-          Compress-Archive -Path (Join-Path $out '*') -DestinationPath lifelog-windows-x64-release.zip -Force
-
-      - name: Upload Windows build
+      - name: Upload iOS build log
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: lifelog-windows-x64-release
-          path: lifelog-windows-x64-release.zip
-          if-no-files-found: error
+          name: ios-build-log
+          path: ios-build.log
+          if-no-files-found: ignore

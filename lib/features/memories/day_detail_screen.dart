@@ -7,6 +7,7 @@ import '../../app/widgets/common.dart';
 import '../../app/widgets/components.dart';
 import '../../core/util/dates.dart';
 import '../../domain/memories.dart';
+import '../../domain/models/journal.dart';
 import '../../domain/models/timeline.dart';
 import '../../domain/models/trackers.dart';
 import '../journal/journal_widgets.dart';
@@ -14,12 +15,13 @@ import '../music/music_screen.dart';
 import '../photos/photo_widgets.dart';
 import '../timeline/event_dialogs.dart';
 import '../timeline/timeline_widgets.dart';
+import '../today/quick_add.dart';
 import '../today/today_widgets.dart';
 import '../trackers/tracker_dialogs.dart';
 import '../trackers/tracker_widgets.dart';
 
-/// A single day read as a story: what you wrote, with its photos beneath it,
-/// then the habits, places and music that surrounded it.
+/// One day, read as a finished page: how it felt, what was written, what was
+/// captured, and the habits around it. Every section stays editable.
 class DayDetailScreen extends ConsumerStatefulWidget {
   const DayDetailScreen({super.key, required this.day});
   final DateTime day;
@@ -46,6 +48,11 @@ class _DayDetailScreenState extends ConsumerState<DayDetailScreen> {
       title: relativeDayLabel(_day),
       subtitle: formatDayLong(_day),
       actions: [
+        HeaderButton(
+          icon: Icons.mood_outlined,
+          tooltip: 'Add check-in',
+          onPressed: () => showDailyCheckinSheet(context, ref, _day),
+        ),
         HeaderButton(
           icon: Icons.bolt_rounded,
           tooltip: 'Add event',
@@ -80,6 +87,20 @@ class _DayDetailScreenState extends ConsumerState<DayDetailScreen> {
   }
 }
 
+bool _isMetricsOnly(JournalEntry entry) {
+  if (entry.title.trim().isNotEmpty ||
+      entry.body.trim().isNotEmpty ||
+      entry.hasVocabContent ||
+      entry.highlight.trim().isNotEmpty ||
+      entry.mood != null ||
+      entry.energy != null) {
+    return false;
+  }
+  return entry.sleepHours != null ||
+      entry.steps != null ||
+      entry.meals.trim().isNotEmpty;
+}
+
 class _DayStory extends ConsumerWidget {
   const _DayStory({required this.day});
 
@@ -90,23 +111,24 @@ class _DayStory extends ConsumerWidget {
     final archive = ref.watch(archiveProvider);
     final summary = DaySummary.of(archive, day);
     final palette = context.palette;
-    final text = context.text;
-    final mood = dominantMood(archive, day);
     final entries = archive.entriesOn(day, includeDrafts: true);
-    final looseMedia = summary.photos
-        .where((m) => m.journalEntryId == null)
+    final checkins = archive.checkinsOn(day);
+    final writing = entries
+        .where((e) => !e.isCheckinEntry && !_isMetricsOnly(e))
         .toList();
+    final metrics = archive.dayMetricsEntryFor(day);
+    final mood = checkins.isEmpty ? dominantMood(archive, day) : checkins.last.mood;
     final trackers = archive.activeTrackers
         .where((t) => TrackerMath.loggedOn(archive.trackerRecords, t.id, day))
         .toList();
     final memories = onThisDay(archive, day);
 
-    if (summary.isEmpty) {
+    if (summary.isEmpty && entries.isEmpty) {
       return EmptyState(
         icon: Icons.nights_stay_outlined,
         title: 'Nothing recorded',
         message:
-            'This day is quiet. Add a journal entry, note, or vocab list to start its folder.',
+            'This day is quiet. Add a check-in, an entry, or a photo to start its page.',
         actionLabel: 'Add entry',
         onAction: () => createJournalEntry(
           context,
@@ -120,91 +142,25 @@ class _DayStory extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (mood != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: Insets.md, left: Insets.xs),
-            child: Row(
-              children: [
-                Text(
-                  'Mostly',
-                  style: text.labelMedium?.copyWith(color: palette.mutedText),
-                ),
-                const SizedBox(width: Insets.sm),
-                MoodBadge(mood),
-              ],
+        _DayFeelingCard(
+          day: day,
+          checkins: checkins,
+          mood: mood,
+          metrics: metrics,
+        ),
+        if (writing.isNotEmpty) ...[
+          const SectionHeader(title: 'Entries'),
+          for (final entry in writing)
+            JournalEntryCard(
+              key: ValueKey(entry.id),
+              entry: entry,
+              showDate: false,
+              heroScope: 'day',
             ),
-          ),
-        if (entries.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(bottom: Insets.sm, left: Insets.xs),
-            child: Row(
-              children: [
-                Icon(Icons.folder_outlined, size: 16, color: palette.mutedText),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    '${entries.length} ${plural(entries.length, 'entry')} in this day',
-                    style: text.labelMedium?.copyWith(color: palette.mutedText),
-                  ),
-                ),
-                TextButton.icon(
-                  onPressed: () => createJournalEntry(
-                    context,
-                    date: day,
-                    focusBody: true,
-                    createNew: true,
-                  ),
-                  icon: const Icon(Icons.add_rounded, size: 18),
-                  label: const Text('Add entry'),
-                ),
-              ],
-            ),
-          ),
-        for (var i = 0; i < entries.length; i++) ...[
-          Padding(
-            padding: const EdgeInsets.only(
-              left: Insets.xs,
-              bottom: Insets.xs,
-              top: Insets.xs,
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.schedule_rounded, size: 14, color: palette.mutedText),
-                const SizedBox(width: 6),
-                Text(
-                  formatTime(entries[i].createdAt),
-                  style: text.labelMedium?.copyWith(
-                    color: palette.mutedText,
-                    fontFeatures: tabularFigures,
-                  ),
-                ),
-                const SizedBox(width: Insets.sm),
-                Expanded(
-                  child: Divider(color: palette.border),
-                ),
-                if (entries.length > 1) ...[
-                  const SizedBox(width: Insets.sm),
-                  Text(
-                    'Entry ${i + 1}',
-                    style: text.labelSmall?.copyWith(color: palette.dimText),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          JournalEntryCard(
-            key: ValueKey(entries[i].id),
-            entry: entries[i],
-            showDate: false,
-            heroScope: 'day',
-          ),
         ],
-        if (looseMedia.isNotEmpty) ...[
-          const SectionHeader(
-            title: 'Moments',
-            padding: EdgeInsets.only(top: Insets.md, bottom: Insets.sm),
-          ),
-          StoryStrip(items: looseMedia, scope: 'day-moments', height: 150),
+        if (summary.photos.isNotEmpty) ...[
+          const SectionHeader(title: 'Photos and videos'),
+          StoryStrip(items: summary.photos, scope: 'day-all', height: 150),
         ],
         if (trackers.isNotEmpty) ...[
           const SectionHeader(title: 'Habits'),
@@ -215,14 +171,16 @@ class _DayStory extends ConsumerWidget {
               for (final tracker in trackers)
                 Pressable(
                   borderRadius: BorderRadius.circular(Radii.pill),
-                  onTap: () => showTrackerLogDialog(context, ref, tracker, day: day),
+                  onTap: () =>
+                      showTrackerLogDialog(context, ref, tracker, day: day),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: Insets.md,
                       vertical: 8,
                     ),
                     decoration: BoxDecoration(
-                      color: trackerColor(tracker.colorValue).withValues(alpha: 0.13),
+                      color: trackerColor(tracker.colorValue)
+                          .withValues(alpha: 0.13),
                       borderRadius: BorderRadius.circular(Radii.pill),
                     ),
                     child: Row(
@@ -237,15 +195,45 @@ class _DayStory extends ConsumerWidget {
                         Text(
                           [
                             tracker.name,
-                            habitValueLabel(tracker, archive.trackerRecords, day),
+                            habitValueLabel(
+                              tracker,
+                              archive.trackerRecords,
+                              day,
+                            ),
                           ].whereType<String>().join(', '),
-                          style: text.labelMedium?.copyWith(fontWeight: FontWeight.w600),
+                          style: context.text.labelMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ],
                     ),
                   ),
                 ),
             ],
+          ),
+        ],
+        if (metrics != null &&
+            (metrics.sleepHours != null || metrics.steps != null)) ...[
+          const SectionHeader(title: 'Health'),
+          QuietCard(
+            child: Wrap(
+              spacing: Insets.sm,
+              runSpacing: Insets.xs,
+              children: [
+                if (metrics.sleepHours != null)
+                  SourceChip(
+                    label: '${_fmtNum(metrics.sleepHours!)}h sleep',
+                    color: palette.place,
+                    dense: true,
+                  ),
+                if (metrics.steps != null)
+                  SourceChip(
+                    label: '${metrics.steps} steps',
+                    color: palette.music,
+                    dense: true,
+                  ),
+              ],
+            ),
           ),
         ],
         if (summary.visits.isNotEmpty || summary.events.isNotEmpty) ...[
@@ -283,10 +271,12 @@ class _DayStory extends ConsumerWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(memory.relativeLabel, style: text.titleSmall),
+                          Text(memory.relativeLabel, style: context.text.titleSmall),
                           Text(
                             memory.description,
-                            style: text.bodySmall?.copyWith(color: palette.mutedText),
+                            style: context.text.bodySmall?.copyWith(
+                              color: palette.mutedText,
+                            ),
                           ),
                         ],
                       ),
@@ -298,6 +288,235 @@ class _DayStory extends ConsumerWidget {
             ),
         ],
       ],
+    );
+  }
+}
+
+String _fmtNum(double v) {
+  if (v == v.roundToDouble()) return v.toInt().toString();
+  return v.toStringAsFixed(v * 10 % 10 == 0 ? 1 : 2);
+}
+
+class _DayFeelingCard extends ConsumerWidget {
+  const _DayFeelingCard({
+    required this.day,
+    required this.checkins,
+    required this.mood,
+    required this.metrics,
+  });
+
+  final DateTime day;
+  final List<JournalEntry> checkins;
+  final int? mood;
+  final JournalEntry? metrics;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final palette = context.palette;
+    final text = context.text;
+    final accent =
+        mood == null ? palette.mutedText : moodColor(mood!, context.scheme);
+    final latest = checkins.isEmpty ? null : checkins.last;
+    final highlight = latest?.highlight.trim() ?? '';
+    final health = metrics;
+
+    return QuietCard(
+      color: mood == null ? null : accent.withValues(alpha: 0.10),
+      border: mood != null,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.mood_outlined, size: 18, color: accent),
+              const SizedBox(width: Insets.sm),
+              Expanded(child: Text('How I felt today', style: text.titleSmall)),
+              TextButton.icon(
+                onPressed: () => showDailyCheckinSheet(
+                  context,
+                  ref,
+                  day,
+                  existing: latest,
+                ),
+                icon: Icon(
+                  latest == null ? Icons.add_rounded : Icons.edit_outlined,
+                  size: 16,
+                ),
+                label: Text(latest == null ? 'Check in' : 'Edit'),
+              ),
+            ],
+          ),
+          const SizedBox(height: Insets.md),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 5,
+                height: 58,
+                decoration: BoxDecoration(
+                  color: accent,
+                  borderRadius: BorderRadius.circular(Radii.pill),
+                ),
+              ),
+              const SizedBox(width: Insets.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      mood == null ? 'No mood recorded' : MoodScore.label(mood!),
+                      style: AppTheme.serif(text.headlineMedium, size: 25)
+                          .copyWith(
+                            color: mood == null ? palette.mutedText : accent,
+                          ),
+                    ),
+                    if (highlight.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        highlight,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.serif(text.bodyMedium, size: 15)
+                            .copyWith(color: palette.mutedText, height: 1.5),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (mood != null)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      '$mood',
+                      style: text.titleLarge?.copyWith(
+                        color: accent,
+                        fontWeight: FontWeight.w600,
+                        fontFeatures: tabularFigures,
+                      ),
+                    ),
+                    Text(
+                      '/ 10',
+                      style: text.labelSmall?.copyWith(color: palette.mutedText),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+          if (checkins.length > 1) ...[
+            const SizedBox(height: Insets.md),
+            Divider(height: 1, color: palette.border),
+            const SizedBox(height: Insets.xs),
+            for (final entry in checkins) ...[
+              _DayCheckinTile(
+                entry: entry,
+                onTap: () => showDailyCheckinSheet(
+                  context,
+                  ref,
+                  day,
+                  existing: entry,
+                ),
+              ),
+              if (entry != checkins.last)
+                Divider(height: 1, color: palette.border),
+            ],
+          ],
+          if (health != null &&
+              (health.sleepHours != null || health.steps != null)) ...[
+            const SizedBox(height: Insets.md),
+            Wrap(
+              spacing: Insets.sm,
+              runSpacing: Insets.xs,
+              children: [
+                if (health.sleepHours != null)
+                  SourceChip(
+                    label: '${_fmtNum(health.sleepHours!)}h sleep',
+                    color: palette.place,
+                    dense: true,
+                  ),
+                if (health.steps != null)
+                  SourceChip(
+                    label: '${health.steps} steps',
+                    color: palette.music,
+                    dense: true,
+                  ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _DayCheckinTile extends StatelessWidget {
+  const _DayCheckinTile({required this.entry, required this.onTap});
+
+  final JournalEntry entry;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final text = context.text;
+    final mood = entry.mood;
+    final accent =
+        mood == null ? palette.mutedText : moodColor(mood, context.scheme);
+    final highlight = entry.highlight.trim();
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(Radii.md),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: Insets.sm),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 48,
+              child: Text(
+                formatTime(entry.createdAt),
+                style: text.labelMedium?.copyWith(
+                  color: palette.mutedText,
+                  fontFeatures: tabularFigures,
+                ),
+              ),
+            ),
+            Container(
+              width: 9,
+              height: 9,
+              margin: const EdgeInsets.only(left: Insets.sm),
+              decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: Insets.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    mood == null ? 'Check-in' : MoodScore.label(mood),
+                    style: text.bodyMedium,
+                  ),
+                  if (highlight.isNotEmpty)
+                    Text(
+                      highlight,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style:
+                          text.bodySmall?.copyWith(color: palette.mutedText),
+                    ),
+                ],
+              ),
+            ),
+            if (entry.energy != null)
+              SourceChip(
+                label: '${entry.energy}/5',
+                color: palette.tracker,
+                dense: true,
+              ),
+            Icon(Icons.chevron_right_rounded, size: 18, color: palette.dimText),
+          ],
+        ),
+      ),
     );
   }
 }

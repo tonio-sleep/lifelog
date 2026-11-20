@@ -8,6 +8,7 @@ import '../../app/widgets/components.dart';
 import '../../core/util/dates.dart';
 import '../../domain/models/archive.dart';
 import '../../domain/models/journal.dart';
+import '../memories/day_detail_screen.dart';
 import 'journal_day_header.dart';
 import 'journal_widgets.dart';
 
@@ -271,6 +272,12 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
               return JournalDayHeader(
                 day: day,
                 count: byDay[row]?.length ?? 0,
+                mood: archive.latestCheckinOn(day)?.mood,
+                onOpen: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => DayDetailScreen(day: day),
+                  ),
+                ),
                 onAdd: () => createJournalEntry(
                   context,
                   date: day,

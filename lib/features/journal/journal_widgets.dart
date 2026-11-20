@@ -39,6 +39,17 @@ class JournalEntryCard extends ConsumerWidget {
         ? '${formatShortDate(entry.createdAt)}, ${formatTime(entry.createdAt)}'
         : formatTime(entry.createdAt);
 
+    // A check-in is a finished feeling snapshot, not an untitled note. Give it
+    // its own read-first card so mood-only entries still look intentional.
+    if (entry.isCheckinEntry) {
+      return _CheckinEntryCard(
+        entry: entry,
+        when: when,
+        showActions: showActions,
+        heroScope: heroScope,
+      );
+    }
+
     return QuietCard(
       margin: const EdgeInsets.only(bottom: Insets.md),
       padding: EdgeInsets.fromLTRB(
@@ -192,6 +203,135 @@ class JournalEntryCard extends ConsumerWidget {
                   Text(
                     '#$tag',
                     style: text.labelMedium?.copyWith(color: palette.dimText),
+                  ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _CheckinEntryCard extends ConsumerWidget {
+  const _CheckinEntryCard({
+    required this.entry,
+    required this.when,
+    required this.showActions,
+    required this.heroScope,
+  });
+
+  final JournalEntry entry;
+  final String when;
+  final bool showActions;
+  final String heroScope;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final palette = context.palette;
+    final text = context.text;
+    final mood = entry.mood;
+    final accent =
+        mood == null ? palette.mutedText : moodColor(mood, context.scheme);
+    final highlight = entry.highlight.trim();
+
+    return QuietCard(
+      key: ValueKey('$heroScope:${entry.id}'),
+      margin: const EdgeInsets.only(bottom: Insets.md),
+      padding: EdgeInsets.fromLTRB(
+        Insets.lg,
+        Insets.md,
+        showActions ? Insets.sm : Insets.lg,
+        Insets.lg,
+      ),
+      onTap: () => openJournalEntry(context, entry.id),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                when,
+                style: text.labelMedium?.copyWith(color: palette.mutedText),
+              ),
+              const SizedBox(width: Insets.sm),
+              SourceChip(
+                label: entry.kind.label,
+                dense: true,
+                color: accent,
+              ),
+              const Spacer(),
+              if (showActions)
+                _EntryMenu(entry: entry)
+              else
+                const SizedBox(height: 32),
+            ],
+          ),
+          const SizedBox(height: Insets.sm),
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.14),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.sentiment_satisfied_alt_outlined,
+                  size: 22,
+                  color: accent,
+                ),
+              ),
+              const SizedBox(width: Insets.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'How I felt today',
+                      style:
+                          text.labelMedium?.copyWith(color: palette.mutedText),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      mood == null ? 'Check-in' : MoodScore.label(mood),
+                      style: AppTheme.serif(
+                        text.headlineSmall,
+                        size: 20,
+                      ).copyWith(color: accent),
+                    ),
+                  ],
+                ),
+              ),
+              if (mood != null)
+                Text(
+                  '$mood/10',
+                  style: text.labelLarge?.copyWith(
+                    color: accent,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: tabularFigures,
+                  ),
+                ),
+            ],
+          ),
+          if (entry.energy != null || highlight.isNotEmpty) ...[
+            const SizedBox(height: Insets.md),
+            Wrap(
+              spacing: Insets.sm,
+              runSpacing: Insets.xs,
+              children: [
+                if (entry.energy != null)
+                  _MetaChip(
+                    icon: Icons.bolt_rounded,
+                    label: 'Energy ${entry.energy}/5',
+                    color: palette.tracker,
+                  ),
+                if (highlight.isNotEmpty)
+                  _MetaChip(
+                    icon: Icons.wb_sunny_outlined,
+                    label: _shortText(highlight),
+                    color: palette.photo,
                   ),
               ],
             ),

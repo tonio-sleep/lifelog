@@ -324,7 +324,6 @@ class _NowCard extends StatelessWidget {
     ];
     return QuietCard(
       color: accent.withValues(alpha: 0.08),
-      border: Border.all(color: accent.withValues(alpha: 0.18)),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -407,7 +406,7 @@ class _DaySummaryCard extends StatelessWidget {
         icon: Icons.place_outlined,
         label: 'Places',
         value: '${summary.placeCount}',
-        color: palette.mood,
+        color: palette.journal,
       ),
     ];
     return QuietCard(
@@ -477,7 +476,7 @@ class _StatChip extends StatelessWidget {
             child: Text(
               '$label: $value',
               style: text.bodySmall?.copyWith(
-                color: palette.foreground,
+                color: context.scheme.onSurface,
                 fontWeight: FontWeight.w600,
               ),
             ),

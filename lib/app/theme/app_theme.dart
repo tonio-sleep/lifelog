@@ -1,7 +1,6 @@
 import 'dart:ui' show PointerDeviceKind;
 
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 
 /// Spacing scale shared by every screen. Pick from this list; never invent a
@@ -18,18 +17,18 @@ class Insets {
   static const double xxl = 32;
   static const double xxxl = 48;
 
-  /// Horizontal page gutter on phones.
-  static const double page = 20;
+  /// Horizontal page gutter on phones. Matches the iOS 16pt system margin.
+  static const double page = 16;
 }
 
 /// Corner radii. Larger surfaces get larger radii; controls stay tighter.
 class Radii {
   const Radii._();
 
-  static const double sm = 10;
-  static const double md = 14;
-  static const double lg = 20;
-  static const double xl = 28;
+  static const double sm = 8;
+  static const double md = 10;
+  static const double lg = 14;
+  static const double xl = 20;
   static const double pill = 999;
 }
 
@@ -76,11 +75,11 @@ class AppTheme {
   const AppTheme._();
 
   // Brand seed. Everything else is hand-tuned below.
-  static const seed = Color(0xFF3A55A4);
+  static const seed = Color(0xFF2F5FE0);
 
-  /// Bundled (see README) so Android and iOS render the same serif. Georgia
-  /// is only a fallback: it is missing on Android.
-  static const serifFamily = 'Newsreader';
+  /// The mark keeps a serif initial; the interface itself uses the system
+  /// sans (SF on Apple platforms, Roboto elsewhere) so text feels native.
+  static const serifFamily = 'Georgia';
   static const serifFallback = <String>[
     'Georgia',
     'Noto Serif',
@@ -105,17 +104,16 @@ class AppTheme {
   static ThemeData _build(Brightness brightness) {
     final dark = brightness == Brightness.dark;
 
-    // Warm paper in light, neutral graphite in dark. Cards are opaque and
-    // separated by a hairline; translucency is reserved for bars (see
-    // GlassSurface), where there is content to blur.
-    final surface = dark ? const Color(0xFF0D0E11) : const Color(0xFFF5F4F1);
-    final card = dark ? const Color(0xFF16181D) : const Color(0xFFFFFFFF);
-    final subtle = dark ? const Color(0xFF1E2026) : const Color(0xFFEDECE8);
-    final border = dark ? const Color(0x14FFFFFF) : const Color(0x1A15161A);
-    final ink = dark ? const Color(0xFFECEDF0) : const Color(0xFF15161A);
+    // iOS system grouped backgrounds: near-black in dark, soft grey in light.
+    // Cards stay opaque; translucency is reserved for the tab bar.
+    final surface = dark ? const Color(0xFF000000) : const Color(0xFFF2F2F7);
+    final card = dark ? const Color(0xFF1C1C1E) : const Color(0xFFFFFFFF);
+    final subtle = dark ? const Color(0xFF2C2C2E) : const Color(0xFFE9E9EE);
+    final border = dark ? const Color(0x29FFFFFF) : const Color(0x1A3C3C43);
+    final ink = dark ? const Color(0xFFF2F2F7) : const Color(0xFF1C1C1E);
 
     // One restrained accent. Everything else is neutral.
-    final primary = dark ? const Color(0xFFA9BAF5) : const Color(0xFF3A55A4);
+    final primary = dark ? const Color(0xFF7FA0FF) : const Color(0xFF2F5FE0);
 
     final scheme = ColorScheme.fromSeed(seedColor: seed, brightness: brightness)
         .copyWith(
@@ -147,7 +145,7 @@ class AppTheme {
       // Non-essential metadata only (timestamps, footnotes). Never the only
       // carrier of meaning.
       dimText: ink.withValues(alpha: 0.50),
-      glass: dark ? const Color(0xA6181A20) : const Color(0xB8FFFFFF),
+      glass: dark ? const Color(0xD91C1C1E) : const Color(0xD9FFFFFF),
       success: scheme.tertiary,
       warning: scheme.secondary,
       // One colour per kind of record, kept low in saturation so a mixed
@@ -168,14 +166,18 @@ class AppTheme {
 
     return ThemeData(
       useMaterial3: true,
+      platform: TargetPlatform.iOS,
+      typography: Typography.material2021(platform: TargetPlatform.iOS),
+      visualDensity: VisualDensity.adaptivePlatformDensity,
       brightness: brightness,
       colorScheme: scheme,
       scaffoldBackgroundColor: surface,
       canvasColor: surface,
       textTheme: text,
       extensions: <ThemeExtension<dynamic>>[palette],
-      splashFactory: InkRipple.splashFactory,
-      splashColor: primary.withValues(alpha: 0.05),
+      // iOS has no circular ink ripple; Pressable supplies the feedback.
+      splashFactory: NoSplash.splashFactory,
+      splashColor: Colors.transparent,
       highlightColor: Colors.transparent,
       hoverColor: primary.withValues(alpha: 0.04),
       focusColor: primary.withValues(alpha: 0.10),
@@ -191,8 +193,7 @@ class AppTheme {
         surfaceTintColor: Colors.transparent,
         foregroundColor: ink,
         centerTitle: false,
-        titleTextStyle:
-            AppTheme.serif(text.titleLarge, size: 19, weight: FontWeight.w500),
+        titleTextStyle: text.titleLarge?.copyWith(fontWeight: FontWeight.w600),
       ),
       dividerTheme: DividerThemeData(color: border, thickness: 1, space: 1),
       inputDecorationTheme: InputDecorationTheme(
@@ -276,7 +277,7 @@ class AppTheme {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         shape: rounded(Radii.xl),
-        titleTextStyle: AppTheme.serif(text.headlineSmall),
+        titleTextStyle: text.headlineSmall?.copyWith(fontWeight: FontWeight.w600),
         contentTextStyle: text.bodyMedium,
       ),
       bottomSheetTheme: BottomSheetThemeData(
@@ -369,12 +370,14 @@ class AppTheme {
   }
 
   static TextTheme _textTheme(ColorScheme scheme) {
-    final base = Typography.material2021(platform: defaultTargetPlatform);
+    final base = Typography.material2021(platform: TargetPlatform.iOS);
     final t = (scheme.brightness == Brightness.dark ? base.white : base.black)
         .apply(bodyColor: scheme.onSurface, displayColor: scheme.onSurface);
 
     TextStyle display(TextStyle? s, double size, double ls, double h) {
-      return serif(s, size: size, weight: FontWeight.w500).copyWith(
+      return (s ?? const TextStyle()).copyWith(
+        fontSize: size,
+        fontWeight: FontWeight.w600,
         letterSpacing: ls,
         height: h,
       );

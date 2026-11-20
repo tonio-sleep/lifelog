@@ -24,7 +24,7 @@ class QuietCard extends StatelessWidget {
     this.padding = const EdgeInsets.all(Insets.lg),
     this.color,
     this.radius = Radii.lg,
-    this.border = true,
+    this.border = false,
     this.margin,
     this.gradient,
   });

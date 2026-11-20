@@ -103,8 +103,9 @@ class ScreenFrame extends StatelessWidget {
       builder: (context, constraints) {
         final base = context.compact ? Insets.page : Insets.xl;
         final side = math.max(base, (constraints.maxWidth - maxWidth) / 2);
-        // Includes the floating tab bar's height on phones.
-        final bottom = Insets.xl + MediaQuery.paddingOf(context).bottom;
+        // The root tab bar is translucent and drawn under the scroll view.
+        final tabBarSpace = pushed ? 0.0 : 49.0;
+        final bottom = Insets.xl + tabBarSpace + MediaQuery.paddingOf(context).bottom;
         final scroll = CustomScrollView(
           physics: onRefresh != null
               ? const AlwaysScrollableScrollPhysics()
@@ -155,7 +156,7 @@ class ScreenFrame extends StatelessWidget {
   }
 }
 
-/// Large serif title that scales away into a compact, frosted bar. Only the
+/// Large system title that scales away into a compact, frosted bar. Only the
 /// collapsed state blurs, so the expanded page stays flat and quiet.
 class _LargeTitleDelegate extends SliverPersistentHeaderDelegate {
   _LargeTitleDelegate({
@@ -211,11 +212,7 @@ class _LargeTitleDelegate extends SliverPersistentHeaderDelegate {
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: AppTheme.serif(
-                    text.titleLarge,
-                    size: 18,
-                    weight: FontWeight.w500,
-                  ),
+                  style: text.titleLarge?.copyWith(fontWeight: FontWeight.w600),
                 ),
               ),
             ),

@@ -1,11 +1,9 @@
-import 'dart:math' as math;
-
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme/app_theme.dart';
 import '../../app/widgets/common.dart';
-import '../../app/widgets/surfaces.dart';
 import '../../features/insights/insights_screen.dart';
 import '../../features/journal/journal_screen.dart';
 import '../../features/library/library_screen.dart';
@@ -51,7 +49,7 @@ class _AppShellState extends ConsumerState<AppShell> {
   AppDestination _destination = AppDestination.today;
   int _tab = 0;
 
-  static const _tabNames = ['today', 'journal', 'trackers', 'library'];
+  static const _tabNames = ['today', 'journal', 'trackers', 'library', 'settings'];
 
   void _select(AppDestination destination) {
     if (_destination == destination) return;
@@ -127,9 +125,8 @@ class _AppShellState extends ConsumerState<AppShell> {
       );
     }
 
-    // extendBody lets scrolling content pass under the frosted bar. Scaffold
-    // reports the bar's height through MediaQuery, which ScreenFrame already
-    // uses for its bottom padding.
+    // The translucent tab bar sits over the scroll view; ScreenFrame reserves
+    // its height so the last card is never hidden behind it.
     return Scaffold(
       extendBody: true,
       body: SafeArea(
@@ -141,6 +138,7 @@ class _AppShellState extends ConsumerState<AppShell> {
             const JournalScreen(),
             const TrackersScreen(),
             LibraryScreen(onOpen: _navigateByName),
+            const SettingsScreen(),
           ],
         ),
       ),
@@ -149,7 +147,6 @@ class _AppShellState extends ConsumerState<AppShell> {
         onSelect: (index) {
           if (index != _tab) setState(() => _tab = index);
         },
-        onAdd: () => showQuickAdd(context, ref),
       ),
     );
   }
@@ -210,151 +207,42 @@ class _TabStackState extends State<_TabStack>
   }
 }
 
-/// Floating, frosted tab bar. Four destinations with the add action inline,
-/// so nothing hovers above the content.
+/// A native iOS tab bar. Five plain destinations, no floating button: quick
+/// add lives in the Today header and in Library where it belongs.
 class _BottomBar extends StatelessWidget {
-  const _BottomBar({
-    required this.selected,
-    required this.onSelect,
-    required this.onAdd,
-  });
+  const _BottomBar({required this.selected, required this.onSelect});
 
   final int selected;
   final ValueChanged<int> onSelect;
-  final VoidCallback onAdd;
 
   static const _items = <(String, IconData, IconData)>[
     ('Today', Icons.wb_sunny_outlined, Icons.wb_sunny_rounded),
     ('Journal', Icons.menu_book_outlined, Icons.menu_book_rounded),
-    ('Habits', Icons.task_alt_outlined, Icons.task_alt_rounded),
+    ('Habits', Icons.checklist_outlined, Icons.checklist_rounded),
     ('Library', Icons.grid_view_outlined, Icons.grid_view_rounded),
+    ('Settings', Icons.settings_outlined, Icons.settings_rounded),
   ];
 
   @override
   Widget build(BuildContext context) {
-    final bottom = MediaQuery.paddingOf(context).bottom;
-    Widget item(int i) => _NavItem(
-      label: _items[i].$1,
-      icon: _items[i].$2,
-      selectedIcon: _items[i].$3,
-      selected: selected == i,
-      onTap: () => onSelect(i),
-    );
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        Insets.lg,
-        0,
-        Insets.lg,
-        math.max(bottom, Insets.md),
-      ),
-      child: Center(
-        heightFactor: 1,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 440),
-          child: GlassSurface(
-            borderRadius: BorderRadius.circular(Radii.xl + 4),
-            shadow: true,
-            child: SizedBox(
-              height: 64,
-              child: Row(
-                children: [
-                  item(0),
-                  item(1),
-                  Expanded(child: Center(child: _AddButton(onTap: onAdd))),
-                  item(2),
-                  item(3),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _NavItem extends StatelessWidget {
-  const _NavItem({
-    required this.label,
-    required this.icon,
-    required this.selectedIcon,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final IconData icon;
-  final IconData selectedIcon;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = context.scheme;
     final palette = context.palette;
-    final color = selected ? scheme.primary : palette.mutedText;
-    return Expanded(
-      child: Semantics(
-        button: true,
-        selected: selected,
-        label: label,
-        excludeSemantics: true,
-        child: Pressable(
-          scale: 0.94,
-          haptic: true,
-          borderRadius: BorderRadius.circular(Radii.lg),
-          onTap: onTap,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(selected ? selectedIcon : icon, size: 23, color: color),
-              const SizedBox(height: 3),
-              Text(
-                label,
-                maxLines: 1,
-                style: context.text.labelSmall?.copyWith(
-                  color: color,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// A flat accent circle. No gradient, no coloured glow.
-class _AddButton extends StatelessWidget {
-  const _AddButton({required this.onTap});
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
     final scheme = context.scheme;
-    return Tooltip(
-      message: 'Add',
-      child: Semantics(
-        button: true,
-        label: 'Add',
-        excludeSemantics: true,
-        child: Pressable(
-          scale: 0.92,
-          haptic: true,
-          borderRadius: BorderRadius.circular(Radii.pill),
-          onTap: onTap,
-          child: Container(
-            width: 46,
-            height: 46,
-            decoration: BoxDecoration(
-              color: scheme.primary,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(Icons.add_rounded, size: 26, color: scheme.onPrimary),
+    return CupertinoTabBar(
+      currentIndex: selected,
+      onTap: onSelect,
+      activeColor: scheme.primary,
+      inactiveColor: palette.dimText,
+      backgroundColor: palette.glass,
+      border: Border(top: BorderSide(color: palette.border, width: 0.5)),
+      items: [
+        for (var i = 0; i < _items.length; i++)
+          BottomNavigationBarItem(
+            icon: Icon(_items[i].$2, size: 24),
+            activeIcon: Icon(_items[i].$3, size: 24),
+            label: _items[i].$1,
+            tooltip: _items[i].$1,
           ),
-        ),
-      ),
+      ],
     );
   }
 }

@@ -384,8 +384,8 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
                         _BreakdownRow(
                           label: '$score · ${MoodScore.label(score)}',
                           value: (moodBuckets[score] ?? 0).toDouble(),
+                          maxValue: moodTotal.toDouble(),
                           color: moodColor(score, scheme),
-                          showMax: false,
                         ),
                   ],
                 ],
@@ -608,6 +608,31 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
     final clean = body.trim();
     if (clean.isEmpty) return 0;
     return clean.split(RegExp(r'\s+')).length;
+  }
+}
+
+class _BreakdownRow extends StatelessWidget {
+  const _BreakdownRow({
+    required this.label,
+    required this.value,
+    required this.maxValue,
+    required this.color,
+  });
+
+  final String label;
+  final double value;
+  final double maxValue;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return HorizontalMetricBar(
+      label: label,
+      value: value,
+      maxValue: maxValue,
+      color: color,
+      trailing: '${value.round()}',
+    );
   }
 }
 

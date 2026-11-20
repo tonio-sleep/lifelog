@@ -60,8 +60,6 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
     final day = ref.watch(selectedDayProvider);
     final archive = ref.watch(archiveProvider);
     final settings = ref.watch(settingsProvider);
-    final isToday = sameDay(day, DateTime.now());
-    final desktop = MediaQuery.sizeOf(context).width >= 900;
 
     final activeCache = <int, Set<int>>{};
     bool hasActivity(DateTime d) => activeCache
@@ -69,16 +67,13 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
         .contains(d.day);
 
     return ScreenFrame(
-      background: TodayGlow(isToday: isToday),
       onRefresh: settings.lastfmConnected ? _refresh : null,
       header: TodayHeader(
         day: day,
-        streak: currentStreak(archive, DateTime.now()),
         calendarOpen: _showMonth,
         onToggleCalendar: () => setState(() => _showMonth = !_showMonth),
         onSearch: () => widget.onNavigate?.call('search'),
-        onAccount: () => widget.onNavigate?.call('settings'),
-        onAdd: desktop ? () => showQuickAdd(context, ref) : null,
+        onAdd: () => showQuickAdd(context, ref),
       ),
       children: [
         AnimatedSize(
@@ -192,16 +187,16 @@ class _DayBody extends ConsumerWidget {
             createNew: true,
           ),
         ),
-        if (checkins.isNotEmpty || metrics != null) ...[
-          const SizedBox(height: Insets.md),
-          _DayCheckinsCard(day: day, checkins: checkins, metrics: metrics),
-        ],
         if (latest != null) ...[
           const SizedBox(height: Insets.md),
           NowPlayingCard(scrobble: latest, onTap: () => onNavigate?.call('music')),
         ] else if (listening != null) ...[
           const SizedBox(height: Insets.md),
           DayListeningCard(summary: listening, onTap: () => onNavigate?.call('music')),
+        ],
+        if (checkins.isNotEmpty || metrics != null) ...[
+          const SizedBox(height: Insets.md),
+          _DayCheckinsCard(day: day, checkins: checkins, metrics: metrics),
         ],
         const SizedBox(height: Insets.md),
         TodayHabits(day: day, onSeeAll: () => onNavigate?.call('trackers')),
@@ -211,7 +206,7 @@ class _DayBody extends ConsumerWidget {
             actionLabel: 'Media',
             onAction: () => onNavigate?.call('photos'),
           ),
-          StoryStrip(items: summary.photos, scope: 'today', height: 132),
+          StoryStrip(items: summary.photos, scope: 'today', height: 104),
         ],
         SectionHeader(
           title: isToday ? 'Today so far' : 'That day',

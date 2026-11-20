@@ -14,7 +14,7 @@ void main() {
         updatedAt: DateTime(2026, 5, 10, 9),
         title: 'Backed up',
         body: 'This should survive a backup round trip.',
-        mood: Mood.good,
+        mood: 8,
         tags: const ['test'],
       ),
     ],
@@ -32,7 +32,7 @@ void main() {
 
     expect(contents.archive.entries, hasLength(1));
     expect(contents.archive.entries.single.title, 'Backed up');
-    expect(contents.archive.entries.single.mood, Mood.good);
+    expect(contents.archive.entries.single.mood, 8);
     expect(contents.includesMedia, isFalse);
   });
 

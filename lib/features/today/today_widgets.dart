@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../app/theme/app_theme.dart';
@@ -7,7 +6,6 @@ import '../../app/widgets/common.dart';
 import '../../app/widgets/components.dart';
 import '../../core/util/dates.dart';
 import '../../domain/models/music.dart';
-import '../../integrations/cloudflare/sync_status.dart';
 
 String greetingFor(DateTime now) {
   final hour = now.hour;
@@ -17,59 +15,21 @@ String greetingFor(DateTime now) {
   return 'Good evening';
 }
 
-/// One quiet wash of the accent colour behind today's header. Other days get
-/// none, which is itself the cue that you are looking at the past.
-class TodayGlow extends StatelessWidget {
-  const TodayGlow({super.key, required this.isToday});
-
-  final bool isToday;
-
-  @override
-  Widget build(BuildContext context) {
-    final dark = context.palette.isDark;
-    final accent = context.scheme.primary;
-    return Align(
-      alignment: Alignment.topCenter,
-      child: AnimatedOpacity(
-        duration: context.reduceMotion ? Duration.zero : Motion.slow,
-        opacity: isToday ? 1 : 0,
-        child: Container(
-          height: 280,
-          decoration: BoxDecoration(
-            gradient: RadialGradient(
-              center: const Alignment(-0.8, -1.2),
-              radius: 1.2,
-              colors: [
-                accent.withValues(alpha: dark ? 0.14 : 0.08),
-                Colors.transparent,
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class TodayHeader extends StatelessWidget {
   const TodayHeader({
     super.key,
     required this.day,
-    required this.streak,
     required this.calendarOpen,
     required this.onToggleCalendar,
     required this.onSearch,
-    required this.onAccount,
-    this.onAdd,
+    required this.onAdd,
   });
 
   final DateTime day;
-  final int streak;
   final bool calendarOpen;
   final VoidCallback onToggleCalendar;
   final VoidCallback onSearch;
-  final VoidCallback onAccount;
-  final VoidCallback? onAdd;
+  final VoidCallback onAdd;
 
   @override
   Widget build(BuildContext context) {
@@ -79,12 +39,12 @@ class TodayHeader extends StatelessWidget {
     final isToday = sameDay(day, now);
     final dateFormat = DateFormat(day.year == now.year ? 'MMMM d' : 'MMMM d, y');
     final eyebrow = isToday
-        ? '${DateFormat('EEEE').format(day)}, ${greetingFor(now).toLowerCase()}'
+        ? '${DateFormat('EEEE').format(day)} · ${greetingFor(now).toLowerCase()}'
         : DateFormat('EEEE').format(day);
     return Padding(
       padding: const EdgeInsets.only(top: Insets.xs, bottom: Insets.lg),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
             child: Column(
@@ -95,7 +55,7 @@ class TodayHeader extends StatelessWidget {
                   child: Text(
                     eyebrow,
                     key: ValueKey<String>(eyebrow),
-                    style: text.labelLarge?.copyWith(color: palette.mutedText),
+                    style: text.labelMedium?.copyWith(color: palette.mutedText),
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -105,7 +65,7 @@ class TodayHeader extends StatelessWidget {
                     opacity: animation,
                     child: SlideTransition(
                       position: Tween<Offset>(
-                        begin: const Offset(0, 0.12),
+                        begin: const Offset(0, 0.08),
                         end: Offset.zero,
                       ).animate(animation),
                       child: child,
@@ -119,18 +79,16 @@ class TodayHeader extends StatelessWidget {
                     style: text.displaySmall,
                   ),
                 ),
-                // A fact, not a reward: no icon, no colour.
-                if (streak >= 2)
-                  Padding(
-                    padding: const EdgeInsets.only(top: Insets.xs),
-                    child: Text(
-                      '$streak days in a row',
-                      style: text.labelMedium?.copyWith(
-                        color: palette.mutedText,
-                        fontFeatures: tabularFigures,
-                      ),
-                    ),
+                const SizedBox(height: Insets.xs),
+                TextButton(
+                  onPressed: onToggleCalendar,
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: Insets.sm),
+                    minimumSize: const Size(0, 30),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
+                  child: Text(calendarOpen ? 'Show week' : 'Show month'),
+                ),
               ],
             ),
           ),
@@ -143,68 +101,15 @@ class TodayHeader extends StatelessWidget {
                 onPressed: onSearch,
               ),
               HeaderButton(
-                icon: calendarOpen
-                    ? Icons.calendar_view_week_rounded
-                    : Icons.calendar_month_rounded,
-                tooltip: calendarOpen ? 'Show week' : 'Show month',
-                onPressed: onToggleCalendar,
+                icon: Icons.add_rounded,
+                tooltip: 'Add',
+                onPressed: onAdd,
+                filled: true,
               ),
-              _AccountButton(onPressed: onAccount),
-              if (onAdd != null)
-                HeaderButton(
-                  icon: Icons.add_rounded,
-                  tooltip: 'Add',
-                  onPressed: onAdd,
-                  filled: true,
-                ),
             ],
           ),
         ],
       ),
-    );
-  }
-}
-
-/// Opens Settings, and carries a small dot when the cloud session needs
-/// attention so that state is visible without opening anything.
-class _AccountButton extends ConsumerWidget {
-  const _AccountButton({required this.onPressed});
-
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final phase = watchSyncStatus(ref).phase;
-    final attention =
-        phase == SyncPhase.expired || phase == SyncPhase.expiresSoon;
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        HeaderButton(
-          icon: Icons.person_outline_rounded,
-          tooltip: attention ? 'Settings, sync needs attention' : 'Settings',
-          onPressed: onPressed,
-        ),
-        if (attention)
-          Positioned(
-            top: 10,
-            right: 10,
-            child: IgnorePointer(
-              child: Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: context.palette.warning,
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: context.scheme.surface,
-                    width: 1.5,
-                  ),
-                ),
-              ),
-            ),
-          ),
-      ],
     );
   }
 }
@@ -264,8 +169,8 @@ class WeekStrip extends StatelessWidget {
                         AnimatedContainer(
                           duration: Motion.base,
                           curve: Motion.out,
-                          width: 38,
-                          height: 38,
+                          width: 40,
+                          height: 40,
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,

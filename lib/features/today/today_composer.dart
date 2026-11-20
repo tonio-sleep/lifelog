@@ -63,7 +63,7 @@ class TodayComposer extends StatelessWidget {
       return isToday
           ? 'How are you feeling right now?'
           : 'Add a check-in for this day';
-    }();    }();
+    }();
 
     return QuietCard(
       padding: EdgeInsets.zero,

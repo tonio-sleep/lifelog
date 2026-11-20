@@ -1,209 +1,216 @@
 import SwiftUI
 
-/// A chronological read across several days. Timeline rows are always derived
-/// from the archive; nothing here becomes a second source of truth.
+private struct TimelineGroup: Identifiable {
+    let date: Date
+    let rows: [DayRow]
+    var id: Date { date }
+}
+
+private struct TimelineKey: Equatable {
+    var revision: Int
+    var anchor: String
+    var days: Int
+    var filter: Set<TimelineSource>
+    var showHidden: Bool
+}
+
+/// A chronological read across several days. A native List keeps long histories
+/// recycled and makes swipe actions work. Rows are always derived from the archive.
 struct TimelineView: View {
     @EnvironmentObject private var env: AppEnvironment
-    @EnvironmentObject private var router: Router
-    @Environment(\.lifelogPalette) private var palette
+    @EnvironmentObject private var navigator: Navigator
 
     @State private var anchor: Date
-    @State private var activeSources: Set<TimelineSource> = Set(TimelineSource.allCases)
+    @State private var days = 14
+    @State private var filter: Set<TimelineSource> = []
+    @State private var showHidden = false
+    @State private var groups: [TimelineGroup] = []
+    @State private var loaded = false
 
     init(day: Date? = nil) {
         _anchor = State(initialValue: day ?? Date())
     }
 
-    private struct DayGroup: Identifiable {
-        let date: Date
-        let items: [TimelineItem]
-        var id: Date { date }
+    private var key: TimelineKey {
+        TimelineKey(
+            revision: env.revision,
+            anchor: Dates.dayKey(anchor),
+            days: days,
+            filter: filter,
+            showHidden: showHidden
+        )
     }
-
-    private var groups: [DayGroup] {
-        (0..<14).reversed().compactMap { offset in
-            let day = Dates.addingDays(-offset, to: anchor)
-            let items = buildTimelineForDay(env.archive, day)
-                .filter { activeSources.contains($0.source) }
-            return items.isEmpty ? nil : DayGroup(date: day, items: items)
-        }
-    }
-
-    private var totalShown: Int { groups.reduce(0) { $0 + $1.items.count } }
 
     var body: some View {
         VStack(spacing: 0) {
-            dateBar
-            filterBar
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if groups.isEmpty {
-                        EmptyState(
-                            title: "No records in this window",
-                            message: "The timeline only shows what you actually recorded. Try another date or widen the filters.",
-                            systemImage: "calendar.day.timeline.left"
-                        ) { router.push(.newEvent) }
-                        .lifelogCard()
-                    } else {
-                        ForEach(groups) { group in
-                            VStack(alignment: .leading, spacing: 10) {
-                                Button {
-                                    router.push(.journal(group.date))
-                                } label: {
-                                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                        Text(Dates.relativeDayLabel(group.date))
-                                            .font(LifelogTheme.serif(20, relativeTo: .title2))
-                                            .foregroundStyle(palette.text)
-                                        Text(Dates.formatDayHeader(group.date))
-                                            .font(LifelogTheme.sans(12))
-                                            .foregroundStyle(palette.secondary)
-                                        Spacer()
-                                        Image(systemName: "book.closed")
-                                            .font(.system(size: 12, weight: .semibold))
-                                            .foregroundStyle(palette.tertiary)
-                                    }
-                                }
-                                .buttonStyle(.plain)
-
-                                VStack(spacing: 8) {
-                                    ForEach(group.items) { item in
-                                        TimelineRow(item: item)
-                                            .contentShape(Rectangle())
-                                            .onTapGesture { open(item) }
-                                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                                hideAction(for: item)
-                                            }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Text("\(totalShown) \(Dates.plural(totalShown, "record")) across the last 14 days · ordered by original timestamp")
-                        .font(LifelogTheme.sans(11))
-                        .foregroundStyle(palette.tertiary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 6)
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
-            }
+            controls
+            content
         }
+        .navigationTitle("Timeline")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    router.push(.newEvent)
-                } label: {
-                    Image(systemName: "calendar.badge.plus")
-                }
-                .accessibilityLabel("Add timeline event")
+            ToolbarItem(placement: .secondaryAction) {
+                Toggle("Show hidden moments", isOn: $showHidden)
             }
         }
+        .task(id: key) { await rebuild() }
     }
 
-    private var dateBar: some View {
-        HStack(spacing: 10) {
-            Button {
-                anchor = Dates.addingDays(-1, to: anchor)
-            } label: {
-                Image(systemName: "chevron.left")
+    // MARK: Controls
+
+    private var controls: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: Space.sm) {
+                DatePicker("Jump to date", selection: $anchor, in: ...Date(), displayedComponents: .date)
+                    .datePickerStyle(.compact)
+                    .labelsHidden()
+                Spacer()
+                Button("Today") { anchor = Date(); days = 14 }
+                    .buttonStyle(QuietButtonStyle())
             }
-            .accessibilityLabel("Previous day")
+            .padding(.horizontal, Space.page)
 
-            DatePicker("", selection: $anchor, displayedComponents: .date)
-                .labelsHidden()
-                .frame(maxWidth: .infinity)
-                .colorMultiply(palette.text)
-
-            Button {
-                anchor = Dates.addingDays(1, to: anchor)
-            } label: {
-                Image(systemName: "chevron.right")
-            }
-            .accessibilityLabel("Next day")
-
-            Button {
-                anchor = Date()
-            } label: {
-                Text("Today")
-                    .font(LifelogTheme.sans(12, weight: .semibold))
-            }
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 9)
-        .background(palette.background.opacity(0.92))
-        .overlay(alignment: .bottom) { Rectangle().fill(palette.border).frame(height: 0.6) }
-    }
-
-    private var filterBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(TimelineSource.allCases, id: \.self) { source in
-                    Button {
-                        toggle(source)
-                    } label: {
-                        HStack(spacing: 5) {
-                            if activeSources.contains(source) {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 9, weight: .bold))
-                            }
-                            Text(source.label)
-                                .font(LifelogTheme.sans(11, weight: .medium))
-                        }
-                        .foregroundStyle(activeSources.contains(source) ? palette.background : palette.secondary)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 7)
-                        .background(Capsule().fill(activeSources.contains(source) ? palette.accent : palette.surfaceRaised))
-                        .overlay(Capsule().stroke(palette.border, lineWidth: activeSources.contains(source) ? 0 : 0.7))
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: Space.sm) {
+                    Button("All") { filter = [] }
+                        .buttonStyle(ChipStyle(selected: filter.isEmpty))
+                    ForEach(TimelineSource.allCases, id: \.self) { source in
+                        Button(source.label) { toggle(source) }
+                            .buttonStyle(ChipStyle(selected: filter.contains(source)))
+                            .accessibilityAddTraits(filter.contains(source) ? .isSelected : [])
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("\(source.label) filter")
-                    .accessibilityValue(activeSources.contains(source) ? "On" : "Off")
                 }
+                .padding(.horizontal, Space.page)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
+            Hairline()
         }
-        .background(palette.background)
-        .overlay(alignment: .bottom) { Rectangle().fill(palette.border).frame(height: 0.6) }
     }
 
     private func toggle(_ source: TimelineSource) {
-        if activeSources.contains(source) {
-            if activeSources.count > 1 { activeSources.remove(source) }
+        if filter.contains(source) { filter.remove(source) } else { filter.insert(source) }
+    }
+
+    // MARK: Content
+
+    @ViewBuilder
+    private var content: some View {
+        if loaded && groups.isEmpty {
+            ScrollView {
+                EmptyNote(
+                    title: "No records in this window",
+                    message: "The timeline shows only what you recorded. Try another date, widen the filters, or add a moment.",
+                    actionTitle: "Add a moment"
+                ) { navigator.present(.newEvent(anchor)) }
+                .padding(Space.page)
+            }
         } else {
-            activeSources.insert(source)
+            List {
+                ForEach(groups) { group in
+                    Section {
+                        ForEach(group.rows) { row in
+                            Button { navigator.open(row) } label: { DayRowView(row: row) }
+                                .buttonStyle(RowButtonStyle())
+                                .listRowBackground(Color.clear)
+                                .listRowSeparatorTint(Palette.line)
+                                .listRowInsets(EdgeInsets(top: 0, leading: Space.page, bottom: 0, trailing: Space.page))
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) { swipeActions(for: row) }
+                        }
+                    } header: {
+                        dayHeader(group.date)
+                    }
+                }
+                if loaded && !groups.isEmpty {
+                    footer
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .opacity(loaded ? 1 : 0)
         }
+    }
+
+    private func dayHeader(_ date: Date) -> some View {
+        Button { navigator.push(.journal(date)) } label: {
+            HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+                Text(Dates.relativeDayLabel(date))
+                    .font(Typeface.heading)
+                    .foregroundStyle(Palette.ink)
+                Text(Dates.formatDayHeader(date))
+                    .font(Typeface.caption)
+                    .foregroundStyle(Palette.inkSecondary)
+                Spacer()
+                Image(systemName: "book")
+                    .font(Typeface.caption)
+                    .foregroundStyle(Palette.inkTertiary)
+            }
+            .padding(.vertical, Space.xs)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .textCase(nil)
+        .accessibilityLabel("Open journal page for \(Dates.formatDayLong(date))")
+        .padding(.horizontal, 4)
+    }
+
+    private var footer: some View {
+        VStack(spacing: Space.sm) {
+            Button("Load earlier days") { days = min(days + 14, 365) }
+                .buttonStyle(QuietButtonStyle())
+                .disabled(days >= 365)
+            let total = groups.reduce(0) { $0 + $1.rows.count }
+            Text("\(total) \(Dates.plural(total, "record")) across \(days) days")
+                .font(Typeface.micro)
+                .foregroundStyle(Palette.inkTertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
     }
 
     @ViewBuilder
-    private func hideAction(for item: TimelineItem) -> some View {
-        if item.source == .manual,
-           let id = item.sourceId,
-           var event = env.archive.events.first(where: { $0.id == id }) {
+    private func swipeActions(for row: DayRow) -> some View {
+        if row.source == .manual, let id = row.sourceId {
             Button {
-                event.hidden.toggle()
-                env.saveEvent(event)
+                toggleHidden(id)
             } label: {
-                Label(event.hidden ? "Show" : "Hide", systemImage: event.hidden ? "eye" : "eye.slash")
+                Label(row.hidden ? "Show" : "Hide", systemImage: row.hidden ? "eye" : "eye.slash")
             }
-            .tint(palette.warning)
+            .tint(Palette.amber)
+        } else if row.source == .tracker, let id = row.sourceId {
+            Button(role: .destructive) {
+                env.deleteTrackerRecord(id)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
         }
     }
 
-    private func open(_ item: TimelineItem) {
-        guard let id = item.sourceId else {
-            if item.source == .location { router.push(.map(item.at)) }
-            return
+    private func toggleHidden(_ id: String) {
+        guard var event = env.archive.events.first(where: { $0.id == id }) else { return }
+        event.hidden.toggle()
+        env.saveEvent(event)
+    }
+
+    // MARK: Data
+
+    private func rebuild() async {
+        let archive = env.archive
+        let anchorDay = anchor
+        let span = days
+        let active = filter
+        let hidden = showHidden
+        let result: [TimelineGroup] = await offMain {
+            var built: [TimelineGroup] = []
+            for offset in 0..<span {
+                let day = Dates.addingDays(-offset, to: anchorDay)
+                var rows = DayRow.rows(archive, day, includeHidden: hidden)
+                if !active.isEmpty { rows = rows.filter { active.contains($0.source) } }
+                if !rows.isEmpty { built.append(TimelineGroup(date: day, rows: rows)) }
+            }
+            return built
         }
-        switch item.source {
-        case .journal: router.push(.entry(id))
-        case .manual: router.push(.event(id))
-        case .photo: router.push(.media)
-        case .tracker: router.push(.trackers)
-        case .location: router.push(.map(item.at))
-        case .music: break
-        }
+        guard !Task.isCancelled else { return }
+        groups = result
+        loaded = true
     }
 }

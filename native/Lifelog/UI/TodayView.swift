@@ -1,63 +1,169 @@
 import SwiftUI
 
+// MARK: - Snapshot
+
+struct TrackerTile: Identifiable {
+    var id: String
+    var name: String
+    var symbol: String
+    var color: UInt32
+    var type: TrackerType
+    var label: String?
+    var done: Bool
+    var lastRecordId: String?
+}
+
+struct VisitLine: Identifiable {
+    var id: String
+    var label: String
+    var timeRange: String
+    var suggested: Bool
+}
+
+struct TodaySnapshot {
+    var loaded = false
+    var rows: [DayRow] = []
+    var totalRecords = 0
+    var entryCount = 0
+    var mood: Int?
+    var steps: Int?
+    var sleepHours: Double?
+    var trackers: [TrackerTile] = []
+    var visits: [VisitLine] = []
+    var trackCount = 0
+    var artistCount = 0
+    var topArtist: String?
+    var topTracks: [TopTrack] = []
+    var artworkURL: String?
+    var trackerRecordCount = 0
+    var placeCount = 0
+    var eventCount = 0
+
+    static func make(_ archive: Archive, now: Date) -> TodaySnapshot {
+        var snap = TodaySnapshot()
+        snap.loaded = true
+        let summary = DaySummary.of(archive, now)
+        snap.totalRecords = summary.totalRecords
+        snap.entryCount = summary.entries.filter { !$0.isMetricsOnly }.count
+        snap.trackerRecordCount = summary.trackerRecords.count
+        snap.eventCount = summary.events.count
+        snap.placeCount = Set(summary.visits.map(\.label)).count
+        snap.mood = dominantMood(archive, now)
+
+        if let metrics = archive.dayMetricsEntryFor(now) {
+            snap.steps = metrics.steps
+            snap.sleepHours = metrics.sleepHours
+        }
+
+        snap.rows = Array(DayRow.rows(archive, now).reversed())
+
+        let records = archive.trackerRecords
+        snap.trackers = archive.activeTrackers.prefix(8).map { tracker in
+            let history = HabitHistory(tracker, records)
+            let today = TrackerMath.recordsOn(records, trackerId: tracker.id, day: now)
+            return TrackerTile(
+                id: tracker.id,
+                name: tracker.name,
+                symbol: tracker.icon.isEmpty ? "circle" : tracker.icon,
+                color: tracker.colorValue,
+                type: tracker.type,
+                label: TrackerMath.dailyLabel(tracker, records, now),
+                done: history.doneOn(now),
+                lastRecordId: today.last?.id
+            )
+        }
+
+        snap.visits = summary.visits.map { visit in
+            VisitLine(
+                id: visit.id,
+                label: visit.label,
+                timeRange: Dates.formatTimeRange(visit.startAt, visit.endAt),
+                suggested: visit.confidence == .suggested
+            )
+        }
+
+        let music = summary.music
+        snap.trackCount = summary.scrobbles.count
+        snap.artistCount = music.uniqueArtists
+        snap.topArtist = music.topArtistName
+        snap.topTracks = Array(music.topTracks.prefix(3))
+        snap.artworkURL = summary.scrobbles.compactMap(\.artworkUrl).first { !$0.isEmpty }
+        return snap
+    }
+}
+
+// MARK: - View
+
 struct TodayView: View {
     @EnvironmentObject private var env: AppEnvironment
-    @EnvironmentObject private var router: Router
-    @Environment(\.lifelogPalette) private var palette
-
-    private var summary: DaySummary { DaySummary.of(env.archive, Date()) }
-    private var timeline: [TimelineItem] { Array(buildTimelineForDay(env.archive, Date()).suffix(6).reversed()) }
-    private var mood: Int? { dominantMood(env.archive, Date()) }
+    @EnvironmentObject private var navigator: Navigator
+    @State private var snapshot = TodaySnapshot()
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                hero
-                stats
-
-                if enabled("highlight") { quickNote }
-                if enabled("timeline") { timelineSection }
-                if enabled("trackers") { trackersSection }
+            VStack(alignment: .leading, spacing: Space.xxl) {
+                header
+                if enabled("status") { facts }
+                if enabled("quickAdd") || enabled("highlight") { TodayComposer() }
+                if enabled("timeline") { threadSection }
+                if enabled("trackers") { practicesSection }
                 if enabled("places") { placesSection }
-                if enabled("music") { musicSection }
+                if enabled("music") { listeningSection }
                 if enabled("recap") { recapSection }
-
-                Text("Everything here is derived from records you chose to keep.")
-                    .font(LifelogTheme.sans(11))
-                    .foregroundStyle(palette.tertiary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 8)
+                footer
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 8)
-            .padding(.bottom, 30)
+            .padding(.horizontal, Space.page)
+            .padding(.top, Space.sm)
+            .padding(.bottom, Space.xxl)
         }
-        .refreshable {
-            await env.syncLastfm()
+        .scrollDismissesKeyboard(.interactively)
+        .opacity(snapshot.loaded ? 1 : 0)
+        .animation(.easeOut(duration: 0.2), value: snapshot.loaded)
+        .refreshable { await refreshSources() }
+        .task(id: env.revision) {
+            let archive = env.archive
+            let now = Date()
+            let result = await offMain { TodaySnapshot.make(archive, now: now) }
+            guard !Task.isCancelled else { return }
+            snapshot = result
         }
     }
 
     private func enabled(_ key: String) -> Bool { env.settings.todaySections.contains(key) }
 
-    private var hero: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Eyebrow(text: Dates.formatDayLong(Date()))
-            Text(greeting)
-                .font(LifelogTheme.serif(34, relativeTo: .largeTitle))
-                .foregroundStyle(palette.text)
-            Text(summary.isEmpty
-                 ? "A blank page is still a good place to begin."
-                 : "\(summary.totalRecords) \(Dates.plural(summary.totalRecords, "record")) so far today.")
-                .font(LifelogTheme.sans(14))
-                .foregroundStyle(palette.secondary)
+    private func refreshSources() async {
+        if env.settings.lastfmConnected {
+            if let added = await env.syncLastfm() {
+                env.present(added == 0 ? "Listening is up to date." : "Added \(added) \(Dates.plural(added, "track")).")
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, 12)
+        if env.healthConnected {
+            await env.syncHealth()
+        }
+    }
+
+    // MARK: Header
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            PageHeader(
+                eyebrow: Dates.formatDayLong(Date()),
+                title: greeting,
+                subtitle: snapshot.totalRecords == 0
+                    ? "A blank page is still a good place to begin."
+                    : "\(snapshot.totalRecords) \(Dates.plural(snapshot.totalRecords, "record")) so far today."
+            )
+            Button {
+                navigator.push(.journal(Date()))
+            } label: {
+                Label("Open today's page", systemImage: "book")
+            }
+            .buttonStyle(QuietButtonStyle())
+        }
     }
 
     private var greeting: String {
-        let hour = Calendar.current.component(.hour, from: Date())
-        switch hour {
+        switch Calendar.current.component(.hour, from: Date()) {
         case 5..<12: return "Good morning."
         case 12..<17: return "Good afternoon."
         case 17..<22: return "Good evening."
@@ -65,228 +171,319 @@ struct TodayView: View {
         }
     }
 
-    private var stats: some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-            StatTile(value: "\(summary.entries.count)", label: "Entries", systemImage: "book.closed", accent: true)
-            StatTile(value: mood.map { MoodScore.shortLabel($0) } ?? "—", label: "Mood", systemImage: "heart")
-            StatTile(value: "\(summary.photos.count)", label: "Photos", systemImage: "photo")
-            StatTile(value: "\(summary.scrobbles.count)", label: "Tracks", systemImage: "music.note")
+    // MARK: Facts
+
+    @ViewBuilder
+    private var facts: some View {
+        let hasAny = snapshot.mood != nil || snapshot.sleepHours != nil || snapshot.steps != nil
+        if hasAny || snapshot.entryCount > 0 {
+            VStack(alignment: .leading, spacing: Space.md) {
+                Hairline()
+                HStack(alignment: .top, spacing: Space.lg) {
+                    Figure(value: "\(snapshot.entryCount)", label: Dates.plural(snapshot.entryCount, "Entry", "Entries"))
+                    if let mood = snapshot.mood {
+                        Figure(value: "\(mood)/10", label: "Mood")
+                    }
+                    if let sleep = snapshot.sleepHours {
+                        Figure(value: Dates.formatCompactNumber(sleep) + " h", label: "Sleep")
+                    }
+                    if let steps = snapshot.steps {
+                        Figure(value: steps.formatted(), label: "Steps")
+                    }
+                }
+                Hairline()
+            }
         }
     }
 
-    private var quickNote: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "A thought to keep", subtitle: "No title. No pressure.")
-            QuickNoteCard()
-        }
-    }
+    // MARK: Thread
 
-    private var timelineSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(
+    private var threadSection: some View {
+        VStack(alignment: .leading, spacing: Space.md) {
+            SectionLabel(
                 title: "Today's thread",
-                subtitle: "A calm view of what was recorded",
-                action: { router.push(.newEvent) },
-                actionLabel: "Add event"
-            )
-            if timeline.isEmpty {
-                EmptyState(
+                actionTitle: "Add event"
+            ) { navigator.present(.newEvent(Date())) }
+
+            if snapshot.rows.isEmpty {
+                EmptyNote(
                     title: "Nothing recorded yet",
-                    message: "Add an entry, log a tracker, or simply note a moment.",
-                    systemImage: "sparkles"
-                ) { router.push(.newEntry) }
-                .lifelogCard()
+                    message: "Write a note, log a practice, or add a moment. Only what you record appears here."
+                )
             } else {
-                VStack(spacing: 8) {
-                    ForEach(timeline) { item in
-                        TimelineRow(item: item)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                switch item.source {
-                                case .journal:
-                                    if let id = item.sourceId { router.push(.entry(id)) }
-                                case .manual:
-                                    if let id = item.sourceId { router.push(.event(id)) }
-                                default: break
-                                }
-                            }
-                    }
-                }
-            }
-        }
-    }
-
-    private var trackersSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "Daily practices", subtitle: "Your own measures, not a scoreboard") {
-                router.push(.trackers)
-            }
-            let trackers = Array(env.archive.activeTrackers.prefix(4))
-            if trackers.isEmpty {
-                EmptyState(title: "No practices yet", message: "Create one in Trackers.", systemImage: "checkmark.circle", action: nil)
-                    .lifelogCard()
-            } else {
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                    ForEach(trackers) { tracker in
-                        let history = HabitHistory(tracker, env.archive.trackerRecords)
-                        Button {
-                            env.saveTrackerRecord(TrackerRecord(
-                                trackerId: tracker.id,
-                                recordedAt: Date(),
-                                value: tracker.type == .boolean ? 1 : (tracker.target ?? 1)
-                            ))
-                        } label: {
-                            VStack(alignment: .leading, spacing: 10) {
-                                HStack {
-                                    Image(systemName: tracker.icon.isEmpty ? "circle" : tracker.icon)
-                                        .foregroundStyle(palette.accent)
-                                    Spacer()
-                                    if history.doneOn(Date()) {
-                                        Image(systemName: "checkmark.circle.fill").foregroundStyle(palette.success)
-                                    }
-                                }
-                                Text(tracker.name)
-                                    .font(LifelogTheme.sans(14, weight: .semibold))
-                                    .foregroundStyle(palette.text)
-                                    .lineLimit(1)
-                                Text(TrackerMath.dailyLabel(tracker, env.archive.trackerRecords, Date()) ?? "Not logged yet")
-                                    .font(LifelogTheme.sans(11))
-                                    .foregroundStyle(palette.secondary)
-                                    .lineLimit(1)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .lifelogCard(padding: 14, radius: 16)
+                VStack(spacing: 0) {
+                    ForEach(Array(snapshot.rows.prefix(5))) { row in
+                        Button { navigator.open(row) } label: {
+                            DayRowView(row: row)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(RowButtonStyle())
+                        if row.id != snapshot.rows.prefix(5).last?.id { Hairline() }
+                    }
+                }
+                if snapshot.rows.count > 5 {
+                    Button("See all \(snapshot.rows.count)") { navigator.push(.timeline(Date())) }
+                        .buttonStyle(QuietButtonStyle())
+                }
+            }
+        }
+    }
+
+    // MARK: Practices
+
+    private var practicesSection: some View {
+        VStack(alignment: .leading, spacing: Space.md) {
+            SectionLabel(title: "Practices", actionTitle: "All") { navigator.push(.trackers) }
+            if snapshot.trackers.isEmpty {
+                EmptyNote(
+                    title: "No practices yet",
+                    message: "A practice is anything you want to note now and then: water, a walk, a mood, a reading.",
+                    actionTitle: "Create one"
+                ) { navigator.present(.newTracker) }
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(snapshot.trackers) { tile in
+                        PracticeRow(tile: tile)
+                        if tile.id != snapshot.trackers.last?.id { Hairline() }
                     }
                 }
             }
         }
     }
 
+    // MARK: Places
+
+    @ViewBuilder
     private var placesSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(
-                title: "Where you were",
-                subtitle: "Only what you chose to track",
-                action: { router.push(.map(Date())) },
-                actionLabel: "Map"
-            )
-            if summary.visits.isEmpty {
-                EmptyState(title: "No place signals", message: "Enable location tracking in Settings if you want automatic visits.", systemImage: "map", action: nil)
-                    .lifelogCard()
+        VStack(alignment: .leading, spacing: Space.md) {
+            SectionLabel(title: "Where you were", actionTitle: "Map") { navigator.push(.map(Date())) }
+            if snapshot.visits.isEmpty {
+                EmptyNote(
+                    title: "No places today",
+                    message: env.settings.locationTrackingEnabled
+                        ? "Stops appear after you spend time somewhere."
+                        : "Location visits are off. You can turn them on in Settings whenever you like."
+                )
             } else {
-                VStack(spacing: 8) {
-                    ForEach(Array(summary.visits.prefix(3))) { visit in
-                        HStack(spacing: 12) {
-                            Image(systemName: "mappin.circle.fill").foregroundStyle(palette.accent)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(visit.label).font(LifelogTheme.sans(14, weight: .semibold))
-                                Text(Dates.formatTimeRange(visit.startAt, visit.endAt))
-                                    .font(LifelogTheme.sans(11)).foregroundStyle(palette.secondary)
+                VStack(spacing: 0) {
+                    ForEach(snapshot.visits.prefix(4)) { visit in
+                        HStack(spacing: Space.md) {
+                            SourceGlyph(source: .location, suggested: visit.suggested)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(visit.label).font(Typeface.bodyStrong).foregroundStyle(Palette.ink)
+                                Text(visit.timeRange).font(Typeface.caption).foregroundStyle(Palette.inkSecondary)
                             }
-                            Spacer()
-                            if visit.confidence == .suggested {
-                                Text("Suggested").font(LifelogTheme.sans(9)).foregroundStyle(palette.tertiary)
-                            }
+                            Spacer(minLength: 0)
                         }
-                        .lifelogCard(padding: 14, radius: 15)
+                        .padding(.vertical, Space.sm)
+                        .accessibilityElement(children: .combine)
+                        if visit.id != snapshot.visits.prefix(4).last?.id { Hairline() }
                     }
                 }
             }
         }
     }
 
-    private var musicSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "Listening", subtitle: summary.music.topArtistName.map { "Most played: \($0)" } ?? "Connect Last.fm in Settings")
-            if summary.scrobbles.isEmpty {
-                EmptyState(title: "No tracks today", message: "Last.fm scrobbles or manually added tracks appear here.", systemImage: "music.note", action: nil)
-                    .lifelogCard()
+    // MARK: Listening
+
+    @ViewBuilder
+    private var listeningSection: some View {
+        VStack(alignment: .leading, spacing: Space.md) {
+            SectionLabel(title: "Listening")
+            if snapshot.trackCount == 0 {
+                EmptyNote(
+                    title: "No tracks today",
+                    message: env.settings.lastfmConnected
+                        ? "Pull down to sync Last.fm, or add a track you heard."
+                        : "Connect Last.fm in Settings, or add a track you heard.",
+                    actionTitle: "Add a track"
+                ) { navigator.present(.addTrack) }
             } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 12) {
-                        RemoteArtwork(urlString: summary.scrobbles.compactMap(\.artworkUrl).first)
-                            .frame(width: 62, height: 62)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                        VStack(alignment: .leading) {
-                            Text("\(summary.scrobbles.count) \(Dates.plural(summary.scrobbles.count, "track"))")
-                                .font(LifelogTheme.serif(21, relativeTo: .title3))
-                            Text("\(summary.music.uniqueArtists) artists · \(summary.music.uniqueTracks) tracks")
-                                .font(LifelogTheme.sans(12)).foregroundStyle(palette.secondary)
-                        }
+                HStack(alignment: .top, spacing: Space.md) {
+                    if env.settings.showArtwork {
+                        RemoteArtwork(urlString: snapshot.artworkURL)
+                            .frame(width: 64, height: 64)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
-                    ForEach(Array(summary.music.topTracks.prefix(3)), id: \.name) { track in
-                        HStack {
-                            Text(track.name).font(LifelogTheme.sans(13))
-                            Spacer()
-                            Text("\(track.plays)").font(LifelogTheme.sans(12)).foregroundStyle(palette.secondary)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("\(snapshot.trackCount) \(Dates.plural(snapshot.trackCount, "track")) · \(snapshot.artistCount) \(Dates.plural(snapshot.artistCount, "artist"))")
+                            .font(Typeface.bodyStrong)
+                            .foregroundStyle(Palette.ink)
+                        if let artist = snapshot.topArtist {
+                            Text("Most played: \(artist)")
+                                .font(Typeface.caption)
+                                .foregroundStyle(Palette.inkSecondary)
+                        }
+                        ForEach(snapshot.topTracks, id: \.name) { track in
+                            Text("\(track.name) · \(track.plays)")
+                                .font(Typeface.caption)
+                                .foregroundStyle(Palette.inkSecondary)
+                                .lineLimit(1)
                         }
                     }
                 }
-                .lifelogCard()
+                .accessibilityElement(children: .combine)
             }
         }
     }
 
+    // MARK: Recap
+
+    @ViewBuilder
     private var recapSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "Day recap", subtitle: "Built only from stored records")
-            VStack(spacing: 10) {
-                RecapRow(label: "Journal entries", value: "\(summary.entries.count)", systemImage: "book.closed")
-                RecapRow(label: "Tracker records", value: "\(summary.trackerRecords.count)", systemImage: "checkmark.circle")
-                RecapRow(label: "Places visited", value: "\(Set(summary.visits.map(\.label)).count)", systemImage: "mappin")
-                RecapRow(label: "Events", value: "\(summary.events.count)", systemImage: "calendar")
+        if snapshot.totalRecords > 0 {
+            VStack(alignment: .leading, spacing: Space.sm) {
+                SectionLabel(title: "Day so far")
+                Text(recapText)
+                    .font(Typeface.reading)
+                    .foregroundStyle(Palette.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .lifelogCard()
         }
+    }
+
+    private var recapText: String {
+        var parts: [String] = []
+        if snapshot.entryCount > 0 { parts.append("\(snapshot.entryCount) \(Dates.plural(snapshot.entryCount, "journal entry", "journal entries"))") }
+        if snapshot.trackerRecordCount > 0 { parts.append("\(snapshot.trackerRecordCount) practice \(Dates.plural(snapshot.trackerRecordCount, "update"))") }
+        if snapshot.placeCount > 0 { parts.append("\(snapshot.placeCount) \(Dates.plural(snapshot.placeCount, "place")) visited") }
+        if snapshot.eventCount > 0 { parts.append("\(snapshot.eventCount) \(Dates.plural(snapshot.eventCount, "moment")) noted") }
+        if snapshot.trackCount > 0 { parts.append("\(snapshot.trackCount) \(Dates.plural(snapshot.trackCount, "track")) heard") }
+        if parts.isEmpty { return "Records are stored for today." }
+        return "You recorded " + parts.joined(separator: ", ") + "."
+    }
+
+    private var footer: some View {
+        Text("Everything here is derived from records you chose to keep.")
+            .font(Typeface.micro)
+            .foregroundStyle(Palette.inkTertiary)
+            .frame(maxWidth: .infinity)
     }
 }
 
-private struct RecapRow: View {
-    @Environment(\.lifelogPalette) private var palette
-    let label: String
-    let value: String
-    let systemImage: String
+// MARK: - Practice row
 
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: systemImage)
-                .frame(width: 24)
-                .foregroundStyle(palette.accent)
-            Text(label).font(LifelogTheme.sans(13))
-            Spacer()
-            Text(value).font(LifelogTheme.sans(14, weight: .semibold)).foregroundStyle(palette.text)
-        }
-    }
-}
-
-private struct QuickNoteCard: View {
+private struct PracticeRow: View {
     @EnvironmentObject private var env: AppEnvironment
-    @Environment(\.lifelogPalette) private var palette
-    @State private var text = ""
+    @EnvironmentObject private var navigator: Navigator
+    let tile: TrackerTile
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            TextField("One sentence is enough…", text: $text, axis: .vertical)
-                .font(LifelogTheme.sans(15))
-                .lineLimit(2...5)
-                .textFieldStyle(.plain)
-            HStack {
-                Spacer()
-                Button {
-                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty else { return }
-                    env.saveEntry(JournalEntry(createdAt: Date(), body: trimmed))
-                    text = ""
-                } label: {
-                    Text("Save note").font(LifelogTheme.sans(12, weight: .semibold))
+        HStack(spacing: Space.md) {
+            Image(systemName: tile.symbol)
+                .font(.system(.body))
+                .foregroundStyle(Color(hex: tile.color))
+                .frame(width: 32)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(tile.name).font(Typeface.bodyStrong).foregroundStyle(Palette.ink)
+                Text(tile.label ?? "Not logged yet")
+                    .font(Typeface.caption)
+                    .foregroundStyle(tile.done ? Palette.moss : Palette.inkSecondary)
+            }
+            Spacer(minLength: Space.sm)
+            Button(action: primary) {
+                Image(systemName: primarySymbol)
+                    .font(.system(.title3))
+                    .foregroundStyle(Palette.accent)
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(primaryLabel)
+        }
+        .padding(.vertical, 2)
+        .contextMenu {
+            Button { navigator.present(.logTracker(tile.id)) } label: {
+                Label("Log with details", systemImage: "square.and.pencil")
+            }
+            if let last = tile.lastRecordId {
+                Button(role: .destructive) { env.deleteTrackerRecord(last) } label: {
+                    Label("Undo last entry today", systemImage: "arrow.uturn.backward")
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(palette.accent)
-                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            Button { navigator.push(.tracker(tile.id)) } label: {
+                Label("Open", systemImage: "chevron.right")
             }
         }
-        .lifelogCard()
+    }
+
+    private var quickLoggable: Bool { tile.type == .boolean || tile.type == .count || tile.type == .event }
+
+    private var primarySymbol: String {
+        if tile.type == .boolean && tile.done { return "checkmark.circle.fill" }
+        return quickLoggable ? "plus.circle" : "square.and.pencil"
+    }
+
+    private var primaryLabel: String {
+        switch tile.type {
+        case .boolean: return "Log yes for \(tile.name)"
+        case .count, .event: return "Add one to \(tile.name)"
+        default: return "Log \(tile.name)"
+        }
+    }
+
+    private func primary() {
+        guard quickLoggable else {
+            navigator.present(.logTracker(tile.id))
+            return
+        }
+        if tile.type == .boolean && tile.done { return }
+        env.saveTrackerRecord(TrackerRecord(trackerId: tile.id, recordedAt: Date(), value: 1))
+    }
+}
+
+// MARK: - Composer
+
+private struct TodayComposer: View {
+    @EnvironmentObject private var env: AppEnvironment
+    @EnvironmentObject private var navigator: Navigator
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.md) {
+            TextField("One sentence is enough…", text: $text, axis: .vertical)
+                .font(Typeface.reading)
+                .foregroundStyle(Palette.ink)
+                .lineLimit(2...6)
+                .focused($focused)
+                .accessibilityLabel("Quick note")
+            HStack(spacing: Space.xs) {
+                iconButton("mic", label: "Voice note") {
+                    navigator.present(.newEntry(Date(), startWithVoice: true))
+                }
+                iconButton("photo", label: "Add photo or video") {
+                    navigator.present(.addMedia(Date()))
+                }
+                iconButton("square.and.pencil", label: "Open full editor") {
+                    navigator.present(.newEntry(Date(), startWithVoice: false))
+                }
+                Spacer()
+                Button("Save note", action: save)
+                    .buttonStyle(QuietButtonStyle())
+                    .disabled(trimmed.isEmpty)
+            }
+        }
+        .surface()
+    }
+
+    private func iconButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(.body))
+                .foregroundStyle(Palette.inkSecondary)
+                .frame(width: 44, height: 44)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    private func save() {
+        guard !trimmed.isEmpty else { return }
+        env.saveEntry(JournalEntry(createdAt: Date(), body: trimmed))
+        text = ""
+        focused = false
+        env.present("Saved to today.")
     }
 }

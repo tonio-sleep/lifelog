@@ -1,142 +1,189 @@
 import SwiftUI
+import UIKit
 
 struct LockView: View {
     @EnvironmentObject private var env: AppEnvironment
-    @Environment(\.lifelogPalette) private var palette
-    @State private var pin = ""
-    @State private var showPin = false
-    @State private var error = ""
-    @State private var isWorking = false
 
-    private var canSubmit: Bool {
-        (4...12).contains(pin.count) && pin.allSatisfy(\.isNumber) && !isWorking
-    }
+    @State private var pin = ""
+    @State private var message: String?
+    @State private var failures = 0
+    @State private var lockedUntil: Date?
+    @State private var working = false
+    @State private var shake: CGFloat = 0
+
+    private let rows: [[String]] = [["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"]]
+    private var biometrics: (available: Bool, name: String, symbol: String) { Biometrics.availability() }
+    private var canUseBiometrics: Bool { env.biometricUnlockEnabled && biometrics.available }
 
     var body: some View {
-        VStack(spacing: 24) {
-            Spacer(minLength: 20)
-
-            VStack(alignment: .leading, spacing: 16) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(palette.accentSoft)
-                        .frame(width: 52, height: 52)
+        ZStack {
+            Palette.paper.ignoresSafeArea()
+            VStack(spacing: Space.xl) {
+                Spacer(minLength: Space.lg)
+                VStack(spacing: Space.sm) {
                     Image(systemName: "lock")
-                        .font(.system(size: 24, weight: .light))
-                        .foregroundStyle(palette.accent)
+                        .font(.system(.title).weight(.light))
+                        .foregroundStyle(Palette.inkTertiary)
+                        .accessibilityHidden(true)
+                    Text("Lifelog")
+                        .font(Typeface.display)
+                        .foregroundStyle(Palette.ink)
+                    Text(message ?? "Enter your PIN")
+                        .font(Typeface.label)
+                        .foregroundStyle(message == nil ? Palette.inkSecondary : Palette.danger)
+                        .multilineTextAlignment(.center)
+                        .accessibilityLiveRegion()
                 }
 
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("Lifelog is locked")
-                        .font(LifelogTheme.serif(27, relativeTo: .title))
-                        .foregroundStyle(palette.text)
-                    Text("Your archive remains encrypted on disk while the app is hidden.")
-                        .font(LifelogTheme.sans(13))
-                        .foregroundStyle(palette.secondary)
-                }
+                dots
+                    .modifier(ShakeEffect(travel: shake))
 
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        Group {
-                            if showPin {
-                                TextField("PIN", text: $pin)
-                                    .keyboardType(.numberPad)
-                            } else {
-                                SecureField("PIN", text: $pin)
-                                    .keyboardType(.numberPad)
-                            }
-                        }
-                        .textInputAutocapitalization(.never)
-                        .textContentType(.password)
-                        .font(LifelogTheme.sans(17))
-                        .textFieldStyle(.roundedBorder)
-                        .onChange(of: pin) { _, newValue in
-                            let digits = String(newValue.filter(\.isNumber).prefix(12))
-                            if digits != newValue { pin = digits }
-                            // Keep a failed-unlock message until the user starts a new PIN.
-                            if !newValue.isEmpty { error = "" }
-                        }
+                keypad
 
-                        Button {
-                            showPin.toggle()
-                        } label: {
-                            Image(systemName: showPin ? "eye.slash" : "eye")
-                                .foregroundStyle(palette.secondary)
-                                .frame(width: 32, height: 32)
-                        }
-                        .accessibilityLabel(showPin ? "Hide PIN" : "Show PIN")
-                    }
+                Button(working ? "Checking…" : "Unlock") { submit() }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .disabled(pin.count < 4 || working || isLockedOut)
+                    .padding(.horizontal, Space.xxl)
 
-                    if !error.isEmpty {
-                        Text(error)
-                            .font(LifelogTheme.sans(12))
-                            .foregroundStyle(palette.danger)
-                    }
-
-                    Button(action: submit) {
-                        HStack(spacing: 8) {
-                            if isWorking {
-                                ProgressView()
-                                    .tint(palette.background)
-                            }
-                            Text(isWorking ? "Unlocking…" : "Unlock")
-                                .font(LifelogTheme.sans(15, weight: .semibold))
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Capsule().fill(palette.accent))
-                        .foregroundStyle(palette.background)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!canSubmit)
-                    .opacity(canSubmit ? 1 : 0.55)
-                }
-
-                Text("There is no PIN recovery. The PIN protects this screen; it does not change the archive encryption key. If you forget it, you will need to remove the app’s local data.")
-                    .font(LifelogTheme.sans(11))
-                    .foregroundStyle(palette.tertiary)
+                Spacer(minLength: Space.lg)
             }
-            .frame(maxWidth: 420, alignment: .leading)
-            .lifelogCard(padding: 24, radius: 22)
-
-            Spacer()
+            .padding(Space.page)
+            .frame(maxWidth: 420)
         }
-        .padding(24)
-        .lifelogScreenBackground()
-        .onSubmit(submit)
-        .onAppear {
-            if !env.settings.lockEnabled || env.settings.pinHash == nil {
-                env.isLocked = false
+        .task {
+            // Offer biometrics once when the lock appears, never in the background.
+            guard canUseBiometrics, UIApplication.shared.applicationState == .active else { return }
+            await tryBiometrics()
+        }
+    }
+
+    private var isLockedOut: Bool {
+        if let lockedUntil { return lockedUntil > Date() }
+        return false
+    }
+
+    // MARK: Pieces
+
+    private var dots: some View {
+        HStack(spacing: Space.md) {
+            ForEach(0..<max(4, pin.count), id: \.self) { index in
+                Circle()
+                    .fill(index < pin.count ? Palette.ink : Color.clear)
+                    .overlay(Circle().strokeBorder(Palette.inkTertiary, lineWidth: 1))
+                    .frame(width: 12, height: 12)
+            }
+        }
+        .frame(height: 20)
+        .accessibilityElement()
+        .accessibilityLabel("\(pin.count) digits entered")
+    }
+
+    private var keypad: some View {
+        VStack(spacing: Space.md) {
+            ForEach(rows, id: \.self) { row in
+                HStack(spacing: Space.xl) {
+                    ForEach(row, id: \.self) { digit in key(digit) }
+                }
+            }
+            HStack(spacing: Space.xl) {
+                if canUseBiometrics {
+                    Button { Task { await tryBiometrics() } } label: {
+                        Image(systemName: biometrics.symbol)
+                            .font(.system(.title2))
+                            .foregroundStyle(Palette.accent)
+                            .frame(width: 72, height: 56)
+                    }
+                    .accessibilityLabel("Unlock with \(biometrics.name)")
+                } else {
+                    Color.clear.frame(width: 72, height: 56)
+                }
+                key("0")
+                Button {
+                    if !pin.isEmpty { pin.removeLast() }
+                } label: {
+                    Image(systemName: "delete.left")
+                        .font(.system(.title3))
+                        .foregroundStyle(Palette.inkSecondary)
+                        .frame(width: 72, height: 56)
+                }
+                .accessibilityLabel("Delete")
             }
         }
     }
 
-    private func submit() {
-        guard !isWorking else { return }
-        guard pin.count >= 4 else {
-            error = "Enter your PIN."
-            return
+    private func key(_ digit: String) -> some View {
+        Button {
+            guard pin.count < 12 else { return }
+            pin.append(digit)
+            message = nil
+        } label: {
+            Text(digit)
+                .font(Typeface.heading.monospacedDigit())
+                .foregroundStyle(Palette.ink)
+                .frame(width: 72, height: 56)
+                .background(Palette.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Palette.line, lineWidth: 0.5))
         }
-        guard canSubmit else {
-            error = "Use 4 to 12 digits."
-            return
-        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(digit)
+    }
 
-        isWorking = true
-        error = ""
-        let candidate = pin
+    // MARK: Actions
+
+    private func submit() {
+        if let lockedUntil, lockedUntil > Date() {
+            let seconds = Int(lockedUntil.timeIntervalSinceNow.rounded(.up))
+            message = "Too many attempts. Try again in \(seconds) seconds."
+            return
+        }
+        working = true
+        let attempt = pin
         Task {
-            let unlocked = await env.unlock(with: candidate)
-            await MainActor.run {
-                isWorking = false
-                if unlocked {
-                    pin = ""
-                    error = ""
+            let ok = await env.unlock(with: attempt)
+            working = false
+            if ok {
+                pin = ""
+                failures = 0
+                message = nil
+                ActivityClock.shared.reset()
+            } else {
+                failures += 1
+                pin = ""
+                withAnimation(.linear(duration: 0.4)) { shake += 1 }
+                if failures >= 5 {
+                    let wait = min(60, 5 * (failures - 4))
+                    lockedUntil = Date().addingTimeInterval(TimeInterval(wait))
+                    message = "Too many attempts. Try again in \(wait) seconds."
                 } else {
-                    error = "That PIN did not match."
-                    pin = ""
+                    message = "That PIN is not right."
                 }
             }
         }
+    }
+
+    private func tryBiometrics() async {
+        let ok = await Biometrics.authenticate(reason: "Unlock your Lifelog.")
+        if ok {
+            env.isLocked = false
+            ActivityClock.shared.reset()
+        }
+    }
+}
+
+private extension View {
+    func accessibilityLiveRegion() -> some View {
+        self.accessibilityAddTraits(.updatesFrequently)
+    }
+}
+
+private struct ShakeEffect: GeometryEffect {
+    var travel: CGFloat
+    var animatableData: CGFloat {
+        get { travel }
+        set { travel = newValue }
+    }
+
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        ProjectionTransform(CGAffineTransform(translationX: 8 * sin(travel * .pi * 4), y: 0))
     }
 }

@@ -22,6 +22,14 @@
 	<string>Lifelog reads steps and sleep to add daily context to your journal.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>Lifelog does not write health data.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Lifelog uses the camera only when you choose to take a photo or video for your journal. Captures are stored encrypted on this device.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Lifelog records audio only while you are making a voice note. Recordings are stored encrypted on this device.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Lifelog can turn a voice note into text so you can read it later. Transcription runs on this device whenever your language supports it.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Lifelog can use Face ID to unlock the screen lock instead of typing your PIN.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Lifelog uses your location to label saved places and visits.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

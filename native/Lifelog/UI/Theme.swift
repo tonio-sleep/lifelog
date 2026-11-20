@@ -1,111 +1,7 @@
 import SwiftUI
 import UIKit
 
-enum LifelogTheme {
-    struct Palette {
-        let background: Color
-        let surface: Color
-        let surfaceRaised: Color
-        let text: Color
-        let secondary: Color
-        let tertiary: Color
-        let accent: Color
-        let accentSoft: Color
-        let border: Color
-        let success: Color
-        let warning: Color
-        let danger: Color
-        let shadow: Color
-    }
-
-    static func palette(_ scheme: ColorScheme) -> Palette {
-        if scheme == .dark {
-            return Palette(
-                background: Color(hex: 0x0E1013),
-                surface: Color(hex: 0x171A1F),
-                surfaceRaised: Color(hex: 0x20242A),
-                text: Color(hex: 0xF3F0E9),
-                secondary: Color(hex: 0xA9A69F),
-                tertiary: Color(hex: 0x74736F),
-                accent: Color(hex: 0xD89A7E),
-                accentSoft: Color(hex: 0x4A352D),
-                border: Color(hex: 0x2B2F35),
-                success: Color(hex: 0x7FB69A),
-                warning: Color(hex: 0xD7B36A),
-                danger: Color(hex: 0xD47C70),
-                shadow: Color.black.opacity(0.35)
-            )
-        }
-        return Palette(
-            background: Color(hex: 0xF5F1E8),
-            surface: Color(hex: 0xFDFBF6),
-            surfaceRaised: Color(hex: 0xFFFFFF),
-            text: Color(hex: 0x1F1C18),
-            secondary: Color(hex: 0x6A635A),
-            tertiary: Color(hex: 0x948C81),
-            accent: Color(hex: 0xA84F3A),
-            accentSoft: Color(hex: 0xF1DED4),
-            border: Color(hex: 0xE4DCCC),
-            success: Color(hex: 0x4E8067),
-            warning: Color(hex: 0xA8803E),
-            danger: Color(hex: 0xA84F3A),
-            shadow: Color(hex: 0x3B2E1D).opacity(0.09)
-        )
-    }
-
-    static func serif(_ size: CGFloat, relativeTo: Font.TextStyle = .title) -> Font {
-        Font.custom("Georgia", size: size, relativeTo: relativeTo)
-    }
-
-    static func sans(_ size: CGFloat, weight: Font.Weight = .regular, relativeTo: Font.TextStyle = .body) -> Font {
-        let base = UIFont.systemFont(ofSize: size, weight: uiWeight(weight))
-        let scaled = UIFontMetrics(forTextStyle: uiTextStyle(relativeTo)).scaledFont(for: base)
-        return Font(scaled)
-    }
-
-    private static func uiTextStyle(_ style: Font.TextStyle) -> UIFont.TextStyle {
-        switch style {
-        case .largeTitle: return .largeTitle
-        case .title: return .title1
-        case .title2: return .title2
-        case .title3: return .title3
-        case .headline: return .headline
-        case .subheadline: return .subheadline
-        case .body: return .body
-        case .callout: return .callout
-        case .footnote: return .footnote
-        case .caption: return .caption1
-        case .caption2: return .caption2
-        default: return .body
-        }
-    }
-
-    private static func uiWeight(_ weight: Font.Weight) -> UIFont.Weight {
-        switch weight {
-        case .ultraLight: return .ultraLight
-        case .thin: return .thin
-        case .light: return .light
-        case .regular: return .regular
-        case .medium: return .medium
-        case .semibold: return .semibold
-        case .bold: return .bold
-        case .heavy: return .heavy
-        case .black: return .black
-        default: return .regular
-        }
-    }
-}
-
-struct LifelogPaletteKey: EnvironmentKey {
-    static let defaultValue = LifelogTheme.palette(.light)
-}
-
-extension EnvironmentValues {
-    var lifelogPalette: LifelogTheme.Palette {
-        get { self[LifelogPaletteKey.self] }
-        set { self[LifelogPaletteKey.self] = newValue }
-    }
-}
+// MARK: - Color
 
 extension Color {
     init(hex: UInt32, opacity: Double = 1) {
@@ -119,85 +15,169 @@ extension Color {
     }
 }
 
-// MARK: - Reusable styling
+private extension UIColor {
+    convenience init(hex: UInt32) {
+        self.init(
+            red: CGFloat((hex >> 16) & 0xFF) / 255,
+            green: CGFloat((hex >> 8) & 0xFF) / 255,
+            blue: CGFloat(hex & 0xFF) / 255,
+            alpha: 1
+        )
+    }
+}
 
-struct CardBackground: ViewModifier {
-    @Environment(\.lifelogPalette) private var palette
-    var padding: CGFloat = 18
-    var radius: CGFloat = 20
+/// Warm paper and ink. Every color is dynamic, so it follows the real interface
+/// style of whatever view it is drawn in (including sheets), with no environment
+/// plumbing and no stale palette when the theme is forced.
+enum Palette {
+    private static func dynamic(light: UInt32, dark: UInt32) -> Color {
+        Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light)
+        })
+    }
+
+    static let paper = dynamic(light: 0xF6F2EA, dark: 0x121315)
+    static let surface = dynamic(light: 0xFCFAF5, dark: 0x1B1C1F)
+    static let raised = dynamic(light: 0xFFFFFF, dark: 0x25272B)
+    static let ink = dynamic(light: 0x24211C, dark: 0xF2EEE5)
+    static let inkSecondary = dynamic(light: 0x5F584D, dark: 0xB4AEA2)
+    static let inkTertiary = dynamic(light: 0x756E62, dark: 0x8F897D)
+    static let line = dynamic(light: 0xE2DACA, dark: 0x303236)
+    static let accent = dynamic(light: 0x9A4733, dark: 0xE2A58A)
+    static let accentSoft = dynamic(light: 0xF0DED3, dark: 0x3B2C26)
+    static let onAccent = dynamic(light: 0xFFFFFF, dark: 0x1C1410)
+    static let moss = dynamic(light: 0x47755E, dark: 0x8BBFA2)
+    static let amber = dynamic(light: 0x92692A, dark: 0xDCB872)
+    static let danger = dynamic(light: 0xA3362B, dark: 0xEB8F85)
+}
+
+// MARK: - Type
+
+/// Semantic type roles built on text styles, so everything scales with Dynamic Type.
+enum Typeface {
+    static let display = Font.system(.largeTitle, design: .serif)
+    static let title = Font.system(.title2, design: .serif)
+    static let heading = Font.system(.title3, design: .serif)
+    static let reading = Font.system(.body, design: .serif)
+    static let readingLarge = Font.system(.title3, design: .serif)
+    static let body = Font.system(.body)
+    static let bodyStrong = Font.system(.body).weight(.semibold)
+    static let label = Font.system(.subheadline)
+    static let labelStrong = Font.system(.subheadline).weight(.semibold)
+    static let caption = Font.system(.footnote)
+    static let captionStrong = Font.system(.footnote).weight(.semibold)
+    static let micro = Font.system(.caption).weight(.medium)
+    static let figure = Font.system(.title2, design: .serif).monospacedDigit()
+}
+
+enum Space {
+    static let xs: CGFloat = 4
+    static let sm: CGFloat = 8
+    static let md: CGFloat = 12
+    static let lg: CGFloat = 16
+    static let xl: CGFloat = 24
+    static let xxl: CGFloat = 36
+    static let page: CGFloat = 20
+}
+
+// MARK: - Surfaces
+
+struct Hairline: View {
+    var body: some View {
+        Rectangle()
+            .fill(Palette.line)
+            .frame(height: 0.5)
+            .accessibilityHidden(true)
+    }
+}
+
+private struct SurfaceModifier: ViewModifier {
+    var padding: CGFloat
+    var radius: CGFloat
 
     func body(content: Content) -> some View {
         content
             .padding(padding)
-            .background(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(palette.surface)
-            )
+            .background(Palette.surface, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .stroke(palette.border, lineWidth: 0.8)
+                    .strokeBorder(Palette.line, lineWidth: 0.5)
             )
-            .shadow(color: palette.shadow, radius: 10, x: 0, y: 4)
     }
 }
 
-struct SoftButtonStyle: ButtonStyle {
-    @Environment(\.lifelogPalette) private var palette
-    var prominent = false
+private struct PaperScreenModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content.background(Palette.paper.ignoresSafeArea())
+    }
+}
+
+extension View {
+    /// A quiet panel: paper surface with a hairline edge and no shadow.
+    func surface(padding: CGFloat = Space.lg, radius: CGFloat = 16) -> some View {
+        modifier(SurfaceModifier(padding: padding, radius: radius))
+    }
+
+    func paperScreen() -> some View { modifier(PaperScreenModifier()) }
+
+    /// Hides the default grouped-list background so the paper shows through.
+    func paperList() -> some View {
+        self.scrollContentBackground(.hidden).background(Palette.paper.ignoresSafeArea())
+    }
+}
+
+// MARK: - Buttons
+
+struct PrimaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(LifelogTheme.sans(14, weight: .semibold))
-            .foregroundStyle(prominent ? palette.background : palette.text)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .font(Typeface.labelStrong)
+            .foregroundStyle(Palette.onAccent)
+            .padding(.horizontal, Space.xl)
+            .padding(.vertical, 13)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(Palette.accent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .opacity(isEnabled ? (configuration.isPressed ? 0.85 : 1) : 0.4)
+    }
+}
+
+struct QuietButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(Typeface.labelStrong)
+            .foregroundStyle(Palette.accent)
+            .opacity(configuration.isPressed ? 0.6 : 1)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+    }
+}
+
+struct ChipStyle: ButtonStyle {
+    var selected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(Typeface.micro)
+            .foregroundStyle(selected ? Palette.onAccent : Palette.inkSecondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
             .background(
-                Capsule().fill(prominent ? palette.accent : palette.surfaceRaised)
+                Capsule().fill(selected ? Palette.accent : Palette.surface)
             )
-            .overlay(
-                Capsule().stroke(prominent ? Color.clear : palette.border, lineWidth: 0.8)
-            )
-            .opacity(configuration.isPressed ? 0.75 : 1)
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .overlay(Capsule().strokeBorder(selected ? Color.clear : Palette.line, lineWidth: 0.5))
+            .opacity(configuration.isPressed ? 0.8 : 1)
+            .frame(minHeight: 44)
+            .contentShape(Capsule())
     }
 }
 
-extension View {
-    func lifelogCard(padding: CGFloat = 18, radius: CGFloat = 20) -> some View {
-        modifier(CardBackground(padding: padding, radius: radius))
+/// A plain row button that keeps the whole row tappable and gives gentle feedback.
+struct RowButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .contentShape(Rectangle())
+            .opacity(configuration.isPressed ? 0.6 : 1)
     }
-
-    func lifelogScreenBackground() -> some View {
-        modifier(ScreenBackground())
-    }
-}
-
-struct ScreenBackground: ViewModifier {
-    @Environment(\.lifelogPalette) private var palette
-
-    func body(content: Content) -> some View {
-        ZStack {
-            palette.background.ignoresSafeArea()
-            // A quiet, paper-like wash rather than a flat fill.
-            LinearGradient(
-                colors: [palette.accent.opacity(0.055), Color.clear],
-                startPoint: .topLeading,
-                endPoint: .center
-            )
-            .ignoresSafeArea()
-            content
-        }
-    }
-}
-
-struct PaletteProvider: ViewModifier {
-    @Environment(\.colorScheme) private var scheme
-
-    func body(content: Content) -> some View {
-        content.environment(\.lifelogPalette, LifelogTheme.palette(scheme))
-    }
-}
-
-extension View {
-    func lifelogPaletteProvider() -> some View { modifier(PaletteProvider()) }
 }

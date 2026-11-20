@@ -1,95 +1,144 @@
 import SwiftUI
 
-struct SearchView: View {
-    @Environment(\.dismiss) private var dismiss
+/// Local-only search. Nothing typed here leaves the device.
+struct SearchSheet: View {
     @EnvironmentObject private var env: AppEnvironment
-    @Environment(\.lifelogPalette) private var palette
-    @State private var query = ""
-    @State private var kind: SearchKind?
+    @EnvironmentObject private var navigator: Navigator
+    @Environment(\.dismiss) private var dismiss
 
-    private var hits: [SearchHit] {
-        let all = searchArchive(env.archive, rawQuery: query)
-        guard let kind else { return all }
-        return all.filter { $0.kind == kind }
+    @State private var query = ""
+    @State private var hits: [SearchHit] = []
+    @State private var kinds: Set<SearchKind> = []
+    @State private var searching = false
+
+    private var trimmed: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private var visible: [SearchHit] {
+        kinds.isEmpty ? hits : hits.filter { kinds.contains($0.kind) }
+    }
+
+    private var presentKinds: [SearchKind] {
+        SearchKind.allCases.filter { kind in hits.contains { $0.kind == kind } }
     }
 
     var body: some View {
-        List {
-            Section {
-                TextField("Search entries, photos, places, music…", text: $query)
-                    .font(LifelogTheme.sans(15))
-                    .textFieldStyle(.plain)
-            }
-            if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Section {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack {
-                            filterPill(nil, title: "All")
-                            ForEach(SearchKind.allCases, id: \.self) { item in
-                                filterPill(item, title: item.label)
-                            }
-                        }
-                    }
-                }
-                Section {
-                    if hits.isEmpty {
-                        EmptyState(title: "No matches", message: "Search is local. Try a different word or tag.", systemImage: "magnifyingglass", action: nil)
-                    } else {
-                        ForEach(hits) { hit in
-                            HStack(alignment: .top, spacing: 12) {
-                                Image(systemName: icon(for: hit.kind))
-                                    .frame(width: 22)
-                                    .foregroundStyle(palette.accent)
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(hit.title).font(LifelogTheme.sans(14, weight: .semibold))
-                                    if !hit.subtitle.isEmpty {
-                                        Text(hit.subtitle).font(LifelogTheme.sans(12)).foregroundStyle(palette.secondary).lineLimit(2)
-                                    }
-                                    Text(Dates.formatShortDate(hit.date) + " · " + Dates.formatTime(hit.date))
-                                        .font(LifelogTheme.sans(10)).foregroundStyle(palette.tertiary)
+        NavigationStack {
+            List {
+                if !presentKinds.isEmpty {
+                    Section {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: Space.sm) {
+                                Button("All") { kinds = [] }
+                                    .buttonStyle(ChipStyle(selected: kinds.isEmpty))
+                                ForEach(presentKinds, id: \.self) { kind in
+                                    Button(kind.label) { toggle(kind) }
+                                        .buttonStyle(ChipStyle(selected: kinds.contains(kind)))
                                 }
                             }
-                            .padding(.vertical, 4)
                         }
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
                     }
-                } header: {
-                    Text("\(hits.count) results")
+                }
+
+                if trimmed.isEmpty {
+                    EmptyNote(
+                        title: "Search your archive",
+                        message: "Entries, photos, practices, places, visits, tracks, and moments. Everything is searched on this device."
+                    )
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                } else if visible.isEmpty && !searching {
+                    EmptyNote(title: "No matches", message: "Nothing in your archive matches “\(trimmed)”.")
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                } else {
+                    ForEach(visible) { hit in
+                        Button { navigator.open(hit) } label: { SearchRow(hit: hit) }
+                            .buttonStyle(RowButtonStyle())
+                            .listRowBackground(Color.clear)
+                            .listRowSeparatorTint(Palette.line)
+                    }
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Palette.paper.ignoresSafeArea())
+            .navigationTitle("Search")
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search your archive")
+            .autocorrectionDisabled()
+            .textInputAutocapitalization(.never)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
+            }
+            .task(id: query) { await run() }
         }
-        .scrollContentBackground(.hidden)
-        .background(palette.background)
-        .navigationTitle("Search")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
-        }
+        .presentationDetents([.large])
     }
 
-    private func filterPill(_ value: SearchKind?, title: String) -> some View {
-        Button {
-            kind = value
-        } label: {
-            Text(title)
-                .font(LifelogTheme.sans(12, weight: .semibold))
-                .foregroundStyle(kind == value ? palette.background : palette.secondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(Capsule().fill(kind == value ? palette.accent : palette.surfaceRaised))
-                .overlay(Capsule().stroke(palette.border, lineWidth: 0.6))
-        }
-        .buttonStyle(.plain)
+    private func toggle(_ kind: SearchKind) {
+        if kinds.contains(kind) { kinds.remove(kind) } else { kinds.insert(kind) }
     }
 
-    private func icon(for kind: SearchKind) -> String {
-        switch kind {
+    /// Waits for a pause in typing, then searches off the main thread.
+    private func run() async {
+        let text = trimmed
+        guard !text.isEmpty else {
+            hits = []
+            searching = false
+            return
+        }
+        searching = true
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        guard !Task.isCancelled else { return }
+        let archive = env.archive
+        let result = await offMain { searchArchive(archive, rawQuery: text) }
+        guard !Task.isCancelled else { return }
+        hits = result
+        searching = false
+    }
+}
+
+private struct SearchRow: View {
+    let hit: SearchHit
+
+    private var symbol: String {
+        switch hit.kind {
         case .journal: return "book.closed"
         case .photo: return "photo"
         case .tracker: return "checkmark.circle"
-        case .place: return "mappin"
-        case .visit: return "clock"
+        case .place: return "star"
+        case .visit: return "mappin"
         case .music: return "music.note"
-        case .event: return "calendar"
+        case .event: return "sparkle"
         }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: Space.md) {
+            Image(systemName: symbol)
+                .font(.system(.footnote).weight(.semibold))
+                .foregroundStyle(Palette.accent)
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(Palette.accentSoft))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(hit.kind.label + " · " + Dates.formatShortDate(hit.date))
+                    .font(Typeface.micro)
+                    .foregroundStyle(Palette.inkTertiary)
+                Text(hit.title).font(Typeface.bodyStrong).foregroundStyle(Palette.ink).multilineTextAlignment(.leading)
+                if !hit.subtitle.isEmpty {
+                    Text(hit.subtitle)
+                        .font(Typeface.label)
+                        .foregroundStyle(Palette.inkSecondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, Space.sm)
+        .accessibilityElement(children: .combine)
     }
 }

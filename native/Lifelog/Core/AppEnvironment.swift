@@ -1,5 +1,7 @@
 import Foundation
 import SwiftUI
+import UIKit
+import CoreLocation
 
 /// Runs CPU-heavy or file-heavy work away from the UI actor. The caller stays
 /// responsible for publishing any resulting state changes on the main actor.
@@ -8,6 +10,10 @@ private func runOffMain<T>(
     _ work: @escaping @Sendable () throws -> T
 ) async throws -> T {
     try await Task.detached(priority: priority, operation: work).value
+}
+
+private final class BackgroundTaskBox {
+    var identifier: UIBackgroundTaskIdentifier = .invalid
 }
 
 @MainActor
@@ -21,7 +27,19 @@ final class AppEnvironment: ObservableObject {
     let health: HealthService
     let location: LocationService
 
-    @Published var archive: Archive
+    let permissions = PermissionCenter()
+
+    @Published var archive: Archive {
+        didSet { revision &+= 1 }
+    }
+    /// Increments whenever the archive changes. Views key derived-data tasks on it.
+    @Published private(set) var revision: Int = 0
+    /// True when the stored archive could not be decrypted. Nothing is written
+    /// to disk in this state so the unreadable file is never overwritten.
+    @Published var persistenceBlocked: Bool = false
+    @Published var biometricUnlockEnabled: Bool = UserDefaults.standard.bool(forKey: "lifelog.biometricUnlock") {
+        didSet { UserDefaults.standard.set(biometricUnlockEnabled, forKey: "lifelog.biometricUnlock") }
+    }
     @Published var settings: AppSettings
     @Published var isLocked: Bool
     @Published var isWorking: Bool = false
@@ -34,13 +52,19 @@ final class AppEnvironment: ObservableObject {
         let settings: AppSettings
         let archive: Archive
         let usedFallback: Bool
+        var unreadable = false
         do {
             try Paths.prepare()
             let vault = try KeyVault.loadOrCreate(in: Paths.root)
             usedFallback = vault.usedFallback
             crypto = CryptoService(key: vault.key)
             settings = SettingsStore.load()
-            archive = (try ArchiveStore.load(crypto: crypto)) ?? .empty
+            do {
+                archive = (try ArchiveStore.load(crypto: crypto)) ?? .empty
+            } catch {
+                archive = .empty
+                unreadable = true
+            }
         } catch {
             fatalError("Lifelog could not open its encrypted store: \(error.localizedDescription)")
         }
@@ -50,11 +74,15 @@ final class AppEnvironment: ObservableObject {
         self.archive = archive
         self.isLocked = settings.lockEnabled && settings.pinHash != nil
         self.usedFallbackKey = usedFallback
+        self.persistenceBlocked = unreadable
         lastfm = LastFMService()
         cloudflare = CloudflareService()
         health = HealthService()
         location = LocationService(trackingEnabled: settings.locationTrackingEnabled)
 
+        location.placeMatcher = { [weak self] latitude, longitude in
+            self?.nearestPlace(latitude: latitude, longitude: longitude)
+        }
         location.onSample = { [weak self] sample in
             Task { @MainActor in self?.record(sample) }
         }
@@ -65,16 +93,68 @@ final class AppEnvironment: ObservableObject {
 
     // MARK: - Persistence
 
+    private var saveDebounce: Task<Void, Never>?
+    private var writeChain: Task<Void, Never>?
+    private var hasPendingWrite = false
+
+    /// Settings are tiny and written at once. The archive is encrypted and written
+    /// off the main thread after a short pause, so typing and scrolling never wait
+    /// on disk or AES.
     func save() {
-        do {
-            try ArchiveStore.save(archive, crypto: crypto)
-            try SettingsStore.save(settings)
-        } catch {
-            toast = "Could not save your journal. Please try again."
+        do { try SettingsStore.save(settings) } catch { toast = "Could not save settings." }
+        scheduleArchiveWrite()
+    }
+
+    private func scheduleArchiveWrite() {
+        guard !persistenceBlocked else { return }
+        hasPendingWrite = true
+        saveDebounce?.cancel()
+        saveDebounce = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled else { return }
+            self?.enqueueArchiveWrite()
         }
     }
 
-    private func updateSettings(_ mutate: (inout AppSettings) -> Void) {
+    private func enqueueArchiveWrite() {
+        hasPendingWrite = false
+        guard !persistenceBlocked else { return }
+        let snapshot = archive
+        let key = crypto
+        let previous = writeChain
+        writeChain = Task { [weak self] in
+            await previous?.value
+            do {
+                try await runOffMain { try ArchiveStore.save(snapshot, crypto: key) }
+            } catch {
+                self?.toast = "Could not save your journal. Please try again."
+            }
+        }
+    }
+
+    /// Writes any pending archive change now and waits for it to finish.
+    func flushPendingWrites() async {
+        if hasPendingWrite {
+            saveDebounce?.cancel()
+            enqueueArchiveWrite()
+        }
+        await writeChain?.value
+    }
+
+    /// Called when the app leaves the foreground; asks iOS for time to finish.
+    func flushForBackground() {
+        guard hasPendingWrite || writeChain != nil else { return }
+        let box = BackgroundTaskBox()
+        box.identifier = UIApplication.shared.beginBackgroundTask(withName: "lifelog.flush") {
+            UIApplication.shared.endBackgroundTask(box.identifier)
+        }
+        Task {
+            await flushPendingWrites()
+            UIApplication.shared.endBackgroundTask(box.identifier)
+        }
+    }
+
+    func updateSettings(_ mutate: (inout AppSettings) -> Void) {
         mutate(&settings)
         do { try SettingsStore.save(settings) } catch { toast = "Could not save settings." }
     }
@@ -180,6 +260,38 @@ final class AppEnvironment: ObservableObject {
         save()
     }
 
+    func deletePlace(_ id: String) {
+        archive.places.removeAll { $0.id == id }
+        archive.visits = archive.visits.map { visit in
+            var visit = visit
+            if visit.placeId == id { visit.placeId = nil }
+            return visit
+        }
+        archive.entries = archive.entries.map { entry in
+            var entry = entry
+            if entry.placeId == id { entry.placeId = nil }
+            return entry
+        }
+        save()
+    }
+
+    func deleteVisit(_ id: String) {
+        archive.visits.removeAll { $0.id == id }
+        save()
+    }
+
+    func nearestPlace(latitude: Double, longitude: Double) -> Place? {
+        let here = CLLocation(latitude: latitude, longitude: longitude)
+        var best: (place: Place, distance: Double)?
+        for place in archive.places {
+            guard let lat = place.latitude, let lon = place.longitude else { continue }
+            let distance = here.distance(from: CLLocation(latitude: lat, longitude: lon))
+            guard distance <= max(place.radiusMeters, 75) else { continue }
+            if best == nil || distance < best!.distance { best = (place, distance) }
+        }
+        return best?.place
+    }
+
     func saveVisit(_ visit: Visit) {
         archive = archive.puttingVisit(visit)
         save()
@@ -199,9 +311,57 @@ final class AppEnvironment: ObservableObject {
     }
 
     @discardableResult
-    func importMedia(_ data: Data, fileName: String, caption: String = "", journalEntryId: String? = nil) -> MediaItem? {
+    func importMedia(
+        _ data: Data,
+        fileName: String,
+        mimeType: String? = nil,
+        caption: String = "",
+        tags: [String] = [],
+        journalEntryId: String? = nil,
+        createdAt: Date? = nil
+    ) -> MediaItem? {
         do {
-            let item = try mediaStore.importBytes(data, fileName: fileName, caption: caption, journalEntryId: journalEntryId)
+            let item = try mediaStore.importBytes(
+                data,
+                fileName: fileName,
+                mimeType: mimeType,
+                caption: caption,
+                tags: tags,
+                journalEntryId: journalEntryId,
+                createdAt: createdAt
+            )
+            archive = archive.puttingMedia(item)
+            save()
+            return item
+        } catch {
+            toast = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// Encrypts and stores media off the main thread, then records it in the archive.
+    func importMediaAsync(
+        _ data: Data,
+        fileName: String,
+        mimeType: String?,
+        caption: String = "",
+        tags: [String] = [],
+        journalEntryId: String? = nil,
+        createdAt: Date? = nil
+    ) async -> MediaItem? {
+        let store = mediaStore
+        do {
+            let item = try await runOffMain {
+                try store.importBytes(
+                    data,
+                    fileName: fileName,
+                    mimeType: mimeType,
+                    caption: caption,
+                    tags: tags,
+                    journalEntryId: journalEntryId,
+                    createdAt: createdAt
+                )
+            }
             archive = archive.puttingMedia(item)
             save()
             return item
@@ -214,6 +374,11 @@ final class AppEnvironment: ObservableObject {
     func deleteMedia(_ item: MediaItem) {
         mediaStore.delete(item)
         archive.media.removeAll { $0.id == item.id }
+        save()
+    }
+
+    func updateMedia(_ item: MediaItem) {
+        archive = archive.puttingMedia(item)
         save()
     }
 
@@ -254,25 +419,93 @@ final class AppEnvironment: ObservableObject {
 
     // MARK: - Health
 
-    func syncHealth() async {
-        guard let summary = try? await health.dailySummary(for: Date()) else { return }
-        guard summary.steps != nil || summary.sleepHours != nil else { return }
-        let day = Dates.dayStart(Date())
-        if let entry = archive.dailyEntryFor(day) {
-            var entry = entry
-            if let steps = summary.steps { entry.steps = steps }
-            if let sleep = summary.sleepHours { entry.sleepHours = sleep }
-            saveEntry(entry)
-        } else {
-            var entry = JournalEntry(
-                createdAt: Dates.momentForDay(day),
-                title: "Daily metrics",
-                kind: .note
-            )
-            entry.steps = summary.steps
-            entry.sleepHours = summary.sleepHours
-            saveEntry(entry)
+    /// Reads steps and sleep and stores them the way the Flutter app does: on the
+    /// stable `day-YYYY-MM-DD` metrics entry (or an existing entry that already
+    /// carries steps/sleep), never on a person's written entry.
+    @discardableResult
+    func syncHealth(for day: Date = Date()) async -> String {
+        guard HealthService.isAvailable else {
+            return "Apple Health is not available on this device."
         }
+        let summary: DailyHealthSummary
+        do {
+            summary = try await health.dailySummary(for: day)
+        } catch {
+            return "Could not read Health data: \(error.localizedDescription)"
+        }
+        guard summary.hasData else {
+            return "No steps or sleep found in Health for that day. If you have not allowed access, open Settings › Health › Data Access & Devices › Lifelog."
+        }
+        let metricsId = "day-\(Dates.dayKey(day))"
+        var entry = archive.entryById(metricsId)
+            ?? archive.dayMetricsEntryFor(day)
+            ?? JournalEntry(id: metricsId, createdAt: Dates.momentForDay(day), title: "", body: "", draft: false)
+        if let steps = summary.steps { entry.steps = steps }
+        if let sleep = summary.sleepHours { entry.sleepHours = sleep }
+        saveEntry(entry)
+        UserDefaults.standard.set(Date(), forKey: "lifelog.health.lastSync")
+        var parts: [String] = []
+        if let sleep = summary.sleepHours { parts.append("sleep " + Dates.formatCompactNumber(sleep) + " h") }
+        if let steps = summary.steps { parts.append("\(steps) steps") }
+        return "Synced " + parts.joined(separator: " · ") + "."
+    }
+
+    /// Quietly refreshes today's Health numbers if the person has connected Health.
+    func autoSyncHealthIfNeeded() async {
+        guard UserDefaults.standard.bool(forKey: "lifelog.health.connected"), HealthService.isAvailable else { return }
+        if let last = UserDefaults.standard.object(forKey: "lifelog.health.lastSync") as? Date,
+           Date().timeIntervalSince(last) < 30 * 60 { return }
+        _ = await syncHealth()
+    }
+
+    /// Asks Health for access (iOS shows its own sheet) and, if that completed,
+    /// remembers that Health is connected and syncs today.
+    func connectHealth() async -> String {
+        guard HealthService.isAvailable else { return "Apple Health is not available on this device." }
+        let completed = await health.requestPermission()
+        guard completed else { return "Health access could not be requested." }
+        UserDefaults.standard.set(true, forKey: "lifelog.health.connected")
+        return await syncHealth()
+    }
+
+    var healthConnected: Bool { UserDefaults.standard.bool(forKey: "lifelog.health.connected") }
+
+    func disconnectHealth() {
+        UserDefaults.standard.set(false, forKey: "lifelog.health.connected")
+        objectWillChange.send()
+    }
+
+    // MARK: - Reminders
+
+    func syncReminders(requestIfNeeded: Bool = false) async -> ReminderSyncResult {
+        let result = await NotificationService.sync(settings.reminders, requestIfNeeded: requestIfNeeded)
+        if !result.expiredOnceIds.isEmpty {
+            updateSettings { settings in
+                for index in settings.reminders.indices where result.expiredOnceIds.contains(settings.reminders[index].id) {
+                    settings.reminders[index].enabled = false
+                }
+            }
+        }
+        await permissions.refresh()
+        return result
+    }
+
+    func saveReminder(_ reminder: ReminderItem) async -> ReminderSyncResult {
+        NotificationService.forgetOnce(reminder.id)
+        updateSettings { settings in
+            if let index = settings.reminders.firstIndex(where: { $0.id == reminder.id }) {
+                settings.reminders[index] = reminder
+            } else {
+                settings.reminders.append(reminder)
+            }
+        }
+        return await syncReminders(requestIfNeeded: reminder.enabled)
+    }
+
+    func deleteReminder(_ id: String) async {
+        NotificationService.forgetOnce(id)
+        updateSettings { $0.reminders.removeAll { $0.id == id } }
+        _ = await syncReminders()
     }
 
     // MARK: - Last.fm
@@ -305,6 +538,12 @@ final class AppEnvironment: ObservableObject {
             $0.lastfmLastSyncFrom = nil
         }
         present("Last.fm disconnected.")
+    }
+
+    func autoSyncLastfmIfNeeded() async {
+        guard settings.lastfmConnected else { return }
+        if let last = settings.lastfmLastSync, Date().timeIntervalSince(last) < 30 * 60 { return }
+        _ = await syncLastfm()
     }
 
     @discardableResult
@@ -443,6 +682,10 @@ final class AppEnvironment: ObservableObject {
     }
 
     func restoreBackup(_ data: Data, passphrase: String) async throws {
+        // A pending debounced write of the old archive must not land after the restore.
+        saveDebounce?.cancel()
+        hasPendingWrite = false
+        await writeChain?.value
         let vaultKey = crypto
         let restored = try await runOffMain { () -> Archive in
             let contents = try BackupService.read(data: data, passphrase: passphrase)
@@ -489,12 +732,15 @@ final class AppEnvironment: ObservableObject {
             return contents.archive
         }
 
+        persistenceBlocked = false
         archive = restored
         present("Backup restored.")
     }
 
     func clearAllData() {
         mediaStore.deleteAll()
+        try? ArchiveStore.delete()
+        persistenceBlocked = false
         archive = .empty
         save()
         present("All local journal data was erased.")

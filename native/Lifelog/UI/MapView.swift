@@ -1,423 +1,428 @@
 import SwiftUI
 import MapKit
 
-/// Map destination for the selected day. Precise coordinates stay in the local
-/// encrypted archive; MapKit receives only the visible region needed to draw tiles.
-struct MapView: View {
-    @EnvironmentObject private var env: AppEnvironment
-    @EnvironmentObject private var router: Router
-    @Environment(\.lifelogPalette) private var palette
+// MARK: - Snapshot
 
-    @State private var day: Date
-    @State private var camera: MapCameraPosition
-    @State private var showRoute = true
-    @State private var showVisits = true
-    @State private var showPlaces = true
-    @State private var privacyMode = false
-    @State private var showPlacesList = false
+struct MapPoint: Identifiable {
+    var id: String
+    var title: String
+    var coordinate: CLLocationCoordinate2D
+    var suggested: Bool = false
+    var color: UInt32 = 0xFF9A4733
+}
 
-    private struct VisitAnnotation: Identifiable {
-        let id: String
-        let title: String
-        let coordinate: CLLocationCoordinate2D
-        let visit: Visit
-    }
+struct StopLine: Identifiable {
+    var id: String
+    var label: String
+    var range: String
+    var suggested: Bool
+    var coordinate: CLLocationCoordinate2D?
+    var startAt: Date
+}
 
-    init(day: Date? = nil) {
-        let initial = day ?? Date()
-        _day = State(initialValue: initial)
-        _camera = State(initialValue: .region(MapView.defaultRegion))
-    }
+struct MapSnapshot {
+    var loaded = false
+    var route: [CLLocationCoordinate2D] = []
+    var stops: [StopLine] = []
+    var places: [MapPoint] = []
+    var sampleCount = 0
+    var firstSample: Date?
+    var lastSample: Date?
 
-    private static let defaultRegion = MKCoordinateRegion(
-        center: CLLocationCoordinate2D(latitude: 39.8283, longitude: -98.5795),
-        span: MKCoordinateSpan(latitudeDelta: 30, longitudeDelta: 30)
-    )
-
-    private var samples: [LocationSample] { env.archive.locationSamplesOn(day) }
-    private var visits: [Visit] { env.archive.visitsOn(day) }
-
-    private var routeCoordinates: [CLLocationCoordinate2D] {
-        samples.compactMap { sample in
-            guard Self.isValid(sample.latitude, sample.longitude) else { return nil }
-            return CLLocationCoordinate2D(latitude: sample.latitude, longitude: sample.longitude)
+    var stopPins: [MapPoint] {
+        stops.compactMap { stop in
+            guard let coordinate = stop.coordinate else { return nil }
+            return MapPoint(id: stop.id, title: stop.label, coordinate: coordinate, suggested: stop.suggested)
         }
     }
 
-    private var mappedPlaces: [Place] {
-        env.archive.places.filter {
-            guard let lat = $0.latitude, let lon = $0.longitude else { return false }
-            return Self.isValid(lat, lon)
-        }
+    static func isValid(_ latitude: Double, _ longitude: Double) -> Bool {
+        latitude.isFinite && longitude.isFinite &&
+        abs(latitude) <= 90 && abs(longitude) <= 180 &&
+        !(latitude == 0 && longitude == 0)
     }
 
-    private var visitAnnotations: [VisitAnnotation] {
-        visits.compactMap { visit in
-            let place = env.archive.placeById(visit.placeId)
-                ?? env.archive.places.first { $0.name == visit.label }
-            guard let lat = place?.latitude, let lon = place?.longitude,
-                  Self.isValid(lat, lon) else { return nil }
-            return VisitAnnotation(
-                id: visit.id,
-                title: visit.label,
+    static func make(_ archive: Archive, day: Date) -> MapSnapshot {
+        var snap = MapSnapshot()
+        snap.loaded = true
+
+        let samples = archive.locationSamplesOn(day).filter { isValid($0.latitude, $0.longitude) }
+        snap.sampleCount = samples.count
+        snap.firstSample = samples.first?.recordedAt
+        snap.lastSample = samples.last?.recordedAt
+
+        // Keep the line light: a few hundred points draw the same route.
+        let stride = max(1, samples.count / 600)
+        snap.route = samples.enumerated().compactMap { index, sample in
+            index % stride == 0
+                ? CLLocationCoordinate2D(latitude: sample.latitude, longitude: sample.longitude)
+                : nil
+        }
+
+        snap.places = archive.places.compactMap { place in
+            guard let lat = place.latitude, let lon = place.longitude, isValid(lat, lon) else { return nil }
+            return MapPoint(
+                id: place.id,
+                title: place.name,
                 coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon),
-                visit: visit
+                color: place.colorValue
             )
         }
+
+        // Visits carry no coordinates in the archive. A stop is placed only from a
+        // saved place it belongs to, or from a real location sample taken during it.
+        snap.stops = archive.visitsOn(day).sorted { $0.startAt > $1.startAt }.map { visit in
+            var coordinate: CLLocationCoordinate2D?
+            let place = archive.placeById(visit.placeId)
+                ?? archive.places.first { $0.name == visit.label }
+            if let lat = place?.latitude, let lon = place?.longitude, isValid(lat, lon) {
+                coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+            } else {
+                let windowStart = visit.startAt.addingTimeInterval(-15 * 60)
+                let windowEnd = (visit.endAt ?? visit.startAt).addingTimeInterval(15 * 60)
+                let nearby = samples.filter { $0.recordedAt >= windowStart && $0.recordedAt <= windowEnd }
+                if let best = nearby.min(by: {
+                    abs($0.recordedAt.timeIntervalSince(visit.startAt)) < abs($1.recordedAt.timeIntervalSince(visit.startAt))
+                }) {
+                    coordinate = CLLocationCoordinate2D(latitude: best.latitude, longitude: best.longitude)
+                }
+            }
+            return StopLine(
+                id: visit.id,
+                label: visit.label,
+                range: Dates.formatTimeRange(visit.startAt, visit.endAt),
+                suggested: visit.confidence == .suggested,
+                coordinate: coordinate,
+                startAt: visit.startAt
+            )
+        }
+        return snap
     }
 
-    private var region: MKCoordinateRegion {
+    func region(route showRoute: Bool, stops showStops: Bool, places showPlaces: Bool) -> MKCoordinateRegion? {
         var coordinates: [CLLocationCoordinate2D] = []
-        if showRoute { coordinates += routeCoordinates }
-        if showVisits { coordinates += visitAnnotations.map(\.coordinate) }
-        if showPlaces {
-            coordinates += mappedPlaces.compactMap { place in
-                guard let lat = place.latitude, let lon = place.longitude else { return nil }
-                return CLLocationCoordinate2D(latitude: lat, longitude: lon)
-            }
-        }
-        guard !coordinates.isEmpty else { return Self.defaultRegion }
-
+        if showRoute { coordinates += route }
+        if showStops { coordinates += stopPins.map(\.coordinate) }
+        if showPlaces && coordinates.isEmpty { coordinates += places.map(\.coordinate) }
+        guard !coordinates.isEmpty else { return nil }
         let lats = coordinates.map(\.latitude)
         let lons = coordinates.map(\.longitude)
-        let minLat = lats.min() ?? 0
-        let maxLat = lats.max() ?? 0
-        let minLon = lons.min() ?? 0
-        let maxLon = lons.max() ?? 0
+        guard let minLat = lats.min(), let maxLat = lats.max(),
+              let minLon = lons.min(), let maxLon = lons.max() else { return nil }
         return MKCoordinateRegion(
-            center: CLLocationCoordinate2D(
-                latitude: (minLat + maxLat) / 2,
-                longitude: (minLon + maxLon) / 2
-            ),
+            center: CLLocationCoordinate2D(latitude: (minLat + maxLat) / 2, longitude: (minLon + maxLon) / 2),
             span: MKCoordinateSpan(
-                latitudeDelta: min(180, max((maxLat - minLat) * 1.4, 0.02)),
-                longitudeDelta: min(360, max((maxLon - minLon) * 1.4, 0.02))
+                latitudeDelta: min(180, max((maxLat - minLat) * 1.4, 0.01)),
+                longitudeDelta: min(360, max((maxLon - minLon) * 1.4, 0.01))
             )
         )
+    }
+}
+
+// MARK: - View
+
+/// The map for one day. Precise coordinates stay in the encrypted archive;
+/// MapKit receives only the visible region it needs to draw tiles.
+struct MapView: View {
+    @EnvironmentObject private var env: AppEnvironment
+    @EnvironmentObject private var navigator: Navigator
+
+    @State private var day: Date
+    @State private var camera: MapCameraPosition = .automatic
+    @State private var snapshot = MapSnapshot()
+    @AppStorage("lifelog.map.route") private var showRoute = true
+    @AppStorage("lifelog.map.stops") private var showStops = true
+    @AppStorage("lifelog.map.places") private var showPlaces = true
+    @AppStorage("lifelog.map.privacy") private var privacy = false
+
+    init(day: Date? = nil) {
+        _day = State(initialValue: day ?? Date())
+    }
+
+    private struct Key: Equatable {
+        var revision: Int
+        var day: String
     }
 
     var body: some View {
         VStack(spacing: 0) {
             dateBar
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    header
-                    filters
-
-                    if privacyMode {
-                        privacyCard
-                    } else {
-                        preciseMap
-                            .privacySensitive()
-                    }
-
-                    routeSummary
-                    stopsSection
-                    placesSection
-                    photoNote
-
-                    Text("Your route comes from your encrypted archive. MapKit receives the visible region to draw the map; privacy mode hides exact points.")
-                        .font(LifelogTheme.sans(11))
-                        .foregroundStyle(palette.tertiary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 2)
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
-            }
+            Hairline()
+            mapArea
+                .frame(maxWidth: .infinity, minHeight: 240, maxHeight: .infinity)
+            Hairline()
+            panel
+                .frame(maxHeight: 320)
         }
+        .navigationTitle("Map")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    router.push(.timeline(day))
+                Menu {
+                    Toggle("Route", isOn: $showRoute)
+                    Toggle("Stops", isOn: $showStops)
+                    Toggle("Saved places", isOn: $showPlaces)
+                    Divider()
+                    Toggle("Hide exact locations", isOn: $privacy)
+                    Divider()
+                    Button { navigator.push(.places) } label: { Label("Saved places", systemImage: "star") }
+                    Button { navigator.push(.timeline(day)) } label: { Label("Timeline for this day", systemImage: "calendar.day.timeline.left") }
                 } label: {
-                    Image(systemName: "calendar.day.timeline.left")
+                    Image(systemName: "slider.horizontal.3")
                 }
-                .accessibilityLabel("Open timeline for this day")
+                .accessibilityLabel("Map options")
             }
         }
-        .sheet(isPresented: $showPlacesList) {
-            NavigationStack {
-                PlacesListView()
-                    .environmentObject(env)
-                    .environmentObject(router)
-                    .navigationTitle("Saved places")
-                    .navigationBarTitleDisplayMode(.inline)
-            }
-        }
-        .onAppear { camera = .region(region) }
-        .onChange(of: day) { _, _ in camera = .region(region) }
-        .onChange(of: showRoute) { _, _ in camera = .region(region) }
-        .onChange(of: showVisits) { _, _ in camera = .region(region) }
-        .onChange(of: showPlaces) { _, _ in camera = .region(region) }
-        .onChange(of: privacyMode) { _, hidden in if !hidden { camera = .region(region) } }
+        .task(id: Key(revision: env.revision, day: Dates.dayKey(day))) { await rebuild() }
+        .onChange(of: showRoute) { _, _ in fit() }
+        .onChange(of: showStops) { _, _ in fit() }
+        .onChange(of: showPlaces) { _, _ in fit() }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Eyebrow(text: "Your geography")
-            Text(Dates.formatDayLong(day))
-                .font(LifelogTheme.serif(26, relativeTo: .title))
-                .foregroundStyle(palette.text)
-            Text("A route made only from samples you chose to keep.")
-                .font(LifelogTheme.sans(13))
-                .foregroundStyle(palette.secondary)
-        }
-    }
+    // MARK: Date bar
 
     private var dateBar: some View {
-        HStack(spacing: 10) {
-            Button {
-                day = Dates.addingDays(-1, to: day)
-            } label: {
-                Image(systemName: "chevron.left")
+        HStack(spacing: Space.sm) {
+            Button { day = Dates.addingDays(-1, to: day) } label: {
+                Image(systemName: "chevron.left").frame(width: 44, height: 44)
             }
             .accessibilityLabel("Previous day")
-
-            DatePicker("", selection: $day, displayedComponents: .date)
+            DatePicker("Day", selection: $day, in: ...Date(), displayedComponents: .date)
+                .datePickerStyle(.compact)
                 .labelsHidden()
-                .frame(maxWidth: .infinity)
-                .colorMultiply(palette.text)
-
-            Button {
-                day = Dates.addingDays(1, to: day)
-            } label: {
-                Image(systemName: "chevron.right")
+            Button { day = Dates.addingDays(1, to: day) } label: {
+                Image(systemName: "chevron.right").frame(width: 44, height: 44)
             }
+            .disabled(Dates.sameDay(day, Date()))
             .accessibilityLabel("Next day")
-
-            Button { day = Date() } label: {
-                Text("Today")
-                    .font(LifelogTheme.sans(12, weight: .semibold))
-            }
+            Spacer()
+            Button("Today") { day = Date() }
+                .buttonStyle(QuietButtonStyle())
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 9)
-        .background(palette.background.opacity(0.92))
-        .overlay(alignment: .bottom) { Rectangle().fill(palette.border).frame(height: 0.6) }
+        .padding(.horizontal, Space.md)
     }
 
-    private var filters: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                mapFilter("Route", systemImage: "road.lanes", isOn: $showRoute)
-                mapFilter("Stops", systemImage: "mappin.and.ellipse", isOn: $showVisits)
-                mapFilter("Places", systemImage: "star", isOn: $showPlaces)
-            }
-            Toggle("Hide exact coordinates", isOn: $privacyMode)
-                .font(LifelogTheme.sans(12))
-                .foregroundStyle(palette.secondary)
-                .tint(palette.accent)
-        }
-        .lifelogCard(padding: 14, radius: 16)
-    }
-
-    private func mapFilter(_ title: String, systemImage: String, isOn: Binding<Bool>) -> some View {
-        Button {
-            isOn.wrappedValue.toggle()
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 10, weight: .semibold))
-                Text(title)
-                    .font(LifelogTheme.sans(11, weight: .medium))
-            }
-            .foregroundStyle(isOn.wrappedValue ? palette.background : palette.secondary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(Capsule().fill(isOn.wrappedValue ? palette.accent : palette.surfaceRaised))
-            .overlay(Capsule().stroke(palette.border, lineWidth: isOn.wrappedValue ? 0 : 0.7))
-        }
-        .buttonStyle(.plain)
-        .accessibilityValue(isOn.wrappedValue ? "On" : "Off")
-    }
+    // MARK: Map
 
     @ViewBuilder
-    private var preciseMap: some View {
-        Map(position: $camera) {
-            if showRoute, routeCoordinates.count > 1 {
-                MapPolyline(coordinates: routeCoordinates)
-                    .stroke(palette.accent.opacity(0.8), lineWidth: 3)
-            }
-            if showPlaces {
-                ForEach(mappedPlaces) { place in
-                    Marker(place.name, coordinate: CLLocationCoordinate2D(
-                        latitude: place.latitude ?? 0,
-                        longitude: place.longitude ?? 0
-                    ))
-                    .tint(Color(hex: place.colorValue))
-                }
-            }
-            if showVisits {
-                ForEach(visitAnnotations) { annotation in
-                    Marker(annotation.title, coordinate: annotation.coordinate)
-                        .tint(annotation.visit.confidence == .suggested ? palette.tertiary : palette.accent)
-                }
-            }
-        }
-        .mapStyle(.standard)
-        .frame(height: 320)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 22).stroke(palette.border, lineWidth: 0.8))
-    }
-
-    private var privacyCard: some View {
-        VStack(spacing: 12) {
-            ZStack {
-                Circle().fill(palette.accentSoft).frame(width: 56, height: 56)
+    private var mapArea: some View {
+        if privacy {
+            VStack(spacing: Space.sm) {
                 Image(systemName: "eye.slash")
-                    .font(.system(size: 22, weight: .light))
-                    .foregroundStyle(palette.accent)
+                    .font(.system(.title).weight(.light))
+                    .foregroundStyle(Palette.inkTertiary)
+                Text("Exact locations are hidden")
+                    .font(Typeface.heading)
+                    .foregroundStyle(Palette.ink)
+                Text("The map, route, and pins are not drawn. Stop names and times below remain.")
+                    .font(Typeface.caption)
+                    .foregroundStyle(Palette.inkSecondary)
+                    .multilineTextAlignment(.center)
+                Button("Show map") { privacy = false }
+                    .buttonStyle(QuietButtonStyle())
             }
-            Text("Exact locations hidden")
-                .font(LifelogTheme.serif(19, relativeTo: .title3))
-                .foregroundStyle(palette.text)
-            Text("The map, route line, and coordinate pins are hidden. Visit names and times below remain available.")
-                .font(LifelogTheme.sans(12))
-                .foregroundStyle(palette.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 34)
-        .lifelogCard()
-    }
-
-    private var routeSummary: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle().fill(palette.accentSoft).frame(width: 38, height: 38)
-                Image(systemName: "location")
-                    .foregroundStyle(palette.accent)
-            }
-            VStack(alignment: .leading, spacing: 3) {
-                Text("\(samples.count) \(Dates.plural(samples.count, "location sample"))")
-                    .font(LifelogTheme.sans(14, weight: .semibold))
-                Text(env.settings.locationTrackingEnabled
-                     ? "Location visits are enabled"
-                     : "Location visits are off in Settings")
-                    .font(LifelogTheme.sans(11))
-                    .foregroundStyle(palette.secondary)
-            }
-            Spacer()
-            if !privacyMode, let first = samples.first, let last = samples.last, first.id != last.id {
-                Text(Dates.formatTimeRange(first.recordedAt, last.recordedAt))
-                    .font(LifelogTheme.sans(11))
-                    .foregroundStyle(palette.tertiary)
-            }
-        }
-        .lifelogCard(padding: 14, radius: 16)
-    }
-
-    private var stopsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(
-                title: "Stops for this day",
-                subtitle: "\(visits.count) \(Dates.plural(visits.count, "visit"))",
-                action: { router.push(.timeline(day)) },
-                actionLabel: "Timeline"
-            )
-            if visits.isEmpty {
-                EmptyState(
-                    title: "No visits recorded",
-                    message: "Visits appear here when location tracking is on and a stop is inferred or saved.",
-                    systemImage: "mappin",
-                    action: nil
-                )
-                .lifelogCard()
-            } else {
-                ForEach(visits.sorted { $0.startAt > $1.startAt }) { visit in
-                    Button {
-                        router.push(.timeline(visit.startAt))
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: visit.confidence == .suggested ? "mappin" : "mappin.circle.fill")
-                                .foregroundStyle(visit.confidence == .suggested ? palette.tertiary : palette.accent)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(visit.label)
-                                    .font(LifelogTheme.sans(14, weight: .semibold))
-                                    .foregroundStyle(palette.text)
-                                Text(Dates.formatTimeRange(visit.startAt, visit.endAt))
-                                    .font(LifelogTheme.sans(11))
-                                    .foregroundStyle(palette.secondary)
-                            }
-                            Spacer()
-                            if visit.confidence == .suggested {
-                                Text("Suggested")
-                                    .font(LifelogTheme.sans(9, weight: .bold))
-                                    .foregroundStyle(palette.tertiary)
-                            }
-                        }
-                        .lifelogCard(padding: 13, radius: 14)
+            .padding(Space.xl)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Palette.surface)
+        } else {
+            Map(position: $camera) {
+                if showRoute, snapshot.route.count > 1 {
+                    MapPolyline(coordinates: snapshot.route)
+                        .stroke(Palette.accent, lineWidth: 3)
+                }
+                if showPlaces {
+                    ForEach(snapshot.places) { place in
+                        Marker(place.title, systemImage: "star.fill", coordinate: place.coordinate)
+                            .tint(Color(hex: place.color))
                     }
-                    .buttonStyle(.plain)
+                }
+                if showStops {
+                    ForEach(snapshot.stopPins) { pin in
+                        Marker(pin.title, systemImage: "mappin", coordinate: pin.coordinate)
+                            .tint(pin.suggested ? Palette.inkTertiary : Palette.accent)
+                    }
+                }
+                UserAnnotation()
+            }
+            .mapStyle(.standard)
+            .mapControls {
+                MapCompass()
+                MapScaleView()
+            }
+            .privacySensitive()
+        }
+    }
+
+    // MARK: Panel
+
+    private var panel: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Space.lg) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(Dates.formatDayLong(day))
+                        .font(Typeface.heading)
+                        .foregroundStyle(Palette.ink)
+                    Text(summaryLine)
+                        .font(Typeface.caption)
+                        .foregroundStyle(Palette.inkSecondary)
+                }
+
+                LocationStatusRow(location: env.location, onShowMe: showMyLocation)
+
+                VStack(alignment: .leading, spacing: 0) {
+                    if snapshot.stops.isEmpty {
+                        EmptyNote(
+                            title: "No stops this day",
+                            message: "Stops appear when location visits are on and you spend time somewhere, or when you add a place."
+                        )
+                    } else {
+                        ForEach(snapshot.stops) { stop in
+                            StopRow(stop: stop) { select(stop) }
+                            if stop.id != snapshot.stops.last?.id { Hairline() }
+                        }
+                    }
+                }
+
+                InfoLine(
+                    text: "Photo locations are not shown because the archive does not store them. Nothing is guessed to fill the map.",
+                    symbol: "photo"
+                )
+            }
+            .padding(Space.page)
+        }
+        .background(Palette.paper)
+    }
+
+    private var summaryLine: String {
+        guard snapshot.sampleCount > 0 else { return "No location samples recorded" }
+        var text = "\(snapshot.sampleCount) \(Dates.plural(snapshot.sampleCount, "location sample"))"
+        if let first = snapshot.firstSample, let last = snapshot.lastSample, first != last {
+            text += " · " + Dates.formatTimeRange(first, last)
+        }
+        return text
+    }
+
+    // MARK: Actions
+
+    private func rebuild() async {
+        let archive = env.archive
+        let target = day
+        let result = await offMain { MapSnapshot.make(archive, day: target) }
+        guard !Task.isCancelled else { return }
+        snapshot = result
+        fit()
+    }
+
+    private func fit() {
+        if let region = snapshot.region(route: showRoute, stops: showStops, places: showPlaces) {
+            camera = .region(region)
+        } else {
+            camera = .automatic
+        }
+    }
+
+    private func select(_ stop: StopLine) {
+        if let coordinate = stop.coordinate, !privacy {
+            camera = .region(MKCoordinateRegion(
+                center: coordinate,
+                span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+            ))
+        } else {
+            navigator.push(.timeline(stop.startAt))
+        }
+    }
+
+    private func showMyLocation() {
+        Task {
+            if await env.location.requestWhenInUseAndWait() {
+                camera = .userLocation(fallback: .automatic)
+            }
+        }
+    }
+}
+
+private struct StopRow: View {
+    let stop: StopLine
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: Space.md) {
+                SourceGlyph(source: .location, suggested: stop.suggested)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(stop.label).font(Typeface.bodyStrong).foregroundStyle(Palette.ink)
+                    Text(stop.range + (stop.suggested ? " · Suggested" : ""))
+                        .font(Typeface.caption)
+                        .foregroundStyle(Palette.inkSecondary)
+                }
+                Spacer(minLength: 0)
+                if stop.coordinate != nil {
+                    Image(systemName: "scope")
+                        .foregroundStyle(Palette.inkTertiary)
+                        .accessibilityHidden(true)
                 }
             }
+            .padding(.vertical, Space.sm)
         }
+        .buttonStyle(RowButtonStyle())
+        .accessibilityHint(stop.coordinate != nil ? "Centers the map on this stop" : "Opens the timeline")
     }
+}
 
-    private var placesSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(
-                title: "Saved places",
-                subtitle: "\(env.archive.places.count) total",
-                action: { showPlacesList = true },
-                actionLabel: "Manage"
-            )
-            if env.archive.places.isEmpty {
-                EmptyState(
-                    title: "No places yet",
-                    message: "A place can be as specific as a room or as broad as a city.",
-                    systemImage: "mappin",
-                    action: { showPlacesList = true },
-                    actionTitle: "Add place"
-                )
-                .lifelogCard()
-            } else {
-                ForEach(env.archive.places.sorted { $0.createdAt > $1.createdAt }.prefix(6)) { place in
-                    Button { router.push(.place(place.id)) } label: {
-                        HStack(spacing: 12) {
-                            Circle()
-                                .fill(Color(hex: place.colorValue).opacity(0.18))
-                                .frame(width: 32, height: 32)
-                                .overlay(
-                                    Image(systemName: place.hasCoordinates ? "location.fill" : "mappin")
-                                        .foregroundStyle(Color(hex: place.colorValue))
-                                )
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(place.name)
-                                    .font(LifelogTheme.sans(14, weight: .semibold))
-                                    .foregroundStyle(palette.text)
-                                Text(place.hasCoordinates ? "Pinned" : "No coordinates")
-                                    .font(LifelogTheme.sans(11))
-                                    .foregroundStyle(palette.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .foregroundStyle(palette.tertiary)
-                        }
-                        .lifelogCard(padding: 13, radius: 14)
+/// Explains, and lets the person change, location access and tracking.
+struct LocationStatusRow: View {
+    @EnvironmentObject private var env: AppEnvironment
+    @ObservedObject var location: LocationService
+    var onShowMe: (() -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            switch location.authorization {
+            case .denied, .restricted:
+                PermissionNotice(message: "Location access is off, so Lifelog cannot record routes or stops. You can allow it in Settings; nothing is recorded without it.")
+            case .notDetermined:
+                InfoLine(text: env.settings.locationTrackingEnabled
+                         ? "Lifelog needs your permission before it can record visits."
+                         : "Location visits are off. Nothing is recorded.", symbol: "location")
+                HStack(spacing: Space.lg) {
+                    Button(env.settings.locationTrackingEnabled ? "Allow location" : "Turn on visits") {
+                        env.setLocationTracking(true)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(QuietButtonStyle())
+                    if let onShowMe {
+                        Button("Show my location", action: onShowMe).buttonStyle(QuietButtonStyle())
+                    }
                 }
+            case .authorizedWhenInUse:
+                InfoLine(text: env.settings.locationTrackingEnabled
+                         ? "Recording only while Lifelog is open. Allow “Always” so stops are noticed in the background."
+                         : "Location is allowed while using the app. Visits are off.", symbol: "location")
+                HStack(spacing: Space.lg) {
+                    if !env.settings.locationTrackingEnabled {
+                        Button("Turn on visits") { env.setLocationTracking(true) }.buttonStyle(QuietButtonStyle())
+                    } else {
+                        Button("Allow Always") { location.requestPermission(always: true) }.buttonStyle(QuietButtonStyle())
+                    }
+                    if let onShowMe {
+                        Button("Show my location", action: onShowMe).buttonStyle(QuietButtonStyle())
+                    }
+                }
+            case .authorizedAlways:
+                InfoLine(text: env.settings.locationTrackingEnabled
+                         ? "Visits are recorded on this device, in your encrypted archive."
+                         : "Location is allowed, but visits are off in Settings.", symbol: "location.fill")
+                HStack(spacing: Space.lg) {
+                    if !env.settings.locationTrackingEnabled {
+                        Button("Turn on visits") { env.setLocationTracking(true) }.buttonStyle(QuietButtonStyle())
+                    }
+                    if let onShowMe {
+                        Button("Show my location", action: onShowMe).buttonStyle(QuietButtonStyle())
+                    }
+                }
+            @unknown default:
+                EmptyView()
             }
         }
-    }
-
-    private var photoNote: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "photo")
-                .foregroundStyle(palette.tertiary)
-            Text("Photo markers are omitted because the archive does not store photo coordinates. No locations are invented to fill the map.")
-                .font(LifelogTheme.sans(11))
-                .foregroundStyle(palette.secondary)
-        }
-        .lifelogCard(padding: 14, radius: 15)
-    }
-
-    private static func isValid(_ latitude: Double, _ longitude: Double) -> Bool {
-        latitude.isFinite && longitude.isFinite &&
-        abs(latitude) <= 90 && abs(longitude) <= 180 &&
-        !(latitude == 0 && longitude == 0)
+        .surface(padding: Space.md, radius: 14)
     }
 }

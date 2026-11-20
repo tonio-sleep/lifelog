@@ -25,6 +25,21 @@ struct HealthService {
         return types
     }
 
+    static var isAvailable: Bool { HKHealthStore.isHealthDataAvailable() }
+
+    /// True when iOS would still show the Health permission sheet, meaning the
+    /// person has not been asked yet. iOS never reveals whether read access was
+    /// granted, so "already asked" is the most Lifelog can honestly report.
+    func authorizationStillNeeded() async -> Bool {
+        guard HKHealthStore.isHealthDataAvailable() else { return false }
+        let types = readTypes
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            store.getRequestStatusForAuthorization(toShare: [], read: types) { status, _ in
+                continuation.resume(returning: status == .shouldRequest)
+            }
+        }
+    }
+
     func requestPermission() async -> Bool {
         guard HKHealthStore.isHealthDataAvailable() else { return false }
         do {

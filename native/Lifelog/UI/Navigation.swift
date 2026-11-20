@@ -26,121 +26,181 @@ enum Destination: String, CaseIterable, Identifiable {
     }
 }
 
+/// Screens that are pushed onto a destination's stack.
 enum Route: Hashable {
     case trackers
+    case tracker(String)
     case media
+    case mediaItem(String)
     case entry(String)
-    case newEntry
-    case event(String)
-    case newEvent
     case place(String)
-    case reminders
-    /// Day-based journal editing, kept as a pushed route rather than a tab.
+    case places
+    /// Day-based journal page, kept as a pushed route rather than a tab.
     case journal(Date)
     case timeline(Date)
     case map(Date)
 }
 
-final class Router: ObservableObject {
-    @Published var path = NavigationPath()
+/// Screens that are presented as sheets. One slot, so sheets never stack by accident.
+enum AppSheet: Identifiable {
+    case quickAdd
+    case search
+    case settings
+    case newEntry(Date, startWithVoice: Bool)
+    case editEntry(String)
+    case newEvent(Date)
+    case editEvent(String)
+    case logTracker(String?)
+    case newTracker
+    case editTracker(String)
+    case addMedia(Date)
+    case addTrack
+    case newPlace
+    case editPlace(String)
 
-    func push(_ route: Route) { path.append(route) }
-    func pop() { if !path.isEmpty { path.removeLast() } }
-    func reset() { path = NavigationPath() }
+    var id: String {
+        switch self {
+        case .quickAdd: return "quickAdd"
+        case .search: return "search"
+        case .settings: return "settings"
+        case .newEntry(let date, let voice): return "newEntry-\(date.timeIntervalSince1970)-\(voice)"
+        case .editEntry(let id): return "editEntry-\(id)"
+        case .newEvent(let date): return "newEvent-\(date.timeIntervalSince1970)"
+        case .editEvent(let id): return "editEvent-\(id)"
+        case .logTracker(let id): return "logTracker-\(id ?? "any")"
+        case .newTracker: return "newTracker"
+        case .editTracker(let id): return "editTracker-\(id)"
+        case .addMedia(let date): return "addMedia-\(date.timeIntervalSince1970)"
+        case .addTrack: return "addTrack"
+        case .newPlace: return "newPlace"
+        case .editPlace(let id): return "editPlace-\(id)"
+        }
+    }
 }
 
-struct DestinationSidebar: View {
-    @Environment(\.lifelogPalette) private var palette
-    @Binding var selection: Destination
-    let onQuickAdd: () -> Void
-    let onSettings: () -> Void
+@MainActor
+final class Navigator: ObservableObject {
+    @Published var selection: Destination = .today
+    @Published var sheet: AppSheet?
+    @Published private var paths: [Destination: NavigationPath] = [:]
 
-    var body: some View {
-        List {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Lifelog")
-                    .font(LifelogTheme.serif(27, relativeTo: .largeTitle))
-                    .foregroundStyle(palette.text)
-                Text("A quiet record of your days")
-                    .font(LifelogTheme.sans(12))
-                    .foregroundStyle(palette.secondary)
-            }
-            .padding(.vertical, 14)
+    func path(for destination: Destination) -> Binding<NavigationPath> {
+        Binding(
+            get: { self.paths[destination] ?? NavigationPath() },
+            set: { self.paths[destination] = $0 }
+        )
+    }
 
-            Section {
-                ForEach(Destination.allCases) { destination in
-                    Button {
-                        selection = destination
-                    } label: {
-                        Label(destination.title, systemImage: destination.symbol)
-                            .font(LifelogTheme.sans(15, weight: selection == destination ? .semibold : .medium))
-                            .foregroundStyle(selection == destination ? palette.accent : palette.text)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
+    /// Pushes onto the stack of the destination currently on screen.
+    func push(_ route: Route) {
+        var path = paths[selection] ?? NavigationPath()
+        path.append(route)
+        paths[selection] = path
+    }
+
+    func present(_ sheet: AppSheet) { self.sheet = sheet }
+    func dismissSheet() { sheet = nil }
+
+    /// Opens whatever a timeline row points at.
+    func open(_ row: DayRow) {
+        switch row.source {
+        case .journal:
+            if let id = row.sourceId { push(.entry(id)) }
+        case .manual:
+            if let id = row.sourceId { present(.editEvent(id)) }
+        case .photo:
+            if let id = row.sourceId { push(.mediaItem(id)) }
+        case .tracker:
+            push(.trackers)
+        case .location:
+            push(.map(row.at))
+        case .music:
+            push(.journal(row.at))
+        }
+    }
+
+    /// Opens a search result. Tracker-record hits carry the tracker id as their source id.
+    func open(_ hit: SearchHit) {
+        sheet = nil
+        switch hit.kind {
+        case .journal: push(.entry(hit.sourceId))
+        case .photo: push(.mediaItem(hit.sourceId))
+        case .tracker: push(.tracker(hit.sourceId))
+        case .place: push(.place(hit.sourceId))
+        case .visit: push(.map(hit.date))
+        case .music: push(.journal(hit.date))
+        case .event: present(.editEvent(hit.sourceId))
+        }
+    }
+}
+
+// MARK: - Toolbar shared by the five destinations
+
+struct PrimaryToolbar: ViewModifier {
+    @EnvironmentObject private var navigator: Navigator
+
+    func body(content: Content) -> some View {
+        content
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { navigator.present(.settings) } label: {
+                        Image(systemName: "gearshape")
                     }
-                    .buttonStyle(.plain)
-                    .listRowBackground(selection == destination ? palette.accentSoft : Color.clear)
+                    .accessibilityLabel("Settings")
+                }
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button { navigator.present(.search) } label: {
+                        Image(systemName: "magnifyingglass")
+                    }
+                    .accessibilityLabel("Search")
+                    Button { navigator.present(.quickAdd) } label: {
+                        Image(systemName: "plus")
+                    }
+                    .accessibilityLabel("Quick add")
                 }
             }
-
-            Section {
-                Button(action: onQuickAdd) {
-                    Label("Quick add", systemImage: "plus.circle")
-                }
-                Button(action: onSettings) {
-                    Label("Settings", systemImage: "gearshape")
-                }
-            }
-        }
-        .listStyle(.sidebar)
-        .scrollContentBackground(.hidden)
-        .background(palette.background)
     }
 }
 
-struct DestinationDock: View {
-    @Environment(\.lifelogPalette) private var palette
-    @Binding var selection: Destination
-    let onQuickAdd: () -> Void
+extension View {
+    func primaryToolbar() -> some View { modifier(PrimaryToolbar()) }
+}
+
+/// Resolves a pushed route to its screen.
+struct RouteView: View {
+    @EnvironmentObject private var env: AppEnvironment
+    let route: Route
 
     var body: some View {
-        HStack(spacing: 2) {
-            ForEach(Destination.allCases.prefix(2)) { item in button(item) }
-            Button(action: onQuickAdd) {
-                ZStack {
-                    Circle().fill(palette.accent)
-                        .frame(width: 48, height: 48)
-                        .shadow(color: palette.accent.opacity(0.3), radius: 10, y: 4)
-                    Image(systemName: "plus")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(palette.background)
-                }
-            }
-            .buttonStyle(.plain)
-            .frame(width: 64)
-            ForEach(Destination.allCases.dropFirst(2)) { item in button(item) }
+        switch route {
+        case .trackers:
+            TrackersView()
+        case .tracker(let id):
+            TrackerDetailView(trackerId: id)
+        case .media:
+            MediaGalleryView()
+        case .mediaItem(let id):
+            MediaDetailView(itemId: id)
+        case .entry(let id):
+            EntryDetailView(entryId: id)
+        case .place(let id):
+            PlaceDetailView(placeId: id)
+        case .places:
+            PlacesListView()
+        case .journal(let day):
+            JournalDayView(day: day)
+        case .timeline(let day):
+            TimelineView(day: day)
+        case .map(let day):
+            MapView(day: day)
         }
-        .padding(.horizontal, 10)
-        .padding(.top, 9)
-        .padding(.bottom, 6)
-        .background(.ultraThinMaterial)
-        .overlay(alignment: .top) { Rectangle().fill(palette.border).frame(height: 0.6) }
     }
+}
 
-    private func button(_ item: Destination) -> some View {
-        Button {
-            selection = item
-        } label: {
-            VStack(spacing: 4) {
-                Image(systemName: item.symbol)
-                    .font(.system(size: 18, weight: selection == item ? .semibold : .regular))
-                Text(item.title)
-                    .font(LifelogTheme.sans(9, weight: selection == item ? .semibold : .regular))
-            }
-            .foregroundStyle(selection == item ? palette.accent : palette.secondary)
-            .frame(maxWidth: .infinity)
-            .contentShape(Rectangle())
+extension View {
+    func lifelogDestinations() -> some View {
+        navigationDestination(for: Route.self) { route in
+            RouteView(route: route)
         }
-        .buttonStyle(.plain)
     }
 }

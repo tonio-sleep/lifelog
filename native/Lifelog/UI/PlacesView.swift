@@ -1,177 +1,350 @@
 import SwiftUI
 import MapKit
 
+private let placeColors: [UInt32] = [
+    0xFF9A4733, 0xFF47755E, 0xFF52796F, 0xFF3D6A8F, 0xFF92692A, 0xFF7A4E8F, 0xFF8F4A5C,
+]
+
+// MARK: - List
+
 struct PlacesListView: View {
     @EnvironmentObject private var env: AppEnvironment
-    @EnvironmentObject private var router: Router
-    @Environment(\.lifelogPalette) private var palette
-    @State private var showEditor = false
-    @State private var camera = MapCameraPosition.region(MKCoordinateRegion(
-        center: CLLocationCoordinate2D(latitude: 39.8283, longitude: -98.5795),
-        span: MKCoordinateSpan(latitudeDelta: 30, longitudeDelta: 30)
-    ))
+    @EnvironmentObject private var navigator: Navigator
 
-    private var mappedPlaces: [Place] { env.archive.places.filter(\.hasCoordinates) }
+    private var places: [Place] { env.archive.places.sorted { $0.createdAt > $1.createdAt } }
+    private var mapped: [Place] { env.archive.places.filter(\.hasCoordinates) }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Eyebrow(text: "Your geography")
-                    Text("Places and visits")
-                        .font(LifelogTheme.serif(27, relativeTo: .title))
-                    Text("Coordinates stay local. Only you decide what a place means.")
-                        .font(LifelogTheme.sans(13))
-                        .foregroundStyle(palette.secondary)
-                }
+            VStack(alignment: .leading, spacing: Space.xl) {
+                PageHeader(
+                    eyebrow: "Your geography",
+                    title: "Places",
+                    subtitle: "Coordinates stay on this device. You decide what a place means."
+                )
 
-                if mappedPlaces.isEmpty {
-                    EmptyState(
-                        title: "No saved coordinates",
-                        message: "Add a place and attach your current location to see it here.",
-                        systemImage: "map",
-                        action: { showEditor = true },
-                        actionTitle: "Add place"
-                    )
-                    .lifelogCard()
-                } else {
-                    Map(position: $camera) {
-                        ForEach(mappedPlaces) { place in
-                            Marker(place.name, coordinate: CLLocationCoordinate2D(
+                if !mapped.isEmpty {
+                    Map(initialPosition: .automatic) {
+                        ForEach(mapped) { place in
+                            Marker(place.name, systemImage: "star.fill", coordinate: CLLocationCoordinate2D(
                                 latitude: place.latitude ?? 0,
                                 longitude: place.longitude ?? 0
                             ))
-                            .tint(palette.accent)
+                            .tint(Color(hex: place.colorValue))
                         }
                     }
-                    .frame(height: 280)
-                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 22).stroke(palette.border, lineWidth: 0.8))
+                    .frame(height: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Palette.line, lineWidth: 0.5))
+                    .privacySensitive()
                 }
 
-                VStack(alignment: .leading, spacing: 12) {
-                    SectionHeader(
-                        title: "Saved places",
-                        subtitle: "\(env.archive.places.count) total",
-                        action: { showEditor = true },
-                        actionLabel: "Add"
-                    )
-                    if env.archive.places.isEmpty {
-                        EmptyState(title: "No places yet", message: "A place can be as specific as a room or as broad as a city.", systemImage: "mappin", action: nil)
-                            .lifelogCard()
+                VStack(alignment: .leading, spacing: Space.md) {
+                    SectionLabel(title: "Saved places", detail: "\(places.count)", actionTitle: "Add") {
+                        navigator.present(.newPlace)
+                    }
+                    if places.isEmpty {
+                        EmptyNote(
+                            title: "No places yet",
+                            message: "A place can be as specific as a room or as broad as a city."
+                        )
                     } else {
-                        ForEach(env.archive.places.sorted { $0.createdAt > $1.createdAt }) { place in
-                            Button { router.push(.place(place.id)) } label: {
-                                HStack(spacing: 12) {
-                                    ZStack {
-                                        Circle().fill(Color(hex: place.colorValue).opacity(0.18)).frame(width: 38, height: 38)
-                                        Image(systemName: place.hasCoordinates ? "location.fill" : "mappin")
-                                            .foregroundStyle(Color(hex: place.colorValue))
-                                    }
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(place.name).font(LifelogTheme.sans(15, weight: .semibold))
-                                        if !place.notes.isEmpty {
-                                            Text(place.notes).font(LifelogTheme.sans(12)).foregroundStyle(palette.secondary).lineLimit(1)
-                                        }
-                                    }
-                                    Spacer()
-                                    Image(systemName: "chevron.right").foregroundStyle(palette.tertiary)
-                                }
-                                .lifelogCard(padding: 14, radius: 15)
+                        VStack(spacing: 0) {
+                            ForEach(places) { place in
+                                Button { navigator.push(.place(place.id)) } label: { PlaceRow(place: place) }
+                                    .buttonStyle(RowButtonStyle())
+                                if place.id != places.last?.id { Hairline() }
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
 
-                if !env.archive.visits.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        SectionHeader(title: "Recent visits", subtitle: "Confirmed and suggested")
-                        ForEach(Array(env.archive.visits.sorted { $0.startAt > $1.startAt }.prefix(12))) { visit in
-                            HStack {
-                                Image(systemName: "clock").foregroundStyle(palette.tertiary)
-                                VStack(alignment: .leading) {
-                                    Text(visit.label).font(LifelogTheme.sans(14, weight: .medium))
-                                    Text(Dates.formatDayLong(visit.startAt) + " · " + Dates.formatTime(visit.startAt))
-                                        .font(LifelogTheme.sans(11)).foregroundStyle(palette.secondary)
+                recentVisits
+            }
+            .padding(Space.page)
+        }
+        .navigationTitle("Places")
+        .navigationBarTitleDisplayMode(.inline)
+        .paperScreen()
+    }
+
+    @ViewBuilder
+    private var recentVisits: some View {
+        let visits = Array(env.archive.visits.sorted { $0.startAt > $1.startAt }.prefix(12))
+        if !visits.isEmpty {
+            VStack(alignment: .leading, spacing: Space.md) {
+                SectionLabel(title: "Recent visits")
+                VStack(spacing: 0) {
+                    ForEach(visits) { visit in
+                        Button { navigator.push(.map(visit.startAt)) } label: {
+                            HStack(spacing: Space.md) {
+                                SourceGlyph(source: .location, suggested: visit.confidence == .suggested)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(visit.label).font(Typeface.bodyStrong).foregroundStyle(Palette.ink)
+                                    Text(Dates.formatShortDate(visit.startAt) + " · " + Dates.formatTimeRange(visit.startAt, visit.endAt))
+                                        .font(Typeface.caption)
+                                        .foregroundStyle(Palette.inkSecondary)
                                 }
-                                Spacer()
-                                if visit.confidence == .suggested {
-                                    Text("Suggested").font(LifelogTheme.sans(9)).foregroundStyle(palette.tertiary)
-                                }
+                                Spacer(minLength: 0)
                             }
-                            .lifelogCard(padding: 13, radius: 14)
+                            .padding(.vertical, Space.sm)
                         }
+                        .buttonStyle(RowButtonStyle())
+                        .contextMenu {
+                            Button(role: .destructive) { env.deleteVisit(visit.id) } label: {
+                                Label("Delete visit", systemImage: "trash")
+                            }
+                        }
+                        if visit.id != visits.last?.id { Hairline() }
                     }
                 }
             }
-            .padding(20)
-            .padding(.bottom, 30)
-        }
-        .sheet(isPresented: $showEditor) {
-            PlaceEditorView(place: Place()).environmentObject(env)
         }
     }
 }
 
-struct PlaceDetailView: View {
-    @EnvironmentObject private var env: AppEnvironment
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.lifelogPalette) private var palette
+private struct PlaceRow: View {
     let place: Place
-    @State private var editing = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                if place.hasCoordinates {
-                    Map(position: .constant(MapCameraPosition.region(MKCoordinateRegion(
-                        center: CLLocationCoordinate2D(latitude: place.latitude ?? 0, longitude: place.longitude ?? 0),
-                        span: MKCoordinateSpan(latitudeDelta: 0.06, longitudeDelta: 0.06)
-                    )))) {
-                        Marker(place.name, coordinate: CLLocationCoordinate2D(
-                            latitude: place.latitude ?? 0,
-                            longitude: place.longitude ?? 0
-                        ))
+        HStack(spacing: Space.md) {
+            Circle()
+                .fill(Color(hex: place.colorValue).opacity(0.2))
+                .frame(width: 32, height: 32)
+                .overlay(
+                    Image(systemName: place.hasCoordinates ? "location.fill" : "mappin")
+                        .font(.system(.footnote))
+                        .foregroundStyle(Color(hex: place.colorValue))
+                )
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(place.name).font(Typeface.bodyStrong).foregroundStyle(Palette.ink)
+                Text(place.notes.isEmpty ? (place.hasCoordinates ? "Pinned" : "No coordinates") : place.notes)
+                    .font(Typeface.caption)
+                    .foregroundStyle(Palette.inkSecondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(Typeface.caption)
+                .foregroundStyle(Palette.inkTertiary)
+                .accessibilityHidden(true)
+        }
+        .padding(.vertical, Space.sm)
+    }
+}
+
+// MARK: - Detail
+
+struct PlaceDetailView: View {
+    @EnvironmentObject private var env: AppEnvironment
+    @EnvironmentObject private var navigator: Navigator
+    @Environment(\.dismiss) private var dismiss
+    let placeId: String
+    @State private var confirmDelete = false
+
+    var body: some View {
+        Group {
+            if let place = env.archive.placeById(placeId) {
+                content(place)
+            } else {
+                ContentUnavailableView("Place not found", systemImage: "mappin.slash")
+            }
+        }
+        .navigationBarTitleDisplayMode(.inline)
+        .paperScreen()
+    }
+
+    private func content(_ place: Place) -> some View {
+        let visits = env.archive.visits
+            .filter { $0.placeId == place.id || $0.label == place.name }
+            .sorted { $0.startAt > $1.startAt }
+        return ScrollView {
+            VStack(alignment: .leading, spacing: Space.xl) {
+                if let lat = place.latitude, let lon = place.longitude {
+                    let center = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                    Map(
+                        initialPosition: .region(MKCoordinateRegion(
+                            center: center,
+                            span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
+                        )),
+                        interactionModes: [.zoom, .pan]
+                    ) {
+                        MapCircle(center: center, radius: place.radiusMeters)
+                            .foregroundStyle(Color(hex: place.colorValue).opacity(0.18))
+                        Marker(place.name, coordinate: center).tint(Color(hex: place.colorValue))
                     }
                     .frame(height: 220)
-                    .clipShape(RoundedRectangle(cornerRadius: 20))
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .privacySensitive()
                 }
-                VStack(alignment: .leading, spacing: 8) {
-                    Eyebrow(text: "Saved place")
-                    Text(place.name).font(LifelogTheme.serif(28, relativeTo: .title))
-                    if !place.notes.isEmpty {
-                        Text(place.notes).font(LifelogTheme.sans(14)).foregroundStyle(palette.secondary)
+
+                PageHeader(eyebrow: "Saved place", title: place.name, subtitle: place.notes.isEmpty ? nil : place.notes)
+
+                VStack(alignment: .leading, spacing: Space.md) {
+                    SectionLabel(title: "Visits", detail: "\(visits.count)")
+                    if visits.isEmpty {
+                        EmptyNote(title: "No matched visits", message: "Visits with this place's name or id appear here.")
+                    } else {
+                        ForEach(visits) { visit in
+                            Button { navigator.push(.map(visit.startAt)) } label: {
+                                HStack {
+                                    Text(Dates.formatDayLong(visit.startAt)).font(Typeface.label).foregroundStyle(Palette.ink)
+                                    Spacer()
+                                    Text(Dates.formatTimeRange(visit.startAt, visit.endAt))
+                                        .font(Typeface.caption)
+                                        .foregroundStyle(Palette.inkSecondary)
+                                }
+                                .padding(.vertical, Space.sm)
+                            }
+                            .buttonStyle(RowButtonStyle())
+                            Hairline()
+                        }
                     }
                 }
-                .lifelogCard()
 
-                let visits = env.archive.visits.filter { $0.placeId == place.id || $0.label == place.name }
-                VStack(alignment: .leading, spacing: 10) {
-                    SectionHeader(title: "Visits", subtitle: "\(visits.count) matched")
-                    if visits.isEmpty {
-                        EmptyState(title: "No matched visits", message: "Visits with this place name or id appear here.", systemImage: "clock", action: nil)
-                    } else {
-                        ForEach(visits.sorted { $0.startAt > $1.startAt }) { visit in
-                            HStack {
-                                Text(Dates.formatDayLong(visit.startAt))
-                                Spacer()
-                                Text(Dates.formatTimeRange(visit.startAt, visit.endAt)).foregroundStyle(palette.secondary)
-                            }
-                            .font(LifelogTheme.sans(13))
-                            .lifelogCard(padding: 13, radius: 14)
+                Button(role: .destructive) { confirmDelete = true } label: {
+                    Label("Delete place", systemImage: "trash")
+                }
+                .buttonStyle(QuietButtonStyle())
+                .tint(Palette.danger)
+            }
+            .padding(Space.page)
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Edit") { navigator.present(.editPlace(place.id)) }
+            }
+        }
+        .confirmationDialog("Delete this place?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete place", role: .destructive) {
+                env.deletePlace(place.id)
+                dismiss()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Visits and entries keep their names; only the saved place is removed.")
+        }
+    }
+}
+
+// MARK: - Editor
+
+struct PlaceEditorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var env: AppEnvironment
+    @State private var draft: Place
+    @State private var working = false
+    @State private var message: String?
+
+    init(place: Place) {
+        var start = place
+        if start.name == "Place" && start.latitude == nil { start.name = "" }
+        _draft = State(initialValue: start)
+    }
+
+    private var isExisting: Bool { env.archive.placeById(draft.id) != nil }
+    private var canSave: Bool { !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Name", text: $draft.name)
+                    TextField("Notes", text: $draft.notes, axis: .vertical).lineLimit(2...6)
+                }
+                locationSection
+                Section("Color") { swatches }
+                if isExisting {
+                    Section {
+                        Button("Delete place", role: .destructive) {
+                            env.deletePlace(draft.id)
+                            dismiss()
                         }
                     }
                 }
             }
-            .padding(20)
+            .paperList()
+            .navigationTitle(isExisting ? "Edit place" : "New place")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        draft.name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        env.savePlace(draft)
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(!canSave || working)
+                }
+            }
         }
-        .navigationTitle(place.name)
-        .toolbar {
-            Button("Edit") { editing = true }
+    }
+
+    @ViewBuilder
+    private var locationSection: some View {
+        Section("Location") {
+            if let lat = draft.latitude, let lon = draft.longitude {
+                LabeledContent("Coordinates", value: String(format: "%.4f, %.4f", lat, lon))
+                Stepper(
+                    "Radius \(Int(draft.radiusMeters)) m",
+                    value: $draft.radiusMeters,
+                    in: 50...500,
+                    step: 25
+                )
+                Button("Update from current location") { Task { await capture() } }
+                    .disabled(working)
+                Button("Remove coordinates", role: .destructive) {
+                    draft.latitude = nil
+                    draft.longitude = nil
+                }
+            } else {
+                Button { Task { await capture() } } label: {
+                    Label(working ? "Finding you…" : "Use current location", systemImage: "location")
+                }
+                .disabled(working)
+            }
+            if let message {
+                Text(message).font(Typeface.caption).foregroundStyle(Palette.inkSecondary)
+            }
+            if env.location.authorization == .denied || env.location.authorization == .restricted {
+                Button("Open Settings to allow location") { PermissionCenter.openSystemSettings() }
+            }
         }
-        .sheet(isPresented: $editing) {
-            PlaceEditorView(place: place).environmentObject(env)
+    }
+
+    private var swatches: some View {
+        HStack(spacing: Space.md) {
+            ForEach(placeColors, id: \.self) { value in
+                Button { draft.colorValue = value } label: {
+                    Circle()
+                        .fill(Color(hex: value))
+                        .frame(width: 30, height: 30)
+                        .overlay(
+                            Circle().strokeBorder(Palette.ink, lineWidth: draft.colorValue == value ? 2 : 0).padding(-3)
+                        )
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Color")
+                .accessibilityAddTraits(draft.colorValue == value ? .isSelected : [])
+            }
+        }
+    }
+
+    private func capture() async {
+        working = true
+        message = nil
+        defer { working = false }
+        if let sample = await env.location.captureCurrent() {
+            draft.latitude = sample.latitude
+            draft.longitude = sample.longitude
+            message = "Saved your current coordinates on this device."
+        } else if env.location.authorization == .denied || env.location.authorization == .restricted {
+            message = "Location access is off for Lifelog."
+        } else {
+            message = "Could not get a location fix. Try again where the signal is better."
         }
     }
 }

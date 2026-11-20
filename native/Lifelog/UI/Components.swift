@@ -1,180 +1,365 @@
 import SwiftUI
 import UIKit
+import ImageIO
 
-struct SectionHeader: View {
-    @Environment(\.lifelogPalette) private var palette
+// MARK: - Headings
+
+/// The quiet editorial header used at the top of each destination.
+struct PageHeader: View {
+    let eyebrow: String
     let title: String
     var subtitle: String?
-    var action: (() -> Void)?
-    var actionLabel: String = "See all"
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(LifelogTheme.serif(21, relativeTo: .title2))
-                    .foregroundStyle(palette.text)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(LifelogTheme.sans(13))
-                        .foregroundStyle(palette.secondary)
-                }
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text(eyebrow)
+                .font(Typeface.micro)
+                .textCase(.uppercase)
+                .tracking(1.2)
+                .foregroundStyle(Palette.inkTertiary)
+            Text(title)
+                .font(Typeface.display)
+                .foregroundStyle(Palette.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            if let subtitle {
+                Text(subtitle)
+                    .font(Typeface.label)
+                    .foregroundStyle(Palette.inkSecondary)
+                    .padding(.top, 2)
             }
-            Spacer(minLength: 8)
-            if let action {
-                Button(action: action) {
-                    Text(actionLabel)
-                        .font(LifelogTheme.sans(13, weight: .semibold))
-                        .foregroundStyle(palette.accent)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-}
-
-struct Eyebrow: View {
-    @Environment(\.lifelogPalette) private var palette
-    let text: String
-
-    var body: some View {
-        Text(text.uppercased())
-            .font(LifelogTheme.sans(10, weight: .bold))
-            .tracking(1.4)
-            .foregroundStyle(palette.tertiary)
-    }
-}
-
-struct StatTile: View {
-    @Environment(\.lifelogPalette) private var palette
-    let value: String
-    let label: String
-    var systemImage: String?
-    var accent: Bool = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                if let systemImage {
-                    Image(systemName: systemImage)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(accent ? palette.accent : palette.secondary)
-                }
-                Eyebrow(text: label)
-            }
-            Text(value)
-                .font(LifelogTheme.serif(28, relativeTo: .title))
-                .foregroundStyle(palette.text)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .lifelogCard(padding: 16, radius: 16)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
     }
 }
 
-struct TagPill: View {
-    @Environment(\.lifelogPalette) private var palette
-    let text: String
-
-    var body: some View {
-        Text(text.hasPrefix("#") ? text : "#\(text)")
-            .font(LifelogTheme.sans(11, weight: .medium))
-            .foregroundStyle(palette.secondary)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(Capsule().fill(palette.surfaceRaised))
-            .overlay(Capsule().stroke(palette.border, lineWidth: 0.6))
-    }
-}
-
-struct EmptyState: View {
-    @Environment(\.lifelogPalette) private var palette
+struct SectionLabel: View {
     let title: String
-    let message: String
-    var systemImage: String = "book.closed"
+    var detail: String?
+    var actionTitle: String?
     var action: (() -> Void)?
-    var actionTitle: String = "Add entry"
 
     var body: some View {
-        VStack(spacing: 14) {
-            ZStack {
-                Circle().fill(palette.accentSoft.opacity(0.55))
-                    .frame(width: 62, height: 62)
-                Image(systemName: systemImage)
-                    .font(.system(size: 24, weight: .light))
-                    .foregroundStyle(palette.accent)
-            }
+        HStack(alignment: .firstTextBaseline) {
             Text(title)
-                .font(LifelogTheme.serif(20, relativeTo: .title3))
-                .foregroundStyle(palette.text)
-            Text(message)
-                .font(LifelogTheme.sans(14))
-                .foregroundStyle(palette.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 340)
-            if let action {
-                Button(action: action) {
-                    Text(actionTitle)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(palette.accent)
+                .font(Typeface.heading)
+                .foregroundStyle(Palette.ink)
+                .accessibilityAddTraits(.isHeader)
+            if let detail {
+                Text(detail)
+                    .font(Typeface.caption)
+                    .foregroundStyle(Palette.inkTertiary)
+            }
+            Spacer(minLength: Space.sm)
+            if let actionTitle, let action {
+                Button(actionTitle, action: action)
+                    .buttonStyle(QuietButtonStyle())
             }
         }
-        .padding(.vertical, 34)
-        .frame(maxWidth: .infinity)
     }
 }
 
+// MARK: - Empty and info states
+
+/// Quiet, honest empty state. Built from what is actually (not) stored.
+struct EmptyNote: View {
+    let title: String
+    let message: String
+    var actionTitle: String?
+    var action: (() -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            Text(title)
+                .font(Typeface.bodyStrong)
+                .foregroundStyle(Palette.ink)
+            Text(message)
+                .font(Typeface.label)
+                .foregroundStyle(Palette.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let actionTitle, let action {
+                Button(actionTitle, action: action)
+                    .buttonStyle(QuietButtonStyle())
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+    }
+}
+
+struct InfoLine: View {
+    let text: String
+    var symbol: String?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: Space.sm) {
+            if let symbol {
+                Image(systemName: symbol)
+                    .font(Typeface.caption)
+                    .foregroundStyle(Palette.inkTertiary)
+                    .accessibilityHidden(true)
+            }
+            Text(text)
+                .font(Typeface.caption)
+                .foregroundStyle(Palette.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// MARK: - Rows
+
+struct SourceGlyph: View {
+    let source: TimelineSource
+    var suggested = false
+
+    var body: some View {
+        Image(systemName: source.symbol)
+            .font(.system(.footnote).weight(.semibold))
+            .foregroundStyle(suggested ? Palette.inkTertiary : Palette.accent)
+            .frame(width: 32, height: 32)
+            .background(
+                Circle().fill(suggested ? Palette.surface : Palette.accentSoft)
+            )
+            .overlay(Circle().strokeBorder(suggested ? Palette.line : Color.clear, lineWidth: 0.5))
+            .accessibilityHidden(true)
+    }
+}
+
+/// One record in a day, drawn without a box: glyph, time, title, detail.
+struct DayRowView: View {
+    let row: DayRow
+
+    var body: some View {
+        HStack(alignment: .top, spacing: Space.md) {
+            SourceGlyph(source: row.source, suggested: row.suggested)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(Dates.formatTime(row.at))
+                        .monospacedDigit()
+                    Text(row.source.label)
+                    if row.suggested {
+                        Text("· Suggested")
+                    }
+                }
+                .font(Typeface.micro)
+                .foregroundStyle(Palette.inkTertiary)
+                Text(row.title)
+                    .font(Typeface.bodyStrong)
+                    .foregroundStyle(Palette.ink)
+                    .multilineTextAlignment(.leading)
+                if !row.subtitle.isEmpty {
+                    Text(row.subtitle)
+                        .font(Typeface.label)
+                        .foregroundStyle(Palette.inkSecondary)
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, Space.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .opacity(row.hidden ? 0.6 : 1)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct TagLine: View {
+    let tags: [String]
+
+    var body: some View {
+        FlowLayout(spacing: 6) {
+            ForEach(tags, id: \.self) { tag in
+                Text(tag.hasPrefix("#") ? tag : "#\(tag)")
+                    .font(Typeface.micro)
+                    .foregroundStyle(Palette.inkSecondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Palette.surface))
+                    .overlay(Capsule().strokeBorder(Palette.line, lineWidth: 0.5))
+            }
+        }
+    }
+}
+
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var widest: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+            widest = max(widest, x - spacing)
+        }
+        return CGSize(width: proposal.width ?? widest, height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+    }
+}
+
+/// A figure with a quiet label, used instead of boxed stat tiles.
+struct Figure: View {
+    let value: String
+    let label: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(Typeface.figure)
+                .foregroundStyle(Palette.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(label)
+                .font(Typeface.micro)
+                .foregroundStyle(Palette.inkTertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Toast
+
+struct ToastBanner: View {
+    let message: String
+
+    var body: some View {
+        Text(message)
+            .font(Typeface.label)
+            .foregroundStyle(Palette.ink)
+            .multilineTextAlignment(.leading)
+            .padding(.horizontal, Space.lg)
+            .padding(.vertical, Space.md)
+            .background(Palette.raised, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Palette.line, lineWidth: 0.5)
+            )
+            .padding(.horizontal, Space.page)
+            .accessibilityAddTraits(.updatesFrequently)
+    }
+}
+
+// MARK: - Media
+
+enum MediaImageCache {
+    static let cache = NSCache<NSString, UIImage>()
+}
+
+/// Decodes at the size it will be drawn instead of loading full photos.
+func downsampledImage(_ data: Data, maxPixel: CGFloat) -> UIImage? {
+    let sourceOptions: [CFString: Any] = [kCGImageSourceShouldCache: false]
+    guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions as CFDictionary) else { return nil }
+    let options: [CFString: Any] = [
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceShouldCacheImmediately: true,
+        kCGImageSourceCreateThumbnailWithTransform: true,
+        kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+    ]
+    guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+    return UIImage(cgImage: image)
+}
+
+/// Shows an encrypted photo. Decryption and decoding happen off the main thread.
 struct EncryptedMediaImage: View {
     @EnvironmentObject private var env: AppEnvironment
-    @Environment(\.lifelogPalette) private var palette
     let item: MediaItem
-    var thumbnail: Bool = true
-    var contentMode: ContentMode = .fill
+    var fullSize = false
+    var fit = false
+    var maxPixel: CGFloat = 480
 
     @State private var image: UIImage?
-    @State private var isLoading = true
+    @State private var failed = false
 
     var body: some View {
         ZStack {
+            Palette.surface
             if let image {
                 Image(uiImage: image)
                     .resizable()
-                    .aspectRatio(contentMode: contentMode)
+                    .aspectRatio(contentMode: fit ? .fit : .fill)
             } else {
-                Rectangle().fill(palette.surfaceRaised)
-                if isLoading {
-                    ProgressView().tint(palette.secondary)
-                } else {
-                    Image(systemName: item.isVideo ? "video" : item.isAudio ? "waveform" : "photo")
-                        .font(.system(size: 24, weight: .light))
-                        .foregroundStyle(palette.tertiary)
-                }
+                Image(systemName: placeholderSymbol)
+                    .font(.system(.title3))
+                    .foregroundStyle(Palette.inkTertiary)
+                    .opacity(failed || !item.isImage ? 1 : 0.4)
             }
         }
         .clipped()
-        .task(id: item.id) {
-            isLoading = true
-            let data = thumbnail ? (try? env.mediaStore.readThumbnail(item)) : (try? env.mediaStore.readOriginal(item))
-            image = data.flatMap { UIImage(data: $0) }
-            isLoading = false
+        .task(id: item.id) { await load() }
+        .accessibilityLabel(item.displayCaption)
+    }
+
+    private var placeholderSymbol: String {
+        if item.isVideo { return "video" }
+        if item.isAudio { return "waveform" }
+        return failed ? "photo.badge.exclamationmark" : "photo"
+    }
+
+    private func load() async {
+        guard item.isImage else { return }
+        let pixels = fullSize ? 2400 : maxPixel
+        let key = "\(item.id)-\(Int(pixels))" as NSString
+        if let cached = MediaImageCache.cache.object(forKey: key) {
+            image = cached
+            return
+        }
+        let store = env.mediaStore
+        let media = item
+        let useFull = fullSize
+        let decoded: UIImage? = await offMain {
+            guard let data = try? (useFull ? store.readOriginal(media) : store.readThumbnail(media)) else { return nil }
+            return downsampledImage(data, maxPixel: pixels)
+        }
+        guard !Task.isCancelled else { return }
+        if let decoded {
+            MediaImageCache.cache.setObject(decoded, forKey: key)
+            image = decoded
+        } else {
+            failed = true
         }
     }
 }
 
 struct RemoteArtwork: View {
     let urlString: String?
-    @Environment(\.lifelogPalette) private var palette
 
     var body: some View {
         Group {
-            if let urlString, let url = URL(string: urlString), !urlString.isEmpty {
+            if let urlString, !urlString.isEmpty, let url = URL(string: urlString) {
                 AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
+                    if let image = phase.image {
                         image.resizable().aspectRatio(contentMode: .fill)
-                    default:
+                    } else {
                         placeholder
                     }
                 }
@@ -183,122 +368,29 @@ struct RemoteArtwork: View {
             }
         }
         .clipped()
+        .accessibilityHidden(true)
     }
 
     private var placeholder: some View {
         ZStack {
-            palette.accentSoft
-            Image(systemName: "music.note")
-                .foregroundStyle(palette.accent)
+            Palette.accentSoft
+            Image(systemName: "music.note").foregroundStyle(Palette.accent)
         }
     }
 }
 
-struct TimelineRow: View {
-    @Environment(\.lifelogPalette) private var palette
-    let item: TimelineItem
+// MARK: - Permission guidance
+
+/// Inline explanation shown when a feature needs a permission that was declined.
+struct PermissionNotice: View {
+    let message: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            VStack(spacing: 6) {
-                Text(Dates.formatTime(item.at))
-                    .font(LifelogTheme.sans(11, weight: .semibold))
-                    .foregroundStyle(palette.secondary)
-                    .frame(width: 48)
-                Circle()
-                    .fill(item.confidence == .suggested ? palette.tertiary : palette.accent)
-                    .frame(width: 7, height: 7)
-            }
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 7) {
-                    Image(systemName: icon)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(palette.accent)
-                    Text(item.title)
-                        .font(LifelogTheme.sans(15, weight: .semibold))
-                        .foregroundStyle(palette.text)
-                        .lineLimit(2)
-                    if item.confidence == .suggested {
-                        Text("Suggested")
-                            .font(LifelogTheme.sans(9, weight: .bold))
-                            .foregroundStyle(palette.tertiary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(Capsule().fill(palette.surfaceRaised))
-                    }
-                }
-                if !item.subtitle.isEmpty {
-                    Text(item.subtitle)
-                        .font(LifelogTheme.sans(13))
-                        .foregroundStyle(palette.secondary)
-                        .lineLimit(2)
-                }
-            }
-            Spacer(minLength: 4)
+        VStack(alignment: .leading, spacing: Space.sm) {
+            InfoLine(text: message, symbol: "lock")
+            Button("Open Settings") { PermissionCenter.openSystemSettings() }
+                .buttonStyle(QuietButtonStyle())
         }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 14)
-        .background(
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .fill(palette.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .stroke(palette.border, lineWidth: 0.7)
-        )
-    }
-
-    private var icon: String {
-        switch item.source {
-        case .journal: return "book.closed"
-        case .tracker: return "checkmark.circle"
-        case .location: return "mappin"
-        case .music: return "music.note"
-        case .photo: return "photo"
-        case .manual: return "sparkle"
-        }
-    }
-}
-
-struct BarChart: View {
-    @Environment(\.lifelogPalette) private var palette
-    let values: [Double]
-    var labels: [String] = []
-    var height: CGFloat = 90
-
-    var body: some View {
-        let maxValue = max(values.max() ?? 1, 1)
-        HStack(alignment: .bottom, spacing: 6) {
-            ForEach(Array(values.enumerated()), id: \.offset) { index, value in
-                VStack(spacing: 5) {
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(value > 0 ? palette.accent.opacity(0.85) : palette.border)
-                        .frame(height: max(3, CGFloat(value / maxValue) * height))
-                    if index < labels.count {
-                        Text(labels[index])
-                            .font(LifelogTheme.sans(9))
-                            .foregroundStyle(palette.tertiary)
-                            .lineLimit(1)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .frame(height: height + 18)
-    }
-}
-
-struct LabeledDivider: View {
-    @Environment(\.lifelogPalette) private var palette
-    let label: String
-
-    var body: some View {
-        HStack {
-            Rectangle().fill(palette.border).frame(height: 1)
-            Text(label)
-                .font(LifelogTheme.sans(10, weight: .semibold))
-                .foregroundStyle(palette.tertiary)
-            Rectangle().fill(palette.border).frame(height: 1)
-        }
+        .surface(padding: Space.md, radius: 14)
     }
 }

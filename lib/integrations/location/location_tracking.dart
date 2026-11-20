@@ -13,6 +13,30 @@ const _uuid = Uuid();
 
 enum DayLocationKind { stay, travel }
 
+/// A cluster of samples where the device stopped, inferred on device.
+/// Stops are suggestions, never fabricated visits.
+class TravelStop {
+  const TravelStop({
+    required this.latitude,
+    required this.longitude,
+    required this.startAt,
+    required this.endAt,
+    required this.label,
+    this.placeId,
+    this.sampleCount = 0,
+  });
+
+  final double latitude;
+  final double longitude;
+  final DateTime startAt;
+  final DateTime endAt;
+  final String label;
+  final String? placeId;
+  final int sampleCount;
+
+  Duration get duration => endAt.difference(startAt);
+}
+
 class DayLocationSegment {
   const DayLocationSegment({
     required this.kind,
@@ -108,15 +132,112 @@ class LocationTracking {
   /// Background visits can arrive late, so a calendar day match is not enough.
   static const currentLocationFreshness = Duration(minutes: 30);
 
+  /// Fixes coarser than this are not good enough to claim a building or street.
+  /// They are discarded rather than being shown as an exact location.
+  static const maxAcceptedAccuracyMeters = 100.0;
+
+  /// A cached fix older than this is never treated as a live reading.
+  static const maxFixAge = Duration(minutes: 2);
+
+  /// Small clock differences are tolerated; larger future timestamps are not.
+  static const maxFutureSkew = Duration(seconds: 10);
+
+  /// Used only to reject impossible jumps between consecutive fixes.
+  static const maxPlausibleSpeedMps = 60.0;
+
   /// Whether [at] is recent enough to justify a "now" label.
   static bool isFresh(DateTime at, {DateTime? now}) =>
       (now ?? DateTime.now()).difference(at).abs() <=
       currentLocationFreshness;
 
+  /// A position is usable only when it has valid coordinates, a fresh
+  /// timestamp, believable accuracy and is not a simulated location.
+  static bool isUsablePosition(Position position, {DateTime? now}) {
+    final nowValue = now ?? DateTime.now();
+    if (position.isMocked) return false;
+    final lat = position.latitude;
+    final lon = position.longitude;
+    if (!lat.isFinite || !lon.isFinite || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+      return false;
+    }
+    final accuracy = position.accuracy;
+    if (accuracy.isFinite && accuracy > maxAcceptedAccuracyMeters) return false;
+    final age = nowValue.difference(position.timestamp);
+    if (age > maxFixAge || age < -maxFutureSkew) return false;
+    return true;
+  }
+
+  /// Rejects teleport-like jumps that cannot be explained by GPS error and
+  /// elapsed time. This is the main guard against a stale city-level fix
+  /// replacing a precise current location.
+  static bool isPlausiblePosition(
+    Position position,
+    LocationSample previous, {
+    DateTime? now,
+  }) {
+    if (!isUsablePosition(position, now: now)) return false;
+    final seconds = position.timestamp.difference(previous.recordedAt).inSeconds;
+    if (seconds < 0) return false;
+    final distance = distanceMeters(
+      previous.latitude,
+      previous.longitude,
+      position.latitude,
+      position.longitude,
+    );
+    final previousAccuracy = previous.accuracyMeters ?? maxAcceptedAccuracyMeters;
+    final accuracy = position.accuracy.isFinite
+        ? position.accuracy
+        : maxAcceptedAccuracyMeters;
+    final allowed = maxPlausibleSpeedMps * seconds +
+        previousAccuracy +
+        accuracy +
+        25.0;
+    return distance <= allowed;
+  }
+
+  /// Picks the most trustworthy fix from several attempts. We prefer tighter
+  /// accuracy, then freshness, then closeness to the last accepted sample.
+  static Position? chooseBestPosition(
+    Iterable<Position> positions, {
+    LocationSample? previous,
+    DateTime? now,
+  }) {
+    Position? best;
+    double bestScore = double.infinity;
+    for (final position in positions) {
+      if (!isUsablePosition(position, now: now)) continue;
+      if (previous != null && !isPlausiblePosition(position, previous, now: now)) {
+        continue;
+      }
+      final accuracy = position.accuracy.isFinite
+          ? position.accuracy
+          : maxAcceptedAccuracyMeters;
+      final ageSeconds =
+          (now ?? DateTime.now()).difference(position.timestamp).inSeconds.abs();
+      var score = accuracy + ageSeconds * 2.0;
+      if (previous != null) {
+        score += distanceMeters(
+              previous.latitude,
+              previous.longitude,
+              position.latitude,
+              position.longitude,
+            ) /
+            10.0;
+      }
+      if (score < bestScore) {
+        bestScore = score;
+        best = position;
+      }
+    }
+    return best;
+  }
+
   /// Capture the current device position, if permission/services allow.
-  /// Returns null when unavailable or denied.
+  /// Returns null when unavailable, denied or too imprecise to trust.
   static Future<Position?> getCurrentPosition({
     bool requestPermission = false,
+    LocationSample? previous,
+    int attempts = 2,
   }) async {
     try {
       final enabled = await Geolocator.isLocationServiceEnabled();
@@ -129,30 +250,60 @@ class LocationTracking {
           permission == LocationPermission.deniedForever) {
         return null;
       }
-      // Allow while-in-use as well as always for foreground sampling.
-      return await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.medium,
-          timeLimit: Duration(seconds: 20),
-        ),
+      // Best/navigation accuracy on iOS uses GPS, Wi-Fi and barometric data.
+      // A short second attempt replaces a coarse first fix without spinning.
+      const settings = LocationSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        timeLimit: Duration(seconds: 15),
       );
+      final candidates = <Position>[];
+      for (var attempt = 0; attempt < attempts && candidates.length < 2; attempt++) {
+        try {
+          final position = await Geolocator.getCurrentPosition(
+            locationSettings: settings,
+          );
+          if (isUsablePosition(position)) {
+            candidates.add(position);
+            final accuracy = position.accuracy;
+            if (accuracy.isFinite && accuracy <= 25) break;
+          }
+        } on TimeoutException {
+          break;
+        } catch (_) {
+          // Try once more only while the overall budget allows it.
+        }
+      }
+      return chooseBestPosition(candidates, previous: previous);
     } catch (_) {
       return null;
     }
   }
 
-  static LocationSample? sampleFromPosition(Position position) {
+  static LocationSample? sampleFromPosition(
+    Position position, {
+    DateTime? now,
+  }) {
+    final nowValue = now ?? DateTime.now();
+    if (!isUsablePosition(position, now: nowValue)) return null;
+    // Use the device-reported fix time, never the time at which Dart received
+    // it. Cached fixes must stay in the past even if the callback is delayed.
+    var recordedAt = position.timestamp;
+    if (recordedAt.isAfter(nowValue.add(maxFutureSkew))) {
+      recordedAt = nowValue;
+    }
     final accuracy = position.accuracy;
-    // Ignore very inaccurate fixes (> 1km) when possible.
-    if (accuracy.isFinite && accuracy > 1000) return null;
     final speed = position.speed;
-    final speedMps = speed.isFinite && speed >= 0 ? speed : null;
+    final speedMps = (speed.isFinite && speed >= 0 && position.hasSpeed)
+        ? speed
+        : null;
     return LocationSample(
       id: _uuid.v4(),
-      recordedAt: DateTime.now(),
+      recordedAt: recordedAt,
       latitude: position.latitude,
       longitude: position.longitude,
-      accuracyMeters: accuracy.isFinite ? accuracy : null,
+      accuracyMeters: (accuracy.isFinite && accuracy > 0 && position.hasAccuracy)
+          ? accuracy
+          : null,
       speedMps: speedMps,
     );
   }
@@ -367,6 +518,116 @@ class LocationTracking {
       mostStayDuration: topDur,
       mostStayPlaceId: topKey == null ? null : stayPlaceIds[topKey],
     );
+  }
+
+  /// Groups nearby samples into visited stops and possible destinations.
+  /// Only real samples are used; short noisy clusters are discarded.
+  static List<TravelStop> inferStops(
+    Archive archive,
+    DateTime day, {
+    double clusterMeters = 160,
+    Duration minimumStay = const Duration(minutes: 4),
+  }) {
+    final samples = [...archive.locationSamplesOn(day)]
+      ..sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
+    if (samples.isEmpty) return const [];
+    final places = archive.places.where((p) => p.hasCoordinates).toList();
+    final stops = <TravelStop>[];
+
+    var cluster = <LocationSample>[samples.first];
+    void finishCluster() {
+      if (cluster.isEmpty) return;
+      if (cluster.length < 2 &&
+          cluster.first.recordedAt.difference(cluster.last.recordedAt).abs() <
+              const Duration(seconds: 1)) {
+        cluster = <LocationSample>[cluster.last];
+        return;
+      }
+      final lat = cluster.map((s) => s.latitude).reduce((a, b) => a + b) /
+          cluster.length;
+      final lon = cluster.map((s) => s.longitude).reduce((a, b) => a + b) /
+          cluster.length;
+      final first = cluster.first;
+      final last = cluster.last;
+      final attr = _attribute(
+        LocationSample(
+          id: first.id,
+          recordedAt: first.recordedAt,
+          latitude: lat,
+          longitude: lon,
+          accuracyMeters: first.accuracyMeters,
+          speedMps: first.speedMps,
+        ),
+        places,
+      );
+      final duration = last.recordedAt.difference(first.recordedAt);
+      final named = attr.place != null;
+      if (duration >= minimumStay || (named && cluster.length >= 2)) {
+        final label = named
+            ? attr.place!.name
+            : (duration.inMinutes >= 1
+                ? 'Stopped nearby'
+                : 'Brief stop');
+        final lastStop = stops.isEmpty ? null : stops.last;
+        if (lastStop != null &&
+            lastStop.placeId == attr.place?.id &&
+            lastStop.label == label &&
+            distanceMeters(
+                  lastStop.latitude,
+                  lastStop.longitude,
+                  lat,
+                  lon,
+                ) <=
+                clusterMeters) {
+          stops[stops.length - 1] = TravelStop(
+            latitude: (lastStop.latitude * lastStop.sampleCount + lat * cluster.length) /
+                (lastStop.sampleCount + cluster.length),
+            longitude: (lastStop.longitude * lastStop.sampleCount + lon * cluster.length) /
+                (lastStop.sampleCount + cluster.length),
+            startAt: lastStop.startAt,
+            endAt: last.recordedAt.isAfter(lastStop.endAt)
+                ? last.recordedAt
+                : lastStop.endAt,
+            label: label,
+            placeId: lastStop.placeId,
+            sampleCount: lastStop.sampleCount + cluster.length,
+          );
+        } else {
+          stops.add(
+            TravelStop(
+              latitude: lat,
+              longitude: lon,
+              startAt: first.recordedAt,
+              endAt: last.recordedAt,
+              label: label,
+              placeId: attr.place?.id,
+              sampleCount: cluster.length,
+            ),
+          );
+        }
+      }
+      cluster = <LocationSample>[];
+    }
+
+    for (var i = 1; i < samples.length; i++) {
+      final anchor = cluster.last;
+      final current = samples[i];
+      final within = distanceMeters(
+            anchor.latitude,
+            anchor.longitude,
+            current.latitude,
+            current.longitude,
+          ) <=
+          clusterMeters;
+      if (within) {
+        cluster.add(current);
+      } else {
+        finishCluster();
+        cluster = <LocationSample>[current];
+      }
+    }
+    finishCluster();
+    return stops;
   }
 
   static DayLocationStatus? _currentStatus(

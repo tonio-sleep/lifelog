@@ -67,7 +67,7 @@ class BackupContents {
 
 String _packLabel(String key) => switch (key) {
       'journalEntries' => 'Organizing journal entries',
-      'photos' => 'Organizing photos',
+      'photos' => 'Organizing media',
       'trackers' => 'Organizing habits',
       'trackerRecords' => 'Organizing habit records',
       'timelineEvents' => 'Organizing timeline events',
@@ -135,7 +135,7 @@ class BackupService {
           BackupPackStage.media,
           i + 1,
           mediaTotal,
-          'Including photo ${i + 1} of $mediaTotal',
+          'Including media ${i + 1} of $mediaTotal',
         );
         try {
           final original = await mediaStore.readOriginal(item);

@@ -1,9 +1,14 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme/app_theme.dart';
 import '../../domain/models/places.dart';
+import '../../integrations/maps/map_models.dart';
+import '../../integrations/maps/map_platform.dart';
 
 /// A deliberately schematic map. Lifelog does not send precise location
 /// history to a tile provider in this build, so saved places, tracked samples
@@ -319,5 +324,408 @@ class _MapPainter extends CustomPainter {
         oldDelegate.visits != visits ||
         oldDelegate.samples != samples ||
         oldDelegate.privateMode != privateMode;
+  }
+}
+
+/// Full MapKit map on iOS, with a local schematic fallback for tests and
+/// non-Apple platforms. The native view supports pan, zoom, rotation, POIs,
+/// saved pins, travel stops and the recorded route.
+class DetailedMap extends StatefulWidget {
+  const DetailedMap({
+    super.key,
+    required this.data,
+    this.height = 320,
+    this.onPinDropped,
+    this.showDropPin = true,
+    this.showControls = true,
+  });
+
+  final LifelogMapData data;
+  final double height;
+  final ValueChanged<MapPoint>? onPinDropped;
+  final bool showDropPin;
+  final bool showControls;
+
+  @override
+  State<DetailedMap> createState() => _DetailedMapState();
+}
+
+class _DetailedMapState extends State<DetailedMap> {
+  LifelogMapController? _controller;
+  late LifelogMapType _mapType;
+  late bool _followUser;
+  bool _fitPending = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _mapType = widget.data.mapType;
+    _followUser = widget.data.followUser;
+  }
+
+  @override
+  void didUpdateWidget(covariant DetailedMap oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _pushData();
+  }
+
+  LifelogMapData get _effectiveData => widget.data.copyWith(
+        mapType: _mapType,
+        followUser: _followUser,
+        fitOnLoad: _fitPending,
+      );
+
+  void _pushData() {
+    _controller?.update(_effectiveData);
+    _fitPending = false;
+  }
+
+  void _onCreated(int viewId) {
+    _controller = LifelogMapController(viewId, (point) {
+      widget.onPinDropped?.call(point);
+    });
+    _pushData();
+  }
+
+  @override
+  void dispose() {
+    _controller = null;
+    super.dispose();
+  }
+
+  Future<void> _locate() async {
+    setState(() => _followUser = true);
+    await _controller?.centerOnUser();
+    _pushData();
+  }
+
+  void _cycleMapType() {
+    setState(() {
+      _mapType = LifelogMapType.values[
+          (_mapType.index + 1) % LifelogMapType.values.length];
+    });
+    _pushData();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = LifelogPalette.of(context);
+    if (!isNativeMapAvailable) {
+      return SizedBox(
+        height: widget.height,
+        child: _SchematicFromMapData(data: widget.data),
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(Radii.lg),
+      child: SizedBox(
+        height: widget.height,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: UiKitView(
+                viewType: 'lifelog/map',
+                creationParamsCodec: const StandardMessageCodec(),
+                creationParams: _effectiveData.toJson(),
+                onPlatformViewCreated: _onCreated,
+              ),
+            ),
+            if (widget.data.crosshair)
+              IgnorePointer(
+                child: Center(
+                  child: Icon(
+                    Icons.center_focus_strong_rounded,
+                    size: 36,
+                    color: palette.place,
+                  ),
+                ),
+              ),
+            if (widget.showControls)
+              Positioned(
+                right: Insets.sm,
+                top: Insets.sm,
+                child: Column(
+                  children: [
+                    _MapButton(
+                      icon: Icons.my_location_rounded,
+                      tooltip: 'Center on my location',
+                      onPressed: _locate,
+                    ),
+                    const SizedBox(height: 8),
+                    _MapButton(
+                      icon: Icons.fit_screen_outlined,
+                      tooltip: 'Show all places and route',
+                      onPressed: () => _controller?.fitAll(),
+                    ),
+                    const SizedBox(height: 8),
+                    _MapButton(
+                      icon: Icons.layers_outlined,
+                      tooltip: 'Change map style',
+                      onPressed: _cycleMapType,
+                    ),
+                    if (widget.showDropPin && widget.onPinDropped != null) ...[
+                      const SizedBox(height: 8),
+                      _MapButton(
+                        icon: Icons.add_location_alt_outlined,
+                        tooltip: 'Drop a pin at the map center',
+                        onPressed: () => _controller?.dropPinAtCenter(),
+                        filled: true,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            Positioned(
+              left: Insets.sm,
+              bottom: Insets.sm,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: Insets.sm,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.55),
+                  borderRadius: BorderRadius.circular(Radii.pill),
+                ),
+                child: Text(
+                  widget.data.privateMode
+                      ? 'Privacy mode · names hidden'
+                      : 'Apple Maps · drag to explore · long-press to pin',
+                  style: context.text.labelSmall?.copyWith(
+                    color: Colors.white,
+                    fontSize: 10,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MapButton extends StatelessWidget {
+  const _MapButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+    this.filled = false,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+  final bool filled;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: tooltip,
+      child: Material(
+        color: filled
+            ? Theme.of(context).colorScheme.primary
+            : Colors.white.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(10),
+        child: IconButton(
+          iconSize: 20,
+          constraints: const BoxConstraints.tightFor(width: 38, height: 38),
+          tooltip: tooltip,
+          onPressed: onPressed,
+          icon: Icon(
+            icon,
+            color: filled
+                ? Theme.of(context).colorScheme.onPrimary
+                : Theme.of(context).colorScheme.primary,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SchematicFromMapData extends StatelessWidget {
+  const _SchematicFromMapData({required this.data});
+
+  final LifelogMapData data;
+
+  @override
+  Widget build(BuildContext context) {
+    final places = data.places
+        .where((point) => point.kind == 'place')
+        .map(
+          (point) => Place(
+            id: point.id,
+            name: data.privateMode ? 'Hidden place' : point.name,
+            createdAt: DateTime.now(),
+            latitude: point.latitude,
+            longitude: point.longitude,
+            radiusMeters: point.radiusMeters,
+            notes: point.notes,
+            colorValue: point.color,
+          ),
+        )
+        .toList();
+    final samples = data.route
+        .map(
+          (point) => LocationSample(
+            id: point.id,
+            recordedAt: DateTime.now(),
+            latitude: point.latitude,
+            longitude: point.longitude,
+          ),
+        )
+        .toList();
+    return SchematicMap(
+      places: places,
+      visits: const [],
+      samples: samples,
+      privateMode: data.privateMode,
+      height: double.infinity,
+    );
+  }
+}
+
+/// Opens a full-screen map for choosing an exact point. The person drags the
+/// map until the crosshair is over the intended building or landmark, then
+/// confirms. Reverse geocoding fills a useful default name.
+Future<MapPoint?> showMapPinPicker(
+  BuildContext context, {
+  MapPoint? initial,
+}) {
+  return Navigator.of(context, rootNavigator: true).push<MapPoint>(
+    MaterialPageRoute<MapPoint>(
+      fullscreenDialog: true,
+      builder: (_) => _MapPinPickerPage(initial: initial),
+    ),
+  );
+}
+
+class _MapPinPickerPage extends ConsumerStatefulWidget {
+  const _MapPinPickerPage({this.initial});
+
+  final MapPoint? initial;
+
+  @override
+  ConsumerState<_MapPinPickerPage> createState() => _MapPinPickerPageState();
+}
+
+class _MapPinPickerPageState extends ConsumerState<_MapPinPickerPage> {
+  MapPoint? _picked;
+  bool _lookingUp = false;
+
+  Future<void> _namePoint(MapPoint point) async {
+    if (!isNativeMapAvailable) return;
+    setState(() => _lookingUp = true);
+    try {
+      final result = await ref
+          .read(mapSearchServiceProvider)
+          .reverseGeocode(point.latitude, point.longitude);
+      if (!mounted || result == null) return;
+      final title = result.title.trim().isEmpty ? point.name : result.title.trim();
+      setState(() {
+        _picked = MapPoint(
+          latitude: point.latitude,
+          longitude: point.longitude,
+          id: point.id,
+          name: title,
+          color: point.color,
+          radiusMeters: point.radiusMeters,
+          kind: point.kind,
+          notes: result.subtitle,
+        );
+      });
+    } catch (_) {
+      if (mounted) setState(() => _lookingUp = false);
+      return;
+    }
+    if (mounted) setState(() => _lookingUp = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final initial = widget.initial;
+    final picked = _picked;
+    final data = LifelogMapData(
+      places: initial == null ? const [] : [initial],
+      stops: const [],
+      route: const [],
+      current: initial,
+      crosshair: true,
+      fitOnLoad: initial == null,
+    );
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Choose exact location'),
+        leading: IconButton(
+          icon: const Icon(Icons.close_rounded),
+          tooltip: 'Cancel',
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(Insets.md),
+              child: Text(
+                'Drag the map so the crosshair sits on the building, business '
+                'or landmark, then tap the pin button. Long-press also works.',
+                style: context.text.bodySmall?.copyWith(
+                  color: context.palette.mutedText,
+                ),
+              ),
+            ),
+            Expanded(
+              child: DetailedMap(
+                data: data,
+                height: double.infinity,
+                onPinDropped: (point) {
+                  setState(() => _picked = point);
+                  unawaited(_namePoint(point));
+                },
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.all(Insets.md),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                border: Border(
+                  top: BorderSide(color: context.palette.border),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    picked == null
+                        ? 'No point selected yet'
+                        : '${picked.name.isEmpty ? 'Selected point' : picked.name}\n'
+                            '${picked.latitude.toStringAsFixed(6)}, '
+                            '${picked.longitude.toStringAsFixed(6)}',
+                    style: context.text.bodyMedium,
+                  ),
+                  if (_lookingUp)
+                    const Padding(
+                      padding: EdgeInsets.only(top: Insets.xs),
+                      child: LinearProgressIndicator(minHeight: 2),
+                    ),
+                  const SizedBox(height: Insets.sm),
+                  FilledButton.icon(
+                    onPressed: picked == null
+                        ? null
+                        : () => Navigator.of(context).pop(picked),
+                    icon: const Icon(Icons.check_rounded),
+                    label: const Text('Use this point'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

@@ -1,13 +1,18 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:video_player/video_player.dart';
 
 import '../../app/providers/providers.dart';
 import '../../app/theme/app_theme.dart';
 import '../../app/widgets/common.dart';
 import '../../app/widgets/components.dart';
+import '../../core/storage/media_playback.dart';
 import '../../core/storage/media_store.dart';
 import '../../core/util/dates.dart';
 import '../../domain/models/journal.dart';
@@ -482,6 +487,7 @@ class _MediaViewerPageState extends ConsumerState<MediaViewerPage> {
               return _ViewerPage(
                 key: ValueKey(entry.id),
                 item: entry,
+                active: i == _index,
                 heroTag: mediaHeroTag(widget.heroScope, entry),
                 onTap: () => setState(() => _chrome = !_chrome),
                 onZoomChanged: (zoomed) {
@@ -713,12 +719,14 @@ class _ViewerPage extends StatefulWidget {
   const _ViewerPage({
     super.key,
     required this.item,
+    required this.active,
     required this.heroTag,
     required this.onTap,
     required this.onZoomChanged,
   });
 
   final MediaItem item;
+  final bool active;
   final String heroTag;
   final VoidCallback onTap;
   final ValueChanged<bool> onZoomChanged;
@@ -782,37 +790,410 @@ class _ViewerPageState extends State<_ViewerPage> {
                     borderRadius: BorderRadius.zero,
                   ),
                 )
-              : Padding(
-                  padding: const EdgeInsets.all(Insets.xxl),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        item.isVideo
-                            ? Icons.movie_outlined
-                            : item.isAudio
-                            ? Icons.audiotrack_outlined
-                            : Icons.insert_drive_file_outlined,
-                        size: 56,
-                        color: Colors.white38,
+              : item.isAudio
+                  ? _AudioPlayerView(item: item, active: widget.active)
+                  : item.isVideo
+                  ? _VideoPlayerView(item: item, active: widget.active)
+                  : Padding(
+                      padding: const EdgeInsets.all(Insets.xxl),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.insert_drive_file_outlined,
+                            size: 56,
+                            color: Colors.white38,
+                          ),
+                          const SizedBox(height: Insets.lg),
+                          Text(
+                            'No preview for this file type.',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white60,
+                              height: 1.5,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: Insets.lg),
-                      Text(
-                        item.isVideo || item.isAudio
-                            ? 'This ${item.kindLabel.toLowerCase()} is stored '
-                                  'encrypted on this device. Playback is not '
-                                  'available in this build.'
-                            : 'No preview for this file type.',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: Colors.white60, height: 1.5),
-                      ),
-                    ],
-                  ),
-                ),
+                    ),
         ),
       ),
     );
   }
+}
+
+class _AudioPlayerView extends ConsumerStatefulWidget {
+  const _AudioPlayerView({required this.item, required this.active});
+
+  final MediaItem item;
+  final bool active;
+
+  @override
+  ConsumerState<_AudioPlayerView> createState() => _AudioPlayerViewState();
+}
+
+class _AudioPlayerViewState extends ConsumerState<_AudioPlayerView> {
+  final AudioPlayer _player = AudioPlayer();
+  StreamSubscription<Duration>? _positionSub;
+  StreamSubscription<Duration>? _durationSub;
+  StreamSubscription<PlayerState>? _stateSub;
+  StreamSubscription<void>? _completeSub;
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+  bool _ready = false;
+  bool _playing = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _positionSub = _player.onPositionChanged.listen((position) {
+      if (mounted) setState(() => _position = position);
+    });
+    _durationSub = _player.onDurationChanged.listen((duration) {
+      if (mounted) setState(() => _duration = duration);
+    });
+    _stateSub = _player.onPlayerStateChanged.listen((state) {
+      if (mounted) setState(() => _playing = state == PlayerState.playing);
+    });
+    _completeSub = _player.onPlayerComplete.listen((_) {
+      if (mounted) {
+        setState(() {
+          _position = Duration.zero;
+          _playing = false;
+        });
+      }
+    });
+    unawaited(_prepare());
+  }
+
+  Future<void> _prepare() async {
+    try {
+      final bytes = await ref.read(appServicesProvider).mediaStore.readOriginal(
+            widget.item,
+          );
+      await _player.setSource(
+        BytesSource(bytes, mimeType: widget.item.mimeType),
+      );
+      final duration = await _player.getDuration();
+      if (!mounted) return;
+      setState(() {
+        _duration = duration ?? Duration.zero;
+        _ready = true;
+      });
+      if (!widget.active) await _player.pause();
+    } catch (error) {
+      if (mounted) setState(() => _error = '$error');
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _AudioPlayerView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active != oldWidget.active && _ready) {
+      if (widget.active) {
+        unawaited(_player.resume());
+      } else {
+        unawaited(_player.pause());
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    unawaited(_player.stop());
+    unawaited(_player.release());
+    unawaited(_positionSub?.cancel());
+    unawaited(_durationSub?.cancel());
+    unawaited(_stateSub?.cancel());
+    unawaited(_completeSub?.cancel());
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_error != null) {
+      return _PlaybackError(message: _error!);
+    }
+    if (!_ready) {
+      return const CircularProgressIndicator(color: Colors.white70);
+    }
+    final maxMs = _duration.inMilliseconds;
+    return Container(
+      width: math.min(520.0, MediaQuery.sizeOf(context).width - 48),
+      padding: const EdgeInsets.all(Insets.lg),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(Radii.lg),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.audiotrack_outlined,
+            size: 44,
+            color: Colors.white.withValues(alpha: 0.8),
+          ),
+          const SizedBox(height: Insets.sm),
+          Text(
+            widget.item.caption.trim().isEmpty
+                ? (widget.item.originalName ?? 'Audio')
+                : widget.item.caption.trim(),
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white),
+          ),
+          const SizedBox(height: Insets.md),
+          Row(
+            children: [
+              IconButton(
+                color: Colors.white,
+                tooltip: _playing ? 'Pause' : 'Play',
+                icon: Icon(
+                  _playing ? Icons.pause_circle_filled : Icons.play_circle_filled,
+                  size: 34,
+                ),
+                onPressed: () async {
+                  if (_playing) {
+                    await _player.pause();
+                  } else {
+                    if (_duration > Duration.zero &&
+                        _position >= _duration) {
+                      await _player.seek(Duration.zero);
+                    }
+                    await _player.resume();
+                  }
+                },
+              ),
+              Expanded(
+                child: Slider(
+                  value: maxMs > 0
+                      ? _position.inMilliseconds.clamp(0, maxMs).toDouble()
+                      : 0,
+                  max: maxMs > 0 ? maxMs.toDouble() : 1,
+                  onChanged: maxMs > 0
+                      ? (value) {
+                          final next = Duration(milliseconds: value.round());
+                          unawaited(_player.seek(next));
+                          setState(() => _position = next);
+                        }
+                      : null,
+                ),
+              ),
+              Text(
+                '${_formatDuration(_position)} / ${_formatDuration(_duration)}',
+                style: const TextStyle(color: Colors.white70, fontSize: 11),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VideoPlayerView extends ConsumerStatefulWidget {
+  const _VideoPlayerView({required this.item, required this.active});
+
+  final MediaItem item;
+  final bool active;
+
+  @override
+  ConsumerState<_VideoPlayerView> createState() => _VideoPlayerViewState();
+}
+
+class _VideoPlayerViewState extends ConsumerState<_VideoPlayerView> {
+  VideoPlayerController? _controller;
+  PlaybackFile? _playback;
+  bool _ready = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_prepare());
+  }
+
+  Future<void> _prepare() async {
+    try {
+      final directory = await getTemporaryDirectory();
+      final playback = await materializePlaybackFile(
+        ref.read(appServicesProvider).mediaStore,
+        widget.item,
+        directory,
+      );
+      final controller = VideoPlayerController.file(playback.file);
+      await controller.initialize();
+      await controller.setLooping(true);
+      controller.addListener(_onControllerChanged);
+      if (!mounted) {
+        await controller.dispose();
+        await playback.delete();
+        return;
+      }
+      setState(() {
+        _controller = controller;
+        _playback = playback;
+        _ready = true;
+      });
+      if (widget.active) await controller.play();
+    } catch (error) {
+      if (mounted) setState(() => _error = '$error');
+    }
+  }
+
+  void _onControllerChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void didUpdateWidget(covariant _VideoPlayerView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final controller = _controller;
+    if (controller == null || widget.active == oldWidget.active) return;
+    if (widget.active) {
+      unawaited(controller.play());
+    } else {
+      unawaited(controller.pause());
+    }
+  }
+
+  @override
+  void dispose() {
+    final controller = _controller;
+    controller?.removeListener(_onControllerChanged);
+    unawaited(controller?.pause());
+    unawaited(controller?.dispose());
+    unawaited(_playback?.delete());
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_error != null) return _PlaybackError(message: _error!);
+    final controller = _controller;
+    if (!_ready || controller == null) {
+      return const CircularProgressIndicator(color: Colors.white70);
+    }
+    final value = controller.value;
+    final aspect = value.aspectRatio.isFinite && value.aspectRatio > 0
+        ? value.aspectRatio.clamp(0.4, 3.0)
+        : 16.0 / 9.0;
+    return SizedBox(
+      width: MediaQuery.sizeOf(context).width,
+      child: AspectRatio(
+        aspectRatio: aspect,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            VideoPlayer(controller),
+            GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: () async {
+                if (value.isPlaying) {
+                  await controller.pause();
+                } else {
+                  await controller.play();
+                }
+              },
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: Insets.md,
+                  vertical: Insets.xs,
+                ),
+                color: Colors.black.withValues(alpha: 0.45),
+                child: Row(
+                  children: [
+                    IconButton(
+                      color: Colors.white,
+                      icon: Icon(
+                        value.isPlaying
+                            ? Icons.pause_rounded
+                            : Icons.play_arrow_rounded,
+                      ),
+                      onPressed: () async {
+                        if (value.isPlaying) {
+                          await controller.pause();
+                        } else {
+                          await controller.play();
+                        }
+                      },
+                    ),
+                    Expanded(
+                      child: Slider(
+                        value: value.duration.inMilliseconds > 0
+                            ? value.position.inMilliseconds
+                                .clamp(0, value.duration.inMilliseconds)
+                                .toDouble()
+                            : 0,
+                        max: value.duration.inMilliseconds > 0
+                            ? value.duration.inMilliseconds.toDouble()
+                            : 1,
+                        onChanged: value.duration.inMilliseconds > 0
+                            ? (ms) => unawaited(
+                                controller.seekTo(
+                                  Duration(milliseconds: ms.round()),
+                                ),
+                              )
+                            : null,
+                      ),
+                    ),
+                    Text(
+                      _formatDuration(value.position),
+                      style: const TextStyle(color: Colors.white70, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PlaybackError extends StatelessWidget {
+  const _PlaybackError({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(Insets.xl),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.error_outline_rounded, color: Colors.white70, size: 40),
+          const SizedBox(height: Insets.sm),
+          Text(
+            'Could not play this file. $message',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white70),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _formatDuration(Duration duration) {
+  final hours = duration.inHours;
+  final minutes = duration.inMinutes.remainder(60);
+  final seconds = duration.inSeconds.remainder(60);
+  if (hours > 0) {
+    return '$hours:${minutes.toString().padLeft(2, '0')}:'
+        '${seconds.toString().padLeft(2, '0')}';
+  }
+  return '${minutes.toString().padLeft(2, '0')}:'
+      '${seconds.toString().padLeft(2, '0')}';
 }
 
 enum MediaDetailsAction { add, skip, skipAll, cancel }

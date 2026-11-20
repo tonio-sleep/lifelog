@@ -8,6 +8,7 @@ import 'package:geolocator/geolocator.dart';
 import '../../app/providers/providers.dart';
 import '../../app/providers/settings_provider.dart';
 import '../../core/util/dates.dart';
+import '../../domain/models/places.dart';
 import 'background_location_channel.dart';
 import 'location_tracking.dart';
 
@@ -62,6 +63,7 @@ class LocationTrackingController with WidgetsBindingObserver {
   bool _backgroundStarted = false;
   DateTime? _lastSampleAt;
   DateTime? _lastStreamSampleAt;
+  LocationSample? _lastAcceptedSample;
 
   BackgroundLocationChannel get _channel =>
       ref.read(backgroundLocationChannelProvider);
@@ -71,6 +73,16 @@ class LocationTrackingController with WidgetsBindingObserver {
     if (_started) return;
     _started = true;
     final settings = ref.read(settingsProvider);
+    _lastAcceptedSample = ref
+        .read(archiveProvider)
+        .locationSamplesOn(DateTime.now())
+        .fold<LocationSample?>(
+          null,
+          (previous, sample) =>
+              previous == null || sample.recordedAt.isAfter(previous.recordedAt)
+                  ? sample
+                  : previous,
+        );
     if (settings.locationTrackingEnabled) {
       await _startOrRefresh(requestPermission: false);
     }
@@ -172,18 +184,18 @@ class LocationTrackingController with WidgetsBindingObserver {
     final LocationSettings settings =
         defaultTargetPlatform == TargetPlatform.iOS
             ? AppleSettings(
-                accuracy: LocationAccuracy.medium,
-                distanceFilter: 50,
-                timeLimit: const Duration(seconds: 20),
-                pauseLocationUpdatesAutomatically: true,
+                accuracy: LocationAccuracy.bestForNavigation,
+                distanceFilter: 10,
+                timeLimit: const Duration(seconds: 15),
+                pauseLocationUpdatesAutomatically: false,
                 // Continuous background GPS needs UIBackgroundModes; visits and
                 // significant-change events are handled by the native manager.
                 allowBackgroundLocationUpdates: false,
               )
             : AndroidSettings(
-                accuracy: LocationAccuracy.medium,
-                distanceFilter: 50,
-                timeLimit: const Duration(seconds: 20),
+                accuracy: LocationAccuracy.bestForNavigation,
+                distanceFilter: 10,
+                timeLimit: const Duration(seconds: 15),
               );
 
     _positionSub = Geolocator.getPositionStream(locationSettings: settings)
@@ -202,16 +214,32 @@ class LocationTrackingController with WidgetsBindingObserver {
 
   Future<void> _storeStreamPosition(Position position) async {
     final now = DateTime.now();
-    final last = _lastStreamSampleAt;
-    if (last != null && now.difference(last) < const Duration(minutes: 2)) {
+    final previous = _lastAcceptedSample;
+    final sample = LocationTracking.sampleFromPosition(position, now: now);
+    if (sample == null) return;
+    if (previous != null &&
+        !LocationTracking.isPlausiblePosition(position, previous, now: now)) {
       return;
     }
-    final sample = LocationTracking.sampleFromPosition(position);
-    if (sample == null) return;
+    final lastStream = _lastStreamSampleAt;
+    final moved = previous == null ||
+        LocationTracking.distanceMeters(
+              previous.latitude,
+              previous.longitude,
+              sample.latitude,
+              sample.longitude,
+            ) >=
+            15;
+    if (lastStream != null &&
+        now.difference(lastStream) < const Duration(seconds: 30) &&
+        !moved) {
+      return;
+    }
     _lastStreamSampleAt = now;
     _lastSampleAt = now;
+    _lastAcceptedSample = sample;
     await ref.read(archiveProvider.notifier).addLocationSample(sample);
-    await _refreshVisitsForDay(now);
+    await _refreshVisitsForDay(sample.recordedAt);
   }
 
   Future<BackgroundLocationStatus> _startBackground() async {
@@ -309,11 +337,20 @@ class LocationTrackingController with WidgetsBindingObserver {
     try {
       final position = await LocationTracking.getCurrentPosition(
         requestPermission: requestPermission,
+        previous: _lastAcceptedSample,
       );
       if (position == null) return false;
       final sample = LocationTracking.sampleFromPosition(position);
       if (sample == null) return false;
+      if (_lastAcceptedSample != null &&
+          !LocationTracking.isPlausiblePosition(
+            position,
+            _lastAcceptedSample!,
+          )) {
+        return false;
+      }
       _lastSampleAt = sample.recordedAt;
+      _lastAcceptedSample = sample;
       await ref.read(archiveProvider.notifier).addLocationSample(sample);
       await _refreshVisitsForDay(sample.recordedAt);
       return true;

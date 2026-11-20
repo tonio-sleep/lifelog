@@ -479,7 +479,7 @@ class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
   }
 }
 
-enum _MediaPickSource { cameraPhoto, cameraVideo, library, files }
+enum _MediaPickSource { cameraPhoto, cameraVideo, library, audioFiles, files }
 
 /// Picks photos/videos by taking a new capture or choosing existing media/files.
 /// On mobile this offers camera and library options; on desktop it opens the
@@ -522,9 +522,16 @@ Future<List<XFile>> pickMediaFromPhotosOrFiles(BuildContext context) async {
             color: palette.journal,
           ),
         (
+          icon: Icons.audiotrack_outlined,
+          label: 'Choose audio file',
+          hint: 'Import and play back music, voice notes or recordings',
+          value: _MediaPickSource.audioFiles,
+          color: palette.music,
+        ),
+        (
           icon: Icons.folder_open_outlined,
           label: 'Choose files',
-          hint: 'Pick image or video files',
+          hint: 'Pick images, videos, audio or other files',
           value: _MediaPickSource.files,
           color: palette.place,
         ),
@@ -594,13 +601,37 @@ Future<List<XFile>> pickMediaFromPhotosOrFiles(BuildContext context) async {
         return file == null ? const [] : [file];
       case _MediaPickSource.library:
         return await picker.pickMultipleMedia();
+      case _MediaPickSource.audioFiles:
+        return await openFiles(
+          acceptedTypeGroups: const [
+            XTypeGroup(
+              label: 'Audio',
+              extensions: [
+                'mp3',
+                'm4a',
+                'wav',
+                'aac',
+                'ogg',
+                'oga',
+                'opus',
+                'flac',
+                'aiff',
+                'aif',
+              ],
+              mimeTypes: [
+                'audio/*',
+              ],
+            ),
+          ],
+        );
       case _MediaPickSource.files:
         return await openFiles();
     }
   } catch (_) {
     if (choice == _MediaPickSource.library ||
         choice == _MediaPickSource.cameraPhoto ||
-        choice == _MediaPickSource.cameraVideo) {
+        choice == _MediaPickSource.cameraVideo ||
+        choice == _MediaPickSource.audioFiles) {
       return openFiles();
     }
     rethrow;

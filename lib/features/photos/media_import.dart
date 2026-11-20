@@ -308,6 +308,7 @@ Future<MediaImportSummary> importPickedMedia(
           await ref.read(archiveProvider.notifier).importMedia(
                 bytes: bytes,
                 fileName: file.name,
+                mimeType: file.mimeType,
                 caption: (captions[i] ?? '').trim(),
                 tags: tags[i] ?? const [],
                 journalEntryId: journalEntryId,

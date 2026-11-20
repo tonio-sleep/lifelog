@@ -14,6 +14,8 @@ import '../../domain/models/places.dart';
 import '../../integrations/location/background_location_channel.dart';
 import '../../integrations/location/location_tracking.dart';
 import '../../integrations/location/location_tracking_controller.dart';
+import '../../integrations/maps/map_models.dart';
+import '../../integrations/maps/map_platform.dart';
 import 'place_dialogs.dart';
 import 'place_map.dart';
 
@@ -28,6 +30,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   late DateTime _day;
   bool _privateMode = false;
   BackgroundLocationStatus? _backgroundStatus;
+  Timer? _liveTimer;
+  MapPoint? _livePoint;
+  DateTime? _liveCheckedAt;
+  bool _refreshingLive = false;
 
   @override
   void initState() {
@@ -36,7 +42,44 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_refreshBackgroundStatus());
+      unawaited(_refreshLiveLocation());
     });
+    _liveTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+      if (mounted) unawaited(_refreshLiveLocation());
+    });
+  }
+
+  @override
+  void dispose() {
+    _liveTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refreshLiveLocation() async {
+    if (_refreshingLive) return;
+    _refreshingLive = true;
+    final settings = ref.read(settingsProvider);
+    if (settings.locationTrackingEnabled || settings.backgroundLocationEnabled) {
+      final position = await LocationTracking.getCurrentPosition(
+        requestPermission: false,
+        attempts: 1,
+      );
+      final sample = position == null
+          ? null
+          : LocationTracking.sampleFromPosition(position);
+      if (sample != null && mounted) {
+        setState(() {
+          _livePoint = MapPoint(
+            latitude: sample.latitude,
+            longitude: sample.longitude,
+            kind: 'current',
+            name: 'Current location',
+          );
+          _liveCheckedAt = DateTime.now();
+        });
+      }
+    }
+    _refreshingLive = false;
   }
 
   bool get _isIOS => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
@@ -72,11 +115,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           ),
           SizedBox(height: Insets.lg),
           _PrivacyPoint(
-            icon: Icons.cloud_off_outlined,
-            title: 'No map tiles',
+            icon: Icons.map_outlined,
+            title: 'Detailed Apple map',
             body:
-                'The map is drawn on this device from your saved places. '
-                'Your coordinates are not sent to a mapping provider.',
+                'The interactive map uses Apple MapKit, so map tiles and '
+                'address searches are handled by Apple. Searching an address '
+                'sends that query to Apple. Your saved coordinates, route '
+                'history and visits are not uploaded by Lifelog and stay in '
+                'the encrypted archive.',
           ),
         ],
       ),
@@ -165,6 +211,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       return;
     }
     final ok = await controller.recordNow(requestPermission: true);
+    await _refreshLiveLocation();
     if (!mounted) return;
     showSnack(
       context,
@@ -283,6 +330,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           builder: (context, day) {
             final visits = archive.visitsOn(day);
             final summary = LocationTracking.summarizeDay(archive, day);
+            final stops = LocationTracking.inferStops(archive, day);
             final isToday = sameDay(day, DateTime.now());
             final lastStayBeforeTravel = _lastStayBeforeCurrentTravel(summary);
             return Column(
@@ -303,12 +351,59 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     padding: const EdgeInsets.only(bottom: Insets.md),
                     child: _DaySummaryCard(summary: summary, isToday: isToday),
                   ),
-                SchematicMap(
+                _buildMap(
                   places: places,
-                  visits: visits,
-                  samples: archive.locationSamplesOn(day),
-                  privateMode: _privateMode,
+                  day: day,
+                  summary: summary,
                 ),
+                if (_livePoint != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: Insets.sm),
+                    child: _LiveLocationLine(
+                      point: _livePoint!,
+                      checkedAt: _liveCheckedAt,
+                    ),
+                  ),
+                const SizedBox(height: Insets.sm),
+                _MapActions(
+                  onDropPin: (point) => showPlaceEditor(
+                    context,
+                    ref,
+                    initialLatitude: point.latitude,
+                    initialLongitude: point.longitude,
+                  ),
+                  onPinHere: () async {
+                    final point = _livePoint;
+                    if (point == null) {
+                      showSnack(
+                        context,
+                        'No precise current fix yet. Tap the pin button on the map instead.',
+                      );
+                      return;
+                    }
+                    await showPlaceEditor(
+                      context,
+                      ref,
+                      initialLatitude: point.latitude,
+                      initialLongitude: point.longitude,
+                    );
+                  },
+                ),
+                if (stops.isNotEmpty) ...[
+                  const SectionHeader(title: 'Travel stops & possible destinations'),
+                  for (final stop in stops)
+                    _StopCard(
+                      stop: stop,
+                      privateMode: _privateMode,
+                      onSave: () => showPlaceEditor(
+                        context,
+                        ref,
+                        initialLatitude: stop.latitude,
+                        initialLongitude: stop.longitude,
+                        initialName: stop.placeId == null ? stop.label : null,
+                      ),
+                    ),
+                ],
                 const SectionHeader(title: 'Today\'s journey'),
                 if (summary.segments.isEmpty)
                   EmptyState(
@@ -387,6 +482,87 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             ],
           ),
       ],
+    );
+  }
+
+  Widget _buildMap({
+    required List<Place> places,
+    required DateTime day,
+    required DayLocationSummary summary,
+  }) {
+    final rawSamples = ref.read(archiveProvider).locationSamplesOn(day);
+    final samples = rawSamples
+        .where(
+          (sample) =>
+              sample.accuracyMeters == null ||
+              sample.accuracyMeters! <=
+                  LocationTracking.maxAcceptedAccuracyMeters,
+        )
+        .toList();
+    final step = samples.isEmpty
+        ? 1
+        : (samples.length / 700).ceil().clamp(1, samples.length);
+    final route = <MapPoint>[
+      for (var i = 0; i < samples.length; i += step)
+        MapPoint(
+          id: samples[i].id,
+          latitude: samples[i].latitude,
+          longitude: samples[i].longitude,
+          kind: 'route',
+        ),
+    ];
+    if (samples.isNotEmpty && route.last.id != samples.last.id) {
+      route.add(
+        MapPoint(
+          id: samples.last.id,
+          latitude: samples.last.latitude,
+          longitude: samples.last.longitude,
+          kind: 'route',
+        ),
+      );
+    }
+    final stopPoints = LocationTracking.inferStops(ref.read(archiveProvider), day)
+        .map(
+          (stop) => MapPoint(
+            latitude: stop.latitude,
+            longitude: stop.longitude,
+            name: _privateMode ? 'Hidden stop' : stop.label,
+            radiusMeters: 120,
+            kind: 'stop',
+            notes: formatTimeRange(stop.startAt, stop.endAt),
+          ),
+        )
+        .toList();
+    final placePoints = places
+        .where((place) => place.hasCoordinates)
+        .map(
+          (place) => MapPoint(
+            id: place.id,
+            latitude: place.latitude!,
+            longitude: place.longitude!,
+            name: _privateMode ? '' : place.name,
+            color: place.colorValue,
+            radiusMeters: place.radiusMeters,
+            kind: 'place',
+            notes: place.notes,
+          ),
+        )
+        .toList();
+    return DetailedMap(
+      data: LifelogMapData(
+        places: placePoints,
+        stops: stopPoints,
+        route: route,
+        current: _livePoint,
+        privateMode: _privateMode,
+        followUser: summary.status?.isCurrent ?? true,
+      ),
+      onPinDropped: (point) => showPlaceEditor(
+        context,
+        ref,
+        initialLatitude: point.latitude,
+        initialLongitude: point.longitude,
+      ),
     );
   }
 }
@@ -877,6 +1053,124 @@ class _PlaceRow extends ConsumerWidget {
 }
 
 
+
+class _LiveLocationLine extends StatelessWidget {
+  const _LiveLocationLine({required this.point, required this.checkedAt});
+
+  final MapPoint point;
+  final DateTime? checkedAt;
+
+  @override
+  Widget build(BuildContext context) {
+    final ago = checkedAt == null
+        ? ''
+        : ' · updated ${_agoText(DateTime.now().difference(checkedAt!))}';
+    return Row(
+      children: [
+        Icon(
+          Icons.gps_fixed_rounded,
+          size: 16,
+          color: context.palette.place,
+        ),
+        const SizedBox(width: Insets.xs),
+        Expanded(
+          child: Text(
+            'Live fix ${point.latitude.toStringAsFixed(5)}, '
+            '${point.longitude.toStringAsFixed(5)}$ago',
+            style: context.text.labelSmall?.copyWith(
+              color: context.palette.mutedText,
+              fontFeatures: tabularFigures,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MapActions extends StatelessWidget {
+  const _MapActions({required this.onDropPin, required this.onPinHere});
+
+  final ValueChanged<MapPoint> onDropPin;
+  final VoidCallback onPinHere;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: Insets.sm,
+      children: [
+        OutlinedButton.icon(
+          onPressed: onPinHere,
+          icon: const Icon(Icons.my_location_rounded, size: 16),
+          label: const Text('Pin my current spot'),
+        ),
+        OutlinedButton.icon(
+          onPressed: () => showMapPinPicker(context).then((point) {
+            if (point != null) onDropPin(point);
+          }),
+          icon: const Icon(Icons.add_location_alt_outlined, size: 16),
+          label: const Text('Choose a point on the map'),
+        ),
+      ],
+    );
+  }
+}
+
+class _StopCard extends StatelessWidget {
+  const _StopCard({
+    required this.stop,
+    required this.privateMode,
+    required this.onSave,
+  });
+
+  final TravelStop stop;
+  final bool privateMode;
+  final VoidCallback onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final label = privateMode ? 'Hidden stop' : stop.label;
+    final duration = stop.duration;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: Insets.sm),
+      child: QuietCard(
+        child: Row(
+          children: [
+            IconBadge(
+              icon: Icons.hourglass_top_rounded,
+              color: palette.place,
+              size: 38,
+              iconSize: 19,
+            ),
+            const SizedBox(width: Insets.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: context.text.titleSmall),
+                  Text(
+                    [
+                      formatTimeRange(stop.startAt, stop.endAt),
+                      if (duration.inMinutes > 0)
+                        formatDurationMinutes(duration.inMinutes),
+                      '${stop.sampleCount} GPS checks',
+                    ].join(' · '),
+                    style: context.text.bodySmall?.copyWith(
+                      color: palette.mutedText,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (stop.placeId == null)
+              TextButton(onPressed: onSave, child: const Text('Save')),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _PrivacyPoint extends StatelessWidget {
   const _PrivacyPoint({

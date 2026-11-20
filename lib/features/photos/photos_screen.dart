@@ -11,7 +11,7 @@ import '../../domain/models/media.dart';
 import '../today/quick_add.dart';
 import 'photo_widgets.dart';
 
-enum _MediaFilter { all, photos, videos, favourites }
+enum _MediaFilter { all, photos, videos, audio, favourites }
 
 String _size(int bytes) {
   if (bytes < 1024 * 1024) return '${(bytes / 1024).round()} KB';
@@ -44,6 +44,7 @@ class _PhotosScreenState extends ConsumerState<PhotosScreen> {
         _MediaFilter.all => true,
         _MediaFilter.photos => item.isImage,
         _MediaFilter.videos => item.isVideo,
+        _MediaFilter.audio => item.isAudio,
         _MediaFilter.favourites => item.favorite,
       };
     }).toList();
@@ -66,6 +67,7 @@ class _PhotosScreenState extends ConsumerState<PhotosScreen> {
             _MediaFilter.all => 'All',
             _MediaFilter.photos => 'Photos',
             _MediaFilter.videos => 'Videos',
+            _MediaFilter.audio => 'Audio',
             _MediaFilter.favourites => 'Favourites',
           },
           iconFor: (value) =>

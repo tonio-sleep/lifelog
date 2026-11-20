@@ -17,7 +17,7 @@ enum BackupUploadStage {
   String get label => switch (this) {
         BackupUploadStage.idle => 'Ready',
         BackupUploadStage.preparing => 'Preparing',
-        BackupUploadStage.media => 'Including photos',
+        BackupUploadStage.media => 'Including media',
         BackupUploadStage.packing => 'Organizing records',
         BackupUploadStage.encrypting => 'Encrypting',
         BackupUploadStage.uploading => 'Uploading',

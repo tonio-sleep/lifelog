@@ -143,6 +143,9 @@ struct DayRowView: View {
                     if row.suggested {
                         Text("· Suggested")
                     }
+                    if row.hidden {
+                        Text("· Hidden")
+                    }
                 }
                 .font(Typeface.micro)
                 .foregroundStyle(Palette.inkTertiary)

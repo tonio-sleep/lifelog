@@ -434,7 +434,7 @@ final class AppEnvironment: ObservableObject {
             return "Could not read Health data: \(error.localizedDescription)"
         }
         guard summary.hasData else {
-            return "No steps or sleep found in Health for that day. If you have not allowed access, open Settings › Health › Data Access & Devices › Lifelog."
+            return "No steps or sleep found in Health for that day. If you have not allowed access, open Settings â€º Health â€º Data Access & Devices â€º Lifelog."
         }
         let metricsId = "day-\(Dates.dayKey(day))"
         var entry = archive.entryById(metricsId)
@@ -447,7 +447,7 @@ final class AppEnvironment: ObservableObject {
         var parts: [String] = []
         if let sleep = summary.sleepHours { parts.append("sleep " + Dates.formatCompactNumber(sleep) + " h") }
         if let steps = summary.steps { parts.append("\(steps) steps") }
-        return "Synced " + parts.joined(separator: " · ") + "."
+        return "Synced " + parts.joined(separator: " Â· ") + "."
     }
 
     /// Quietly refreshes today's Health numbers if the person has connected Health.

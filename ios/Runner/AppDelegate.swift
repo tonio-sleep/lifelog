@@ -1,6 +1,10 @@
+import AVFoundation
 import CoreLocation
+import CoreMedia
 import Flutter
+import Foundation
 import MapKit
+import Speech
 import UIKit
 
 // MARK: - Detailed interactive map (Apple MapKit)
@@ -672,8 +676,351 @@ extension LocationVisitManager: FlutterStreamHandler {
   }
 }
 
+/// File-based on-device speech recognition. It runs only on a finished audio
+/// file, after the recorder has been stopped, so long recordings never depend
+/// on a live recognition session staying alive.
+private final class LifelogTranscriptionHandler: NSObject, FlutterStreamHandler {
+  private let methodChannel: FlutterMethodChannel
+  private let eventChannel: FlutterEventChannel
+  private var eventSink: FlutterEventSink?
+  private var lastEvent: [String: Any]?
+
+  private var task: SFSpeechRecognitionTask?
+  private var recognizer: SFSpeechRecognizer?
+  private var activeId: String?
+  private var activeStart: Date?
+  private var activeDuration: Double = 0
+  private var activeTranscript = ""
+  private var activeRecognizedSeconds: Double = 0
+  private var activeHasTimedSegments = false
+  private var generation = 0
+
+  init(messenger: FlutterBinaryMessenger) {
+    methodChannel = FlutterMethodChannel(
+      name: "lifelog/transcription",
+      binaryMessenger: messenger
+    )
+    eventChannel = FlutterEventChannel(
+      name: "lifelog/transcription/events",
+      binaryMessenger: messenger
+    )
+    super.init()
+    methodChannel.setMethodCallHandler { [weak self] call, result in
+      guard let self else {
+        result(nil)
+        return
+      }
+      switch call.method {
+      case "prepare":
+        let args = call.arguments as? [String: Any]
+        self.prepare(localeId: args?["localeId"] as? String) { result($0) }
+      case "transcribe":
+        self.transcribe(
+          call.arguments,
+          completion: { result($0) },
+          failure: { result($0) }
+        )
+      case "cancel":
+        self.cancelCurrent()
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    eventChannel.setStreamHandler(self)
+  }
+
+  func onListen(
+    withArguments arguments: Any?,
+    eventSink events: @escaping FlutterEventSink
+  ) -> FlutterError? {
+    eventSink = events
+    if let lastEvent = lastEvent {
+      events(lastEvent)
+    }
+    return nil
+  }
+
+  func onCancel(withArguments arguments: Any?) -> FlutterError? {
+    eventSink = nil
+    return nil
+  }
+
+  private func authorizationStatus(_ status: SFSpeechRecognizerAuthorizationStatus) -> String {
+    switch status {
+    case .authorized: return "authorized"
+    case .denied: return "denied"
+    case .restricted: return "restricted"
+    case .notDetermined: return "notDetermined"
+    default: return "unknown"
+    }
+  }
+
+  private func resolvedLocaleId(_ raw: String?) -> String {
+    if let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !raw.isEmpty {
+      return raw.replacingOccurrences(of: "_", with: "-")
+    }
+    return Locale.current.identifier.replacingOccurrences(of: "_", with: "-")
+  }
+
+  private func supportedLanguages() -> [[String: Any]] {
+    let languages: [[String: Any]] = SFSpeechRecognizer.supportedLocales().map { locale in
+      let identifier = locale.identifier.replacingOccurrences(of: "_", with: "-")
+      let name = Locale.current.localizedString(forIdentifier: identifier) ?? identifier
+      return ["id": identifier, "name": name] as [String: Any]
+    }
+    return languages.sorted { left, right in
+      (left["id"] as? String ?? "") < (right["id"] as? String ?? "")
+    }
+  }
+
+  private func prepare(
+    localeId: String?,
+    completion: @escaping ([String: Any]) -> Void
+  ) {
+    let finish: (SFSpeechRecognizerAuthorizationStatus) -> Void = { status in
+      DispatchQueue.main.async {
+        let resolved = self.resolvedLocaleId(localeId)
+        let recognizer = SFSpeechRecognizer(locale: Locale(identifier: resolved))
+        completion([
+          "status": self.authorizationStatus(status),
+          "localeId": resolved,
+          "onDeviceAvailable": recognizer?.supportsOnDeviceRecognition ?? false,
+          "languages": self.supportedLanguages(),
+        ])
+      }
+    }
+
+    let status = SFSpeechRecognizer.authorizationStatus()
+    if status == .notDetermined {
+      SFSpeechRecognizer.requestAuthorization { finish($0) }
+    } else {
+      finish(status)
+    }
+  }
+
+  private func audioDuration(
+    _ url: URL,
+    completion: @escaping (Double?) -> Void
+  ) {
+    let asset = AVURLAsset(url: url)
+    asset.loadValuesAsynchronously(forKeys: ["duration"]) { [asset] in
+      var error: NSError?
+      let status = asset.statusOfValue(forKey: "duration", error: &error)
+      var seconds: Double?
+      if status == .loaded {
+        let value = CMTimeGetSeconds(asset.duration)
+        if value.isFinite && value > 0 {
+          seconds = value
+        }
+      }
+      DispatchQueue.main.async { completion(seconds) }
+    }
+  }
+
+  private func errorDetails(message: String) -> [String: Any] {
+    return [
+      "transcript": activeTranscript,
+      "recognizedSeconds": activeRecognizedSeconds,
+      "durationSeconds": activeDuration,
+      "elapsedSeconds": activeStart.map { Date().timeIntervalSince($0) } ?? 0,
+      "hasTimedSegments": activeHasTimedSegments,
+      "message": message,
+    ]
+  }
+
+  private func flutterError(_ code: String, _ message: String) -> FlutterError {
+    FlutterError(
+      code: code,
+      message: message,
+      details: errorDetails(message: message)
+    )
+  }
+
+  private func progressEvent(final: Bool) -> [String: Any] {
+    return [
+      "transcriptionId": activeId ?? "",
+      "transcript": activeTranscript,
+      "recognizedSeconds": activeRecognizedSeconds,
+      "durationSeconds": activeDuration,
+      "elapsedSeconds": activeStart.map { Date().timeIntervalSince($0) } ?? 0,
+      "hasTimedSegments": activeHasTimedSegments,
+      "isFinal": final,
+    ]
+  }
+
+  private func emitProgress(final: Bool) {
+    guard activeId != nil else { return }
+    let event = progressEvent(final: final)
+    lastEvent = event
+    eventSink?(event)
+  }
+
+  private func resultPayload(onDevice: Bool) -> [String: Any] {
+    var payload = progressEvent(final: true)
+    payload["transcript"] = activeTranscript
+    payload["onDevice"] = onDevice
+    return payload
+  }
+
+  private func invalidateActive(cancelTask: Bool) {
+    if cancelTask {
+      task?.cancel()
+    }
+    task = nil
+    recognizer = nil
+    activeId = nil
+    activeStart = nil
+    activeDuration = 0
+    activeTranscript = ""
+    activeRecognizedSeconds = 0
+    activeHasTimedSegments = false
+    lastEvent = nil
+  }
+
+  /// Always advances the generation so a cancel that arrives while the audio
+  /// duration is still loading also stops that recognition from starting.
+  private func cancelCurrent() {
+    generation += 1
+    guard activeId != nil || task != nil || recognizer != nil else { return }
+    invalidateActive(cancelTask: true)
+  }
+
+  private func transcribe(
+    _ arguments: Any?,
+    completion: @escaping ([String: Any]) -> Void,
+    failure: @escaping (FlutterError) -> Void
+  ) {
+    guard let args = arguments as? [String: Any],
+          let path = args["path"] as? String,
+          !path.isEmpty else {
+      failure(flutterError("INVALID_ARGUMENTS", "No audio file was supplied."))
+      return
+    }
+    let id = args["transcriptionId"] as? String ?? UUID().uuidString
+    let localeId = resolvedLocaleId(args["localeId"] as? String)
+    guard FileManager.default.fileExists(atPath: path) else {
+      failure(flutterError("FILE_NOT_FOUND", "The recorded audio file was not found."))
+      return
+    }
+
+    var completed = false
+    let finishSuccess: ([String: Any]) -> Void = { payload in
+      guard !completed else { return }
+      completed = true
+      completion(payload)
+    }
+    let finishError: (FlutterError) -> Void = { error in
+      guard !completed else { return }
+      completed = true
+      failure(error)
+    }
+
+    cancelCurrent()
+    let requestGeneration = generation
+    let url = URL(fileURLWithPath: path)
+    audioDuration(url) { [weak self] duration in
+      guard let self else { return }
+      guard requestGeneration == self.generation else { return }
+      guard let duration = duration else {
+        finishError(self.flutterError("INVALID_AUDIO", "The audio file has no readable duration."))
+        return
+      }
+      guard SFSpeechRecognizer.authorizationStatus() == .authorized else {
+        finishError(self.flutterError("NOT_AUTHORIZED", "Speech recognition is not authorized."))
+        return
+      }
+      guard let recognizer = SFSpeechRecognizer(
+        locale: Locale(identifier: localeId)
+      ) else {
+        finishError(self.flutterError("UNSUPPORTED_LOCALE", "This language is not supported by speech recognition."))
+        return
+      }
+      // On-device only: Lifelog never uploads the recording to a speech server.
+      guard recognizer.supportsOnDeviceRecognition else {
+        finishError(self.flutterError(
+          "ON_DEVICE_UNAVAILABLE",
+          "On-device transcription is not available for this language."
+        ))
+        return
+      }
+      guard recognizer.isAvailable else {
+        finishError(self.flutterError(
+          "RECOGNIZER_UNAVAILABLE",
+          "Speech recognition is temporarily unavailable."
+        ))
+        return
+      }
+
+      let request = SFSpeechURLRecognitionRequest(url: url)
+      request.requiresOnDeviceRecognition = true
+      request.shouldReportPartialResults = true
+      if #available(iOS 16.0, *) {
+        request.addsPunctuation = true
+      }
+      request.taskHint = .dictation
+
+      let generation = requestGeneration
+      self.recognizer = recognizer
+      self.activeId = id
+      self.activeStart = Date()
+      self.activeDuration = duration
+      self.activeTranscript = ""
+      self.activeRecognizedSeconds = 0
+      self.activeHasTimedSegments = false
+      self.emitProgress(final: false)
+
+      self.task = recognizer.recognitionTask(with: request) { [weak self] result, error in
+        guard let self else { return }
+        DispatchQueue.main.async {
+          guard generation == self.generation,
+                self.activeId == id,
+                !completed else { return }
+          if let result = result {
+            let transcription = result.bestTranscription
+            self.activeTranscript = transcription.formattedString
+            var furthest = 0.0
+            var hasTimedSegments = false
+            for segment in transcription.segments {
+              let end = segment.timestamp + segment.duration
+              hasTimedSegments = true
+              if end.isFinite && end > furthest {
+                furthest = end
+              }
+            }
+            if hasTimedSegments {
+              self.activeRecognizedSeconds = furthest
+              self.activeHasTimedSegments = true
+            }
+            self.emitProgress(final: result.isFinal)
+            if result.isFinal {
+              finishSuccess(self.resultPayload(onDevice: true))
+              self.generation += 1
+              self.invalidateActive(cancelTask: false)
+              return
+            }
+          }
+          if let error = error {
+            let message = error.localizedDescription
+              .trimmingCharacters(in: .whitespacesAndNewlines)
+            finishError(self.flutterError(
+              "RECOGNITION_FAILED",
+              message.isEmpty ? "Speech recognition failed." : message
+            ))
+            self.generation += 1
+            self.invalidateActive(cancelTask: true)
+          }
+        }
+      }
+    }
+  }
+}
+
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+  private var transcriptionHandler: LifelogTranscriptionHandler?
+
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -697,6 +1044,13 @@ extension LocationVisitManager: FlutterStreamHandler {
         withId: "lifelog/map"
       )
       _ = LifelogMapSearchHandler(messenger: mapRegistrar.messenger())
+    }
+    if let transcriptionRegistrar = engineBridge.pluginRegistry.registrar(
+      forPlugin: "LifelogTranscription"
+    ) {
+      transcriptionHandler = LifelogTranscriptionHandler(
+        messenger: transcriptionRegistrar.messenger()
+      )
     }
   }
 }

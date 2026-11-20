@@ -39,7 +39,7 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Lifelog uses the microphone when you choose to record audio or video for your journal and daily records.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Lifelog can transcribe your voice to text when you choose voice journaling. Transcription is processed by your device speech services when available.</string>
+	<string>Lifelog transcribes your finished voice recording after you stop recording. Recognition runs on this device when the language supports on-device transcription; Lifelog does not upload the audio to a speech service.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Lifelog uses your location, when you allow it, to record where you spend time, show your live position on the map, and save precise places or pins. Location history stays on this device in your encrypted archive.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

@@ -34,24 +34,15 @@ class EncryptedImage extends ConsumerStatefulWidget {
 }
 
 class _EncryptedImageState extends ConsumerState<EncryptedImage> {
-  late Future<Uint8List> _future;
+  Future<Uint8List>? _future;
+  String? _loadKey;
 
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  @override
-  void didUpdateWidget(covariant EncryptedImage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.item.id != widget.item.id ||
-        oldWidget.thumbnail != widget.thumbnail) {
-      _load();
-    }
-  }
-
-  void _load() {
+  /// Rebuilds the future whenever the item or the bytes on disk may have
+  /// changed. A restore can replace the ciphertext behind an unchanged id, so
+  /// watching the media revision is required for a truthful preview.
+  void _ensureLoaded(String key) {
+    if (_future != null && _loadKey == key) return;
+    _loadKey = key;
     final store = ref.read(appServicesProvider).mediaStore;
     _future = widget.thumbnail
         ? store.readThumbnail(widget.item)
@@ -61,6 +52,10 @@ class _EncryptedImageState extends ConsumerState<EncryptedImage> {
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
+    final revision = ref.watch(mediaRevisionProvider);
+    _ensureLoaded(
+      '${widget.item.id}|${widget.thumbnail}|${widget.item.hasThumbnail}|$revision',
+    );
     final image = FutureBuilder<Uint8List>(
       future: _future,
       builder: (context, snapshot) {
@@ -841,21 +836,56 @@ Future<MediaDetailsResult?> askMediaDetails(
   required String fileName,
   int? index,
   int? total,
-}) async {
-  final captionController = TextEditingController();
-  final tagsController = TextEditingController();
-  final subtitle = index != null && total != null
-      ? '$fileName  •  $index of $total'
-      : fileName;
+}) {
   // Media import uses the root navigator for both its progress dialog and its
   // details sheet. Keeping them on the same navigator guarantees the sheet is
   // visible and its Add/Skip result is delivered.
-  final result = await showLifelogSheet<MediaDetailsResult>(
+  return showLifelogSheet<MediaDetailsResult>(
     context,
     isDismissible: false,
     enableDrag: false,
     useRootNavigator: true,
-    builder: (sheetContext) => Column(
+    builder: (_) => _MediaDetailsSheet(
+      fileName: fileName,
+      index: index,
+      total: total,
+    ),
+  );
+}
+
+class _MediaDetailsSheet extends StatefulWidget {
+  const _MediaDetailsSheet({
+    required this.fileName,
+    this.index,
+    this.total,
+  });
+
+  final String fileName;
+  final int? index;
+  final int? total;
+
+  @override
+  State<_MediaDetailsSheet> createState() => _MediaDetailsSheetState();
+}
+
+class _MediaDetailsSheetState extends State<_MediaDetailsSheet> {
+  final _caption = TextEditingController();
+  final _tags = TextEditingController();
+
+  @override
+  void dispose() {
+    _caption.dispose();
+    _tags.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final subtitle = widget.index != null && widget.total != null
+        ? '${widget.fileName}  •  ${widget.index} of ${widget.total}'
+        : widget.fileName;
+
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -864,7 +894,7 @@ Future<MediaDetailsResult?> askMediaDetails(
           subtitle: subtitle,
         ),
         TextField(
-          controller: captionController,
+          controller: _caption,
           autofocus: true,
           textCapitalization: TextCapitalization.sentences,
           decoration: const InputDecoration(
@@ -874,7 +904,7 @@ Future<MediaDetailsResult?> askMediaDetails(
         ),
         const SizedBox(height: Insets.md),
         TextField(
-          controller: tagsController,
+          controller: _tags,
           decoration: const InputDecoration(
             labelText: 'Tags',
             hintText: 'family, garden',
@@ -883,13 +913,17 @@ Future<MediaDetailsResult?> askMediaDetails(
         const SizedBox(height: Insets.md),
         Row(
           children: [
-            Icon(Icons.lock_outline_rounded, size: 14, color: sheetContext.palette.dimText),
+            Icon(
+              Icons.lock_outline_rounded,
+              size: 14,
+              color: context.palette.dimText,
+            ),
             const SizedBox(width: Insets.sm),
             Expanded(
               child: Text(
                 'Encrypted on this device before it is stored.',
-                style: sheetContext.text.bodySmall?.copyWith(
-                  color: sheetContext.palette.mutedText,
+                style: context.text.bodySmall?.copyWith(
+                  color: context.palette.mutedText,
                 ),
               ),
             ),
@@ -900,15 +934,16 @@ Future<MediaDetailsResult?> askMediaDetails(
           children: [
             Expanded(
               child: OutlinedButton(
-                onPressed: () =>
-                    Navigator.of(sheetContext).pop(const MediaDetailsResult(action: MediaDetailsAction.skip)),
+                onPressed: () => Navigator.of(context).pop(
+                  const MediaDetailsResult(action: MediaDetailsAction.skip),
+                ),
                 child: const Text('Skip'),
               ),
             ),
             const SizedBox(width: Insets.sm),
             Expanded(
               child: OutlinedButton(
-                onPressed: () => Navigator.of(sheetContext).pop(
+                onPressed: () => Navigator.of(context).pop(
                   const MediaDetailsResult(action: MediaDetailsAction.skipAll),
                 ),
                 child: const Text('Skip all'),
@@ -917,11 +952,11 @@ Future<MediaDetailsResult?> askMediaDetails(
             const SizedBox(width: Insets.sm),
             Expanded(
               child: FilledButton(
-                onPressed: () => Navigator.of(sheetContext).pop(
+                onPressed: () => Navigator.of(context).pop(
                   MediaDetailsResult(
                     action: MediaDetailsAction.add,
-                    caption: captionController.text.trim(),
-                    tags: normaliseTags(tagsController.text.split(',')),
+                    caption: _caption.text.trim(),
+                    tags: normaliseTags(_tags.text.split(',')),
                   ),
                 ),
                 child: const Text('Add'),
@@ -932,18 +967,13 @@ Future<MediaDetailsResult?> askMediaDetails(
         Align(
           alignment: Alignment.centerLeft,
           child: TextButton(
-            onPressed: () => Navigator.of(sheetContext).pop(
+            onPressed: () => Navigator.of(context).pop(
               const MediaDetailsResult(action: MediaDetailsAction.cancel),
             ),
             child: const Text('Cancel import'),
           ),
         ),
       ],
-    ),
-  );
-  Future<void>.delayed(const Duration(milliseconds: 500), () {
-    captionController.dispose();
-    tagsController.dispose();
-  });
-  return result;
+    );
+  }
 }

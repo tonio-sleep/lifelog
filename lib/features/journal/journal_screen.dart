@@ -168,6 +168,76 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
     final entryCount = view.entryCount;
     final wordCount = view.wordCount;
 
+    final frameChildren = <Widget>[
+      const DraftRecoveryBanner(),
+      AnimatedSize(
+        duration: Motion.base,
+        curve: Motion.out,
+        alignment: Alignment.topCenter,
+        child: !_searching
+            ? const SizedBox(width: double.infinity)
+            : Padding(
+                padding: const EdgeInsets.only(bottom: Insets.md),
+                child: TextField(
+                  controller: _search,
+                  autofocus: true,
+                  onChanged: (value) =>
+                      setState(() => _query = value.trim().toLowerCase()),
+                  decoration: InputDecoration(
+                    hintText: 'Search writing, vocab, tags and places',
+                    prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                    suffixIcon: _query.isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: 'Clear',
+                            onPressed: () {
+                              _search.clear();
+                              setState(() => _query = '');
+                            },
+                            icon: const Icon(Icons.close_rounded, size: 18),
+                          ),
+                  ),
+                ),
+              ),
+      ),
+      FilterRow<_JournalFilter>(
+        values: _JournalFilter.values,
+        selected: _filter,
+        labelFor: (value) => switch (value) {
+          _JournalFilter.active => 'Entries',
+          _JournalFilter.drafts => 'Drafts',
+          _JournalFilter.archived => 'Archive',
+        },
+        onChanged: (value) => setState(() => _filter = value),
+      ),
+      if (filtered.isEmpty)
+        EmptyState(
+          icon: _query.isEmpty
+              ? Icons.menu_book_outlined
+              : Icons.search_off_rounded,
+          title: _query.isEmpty
+              ? switch (_filter) {
+                  _JournalFilter.active => 'No entries yet',
+                  _JournalFilter.drafts => 'No drafts waiting',
+                  _JournalFilter.archived => 'Nothing archived',
+                }
+              : 'No matches',
+          message: _query.isEmpty
+              ? 'Add journal notes, quick entries, or a vocab list for any day. Entries stay grouped together by day.'
+              : 'Nothing in the $_filterLabel matches "$_query".',
+          actionLabel: _query.isEmpty && _filter == _JournalFilter.active
+              ? 'New entry'
+              : null,
+          onAction: _query.isEmpty && _filter == _JournalFilter.active
+              ? () => createJournalEntry(
+                    context,
+                    focusBody: true,
+                    createNew: true,
+                  )
+              : null,
+        ),
+    ];
+
     return ScreenFrame(
       title: 'Journal',
       subtitle: dayCount == 0
@@ -192,75 +262,6 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
           onPressed: () =>
               createJournalEntry(context, focusBody: true, createNew: true),
         ),
-      ],
-      children: [
-        const DraftRecoveryBanner(),
-        AnimatedSize(
-          duration: Motion.base,
-          curve: Motion.out,
-          alignment: Alignment.topCenter,
-          child: !_searching
-              ? const SizedBox(width: double.infinity)
-              : Padding(
-                  padding: const EdgeInsets.only(bottom: Insets.md),
-                  child: TextField(
-                    controller: _search,
-                    autofocus: true,
-                    onChanged: (value) =>
-                        setState(() => _query = value.trim().toLowerCase()),
-                    decoration: InputDecoration(
-                      hintText: 'Search writing, vocab, tags and places',
-                      prefixIcon: const Icon(Icons.search_rounded, size: 20),
-                      suffixIcon: _query.isEmpty
-                          ? null
-                          : IconButton(
-                              tooltip: 'Clear',
-                              onPressed: () {
-                                _search.clear();
-                                setState(() => _query = '');
-                              },
-                              icon: const Icon(Icons.close_rounded, size: 18),
-                            ),
-                    ),
-                  ),
-                ),
-        ),
-        FilterRow<_JournalFilter>(
-          values: _JournalFilter.values,
-          selected: _filter,
-          labelFor: (value) => switch (value) {
-            _JournalFilter.active => 'Entries',
-            _JournalFilter.drafts => 'Drafts',
-            _JournalFilter.archived => 'Archive',
-          },
-          onChanged: (value) => setState(() => _filter = value),
-        ),
-        if (filtered.isEmpty)
-          EmptyState(
-            icon: _query.isEmpty
-                ? Icons.menu_book_outlined
-                : Icons.search_off_rounded,
-            title: _query.isEmpty
-                ? switch (_filter) {
-                    _JournalFilter.active => 'No entries yet',
-                    _JournalFilter.drafts => 'No drafts waiting',
-                    _JournalFilter.archived => 'Nothing archived',
-                  }
-                : 'No matches',
-            message: _query.isEmpty
-                ? 'Add journal notes, quick entries, or a vocab list for any day. Entries stay grouped together by day.'
-                : 'Nothing in the $_filterLabel matches "$_query".',
-            actionLabel: _query.isEmpty && _filter == _JournalFilter.active
-                ? 'New entry'
-                : null,
-            onAction: _query.isEmpty && _filter == _JournalFilter.active
-                ? () => createJournalEntry(
-                      context,
-                      focusBody: true,
-                      createNew: true,
-                    )
-                : null,
-          ),
       ],
       slivers: [
         SliverList.builder(
@@ -295,6 +296,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
           },
         ),
       ],
+      children: frameChildren,
     );
   }
 }

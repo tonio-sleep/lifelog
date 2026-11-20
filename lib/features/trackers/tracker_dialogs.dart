@@ -1198,17 +1198,21 @@ class _TrackerEditorSheetState extends ConsumerState<_TrackerEditorSheet> {
           runSpacing: Insets.sm,
           children: [
             for (final type in TrackerType.values)
-              ChoiceChip(
-                avatar: Icon(
-                  trackerTypeIcon(type),
-                  size: 16,
-                  color: _type == type ? accent : palette.mutedText,
+              ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 44),
+                child: ChoiceChip(
+                  avatar: Icon(
+                    trackerTypeIcon(type),
+                    size: 16,
+                    color: _type == type ? accent : palette.mutedText,
+                  ),
+                  label: Text(type.label),
+                  selected: _type == type,
+                  showCheckmark: false,
+                  selectedColor: accent.withValues(alpha: 0.16),
+                  materialTapTargetSize: MaterialTapTargetSize.padded,
+                  onSelected: (_) => setState(() => _type = type),
                 ),
-                label: Text(type.label),
-                selected: _type == type,
-                showCheckmark: false,
-                selectedColor: accent.withValues(alpha: 0.16),
-                onSelected: (_) => setState(() => _type = type),
               ),
           ],
         ),
@@ -1267,30 +1271,43 @@ class _TrackerEditorSheetState extends ConsumerState<_TrackerEditorSheet> {
                       runSpacing: Insets.sm,
                       children: [
                         for (final icon in trackerIconChoices)
-                          Pressable(
-                            borderRadius: BorderRadius.circular(Radii.sm),
-                            onTap: () => setState(() => _icon = icon),
-                            child: AnimatedContainer(
-                              duration: Motion.fast,
-                              width: 40,
-                              height: 40,
-                              decoration: BoxDecoration(
-                                color: _icon == icon
-                                    ? accent.withValues(alpha: 0.16)
-                                    : palette.subtle,
-                                borderRadius: BorderRadius.circular(Radii.sm),
-                                border: Border.all(
-                                  color: _icon == icon
-                                      ? accent
-                                      : Colors.transparent,
+                          Semantics(
+                            button: true,
+                            selected: _icon == icon,
+                            label: '$icon icon',
+                            child: Pressable(
+                              borderRadius: BorderRadius.circular(Radii.sm),
+                              onTap: () => setState(() => _icon = icon),
+                              child: ConstrainedBox(
+                                constraints: const BoxConstraints(
+                                  minWidth: 44,
+                                  minHeight: 44,
                                 ),
-                              ),
-                              child: Icon(
-                                trackerIcon(icon),
-                                size: 19,
-                                color: _icon == icon
-                                    ? accent
-                                    : palette.mutedText,
+                                child: Center(
+                                  child: AnimatedContainer(
+                                    duration: Motion.fast,
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: _icon == icon
+                                          ? accent.withValues(alpha: 0.16)
+                                          : palette.subtle,
+                                      borderRadius: BorderRadius.circular(Radii.sm),
+                                      border: Border.all(
+                                        color: _icon == icon
+                                            ? accent
+                                            : Colors.transparent,
+                                      ),
+                                    ),
+                                    child: Icon(
+                                      trackerIcon(icon),
+                                      size: 19,
+                                      color: _icon == icon
+                                          ? accent
+                                          : palette.mutedText,
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
                           ),
@@ -1302,22 +1319,35 @@ class _TrackerEditorSheetState extends ConsumerState<_TrackerEditorSheet> {
                       runSpacing: Insets.sm,
                       children: [
                         for (final color in trackerColorChoices)
-                          Pressable(
-                            borderRadius: BorderRadius.circular(Radii.pill),
-                            scale: 0.9,
-                            onTap: () => setState(() => _color = color),
-                            child: AnimatedContainer(
-                              duration: Motion.fast,
-                              width: 30,
-                              height: 30,
-                              decoration: BoxDecoration(
-                                color: trackerColor(color),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: _color == color
-                                      ? context.scheme.onSurface
-                                      : Colors.transparent,
-                                  width: 2.5,
+                          Semantics(
+                            button: true,
+                            selected: _color == color,
+                            label: 'Colour option $color',
+                            child: Pressable(
+                              borderRadius: BorderRadius.circular(Radii.pill),
+                              scale: 0.9,
+                              onTap: () => setState(() => _color = color),
+                              child: ConstrainedBox(
+                                constraints: const BoxConstraints(
+                                  minWidth: 44,
+                                  minHeight: 44,
+                                ),
+                                child: Center(
+                                  child: AnimatedContainer(
+                                    duration: Motion.fast,
+                                    width: 30,
+                                    height: 30,
+                                    decoration: BoxDecoration(
+                                      color: trackerColor(color),
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: _color == color
+                                            ? context.scheme.onSurface
+                                            : Colors.transparent,
+                                        width: 2.5,
+                                      ),
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),

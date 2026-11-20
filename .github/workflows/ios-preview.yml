@@ -3,6 +3,10 @@ name: iOS UI preview
 on:
   workflow_dispatch:
 
+concurrency:
+  group: ios-preview-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   screenshots:
     runs-on: macos-15
@@ -10,42 +14,53 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      # Keep the preview workflow on the same toolchain as the IPA build.
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest-stable
+          xcode-version: "26.1.1"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.4"
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
 
       - name: Build debug simulator app
         run: |
           set -o pipefail
-          xcodebuild \
-            -project native/Lifelog.xcodeproj \
-            -scheme Lifelog \
-            -configuration Debug \
-            -sdk iphonesimulator \
-            -destination 'platform=iOS Simulator,name=iPhone 16' \
-            -derivedDataPath DerivedData-preview \
-            CODE_SIGNING_ALLOWED=NO \
-            build 2>&1 | tee xcodebuild-preview.log
+          flutter build ios --simulator --debug --no-codesign -v 2>&1 | tee ios-preview-build.log
 
       - name: Boot simulator and capture Today
         run: |
           set -euo pipefail
-          DEVICE="iPhone 16"
-          APP="DerivedData-preview/Build/Products/Debug-iphonesimulator/Lifelog.app"
+          APP="build/ios/iphonesimulator/Runner.app"
+          BUNDLE="app.lifelog.lifelog"
           test -d "$APP"
-          xcrun simctl boot "$DEVICE" || true
-          xcrun simctl bootstatus "$DEVICE" -b
-          xcrun simctl ui "$DEVICE" appearance light
-          xcrun simctl install "$DEVICE" "$APP"
-          SIMCTL_CHILD_LIFELOG_PREVIEW=1 xcrun simctl launch "$DEVICE" com.logginglife.lifelog
+
+          # Pick an available iPhone instead of assuming a specific simulator
+          # model exists on the runner image.
+          DEVICE_ID="$(xcrun simctl list devices available -j \
+            | jq -r '[.devices[] | .[] | select(.name | startswith("iPhone")) | select(.isAvailable == true) | .udid][0]')"
+          test -n "$DEVICE_ID"
+          echo "Using simulator $DEVICE_ID"
+
+          xcrun simctl boot "$DEVICE_ID" || true
+          xcrun simctl bootstatus "$DEVICE_ID" -b
+          xcrun simctl ui "$DEVICE_ID" appearance light
+          xcrun simctl install "$DEVICE_ID" "$APP"
+          xcrun simctl launch "$DEVICE_ID" "$BUNDLE"
           sleep 6
-          xcrun simctl io "$DEVICE" screenshot preview-light.png
-          xcrun simctl terminate "$DEVICE" com.logginglife.lifelog || true
-          xcrun simctl ui "$DEVICE" appearance dark
-          SIMCTL_CHILD_LIFELOG_PREVIEW=1 xcrun simctl launch "$DEVICE" com.logginglife.lifelog
+          xcrun simctl io "$DEVICE_ID" screenshot preview-light.png
+          xcrun simctl terminate "$DEVICE_ID" "$BUNDLE" || true
+
+          xcrun simctl ui "$DEVICE_ID" appearance dark
+          xcrun simctl launch "$DEVICE_ID" "$BUNDLE"
           sleep 6
-          xcrun simctl io "$DEVICE" screenshot preview-dark.png
+          xcrun simctl io "$DEVICE_ID" screenshot preview-dark.png
           ls -lh preview-light.png preview-dark.png
 
       - name: Upload screenshots
@@ -57,9 +72,10 @@ jobs:
             preview-dark.png
           if-no-files-found: error
 
-      - name: Upload build log on failure
-        if: failure()
+      - name: Upload preview build log
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: xcodebuild-preview-log
-          path: xcodebuild-preview.log
+          name: ios-preview-build-log
+          path: ios-preview-build.log
+          if-no-files-found: ignore

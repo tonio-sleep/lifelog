@@ -33,12 +33,12 @@ Future<Place?> showPlaceEditor(
   );
   if (saved == null) return null;
   if (!context.mounted) return saved;
-  await guard(
+  final savedOk = await guard<int>(
     context,
-    ref.read(archiveProvider.notifier).savePlace(saved),
+    ref.read(archiveProvider.notifier).savePlace(saved).then((_) => 1),
     errorPrefix: 'Could not save place',
   );
-  return saved;
+  return savedOk == null ? null : saved;
 }
 
 class _PlaceEditorDialog extends ConsumerStatefulWidget {

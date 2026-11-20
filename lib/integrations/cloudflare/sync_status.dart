@@ -6,6 +6,18 @@ import '../../app/providers/settings_provider.dart';
 import '../../domain/models/settings.dart';
 import 'cloudflare_sync_service.dart';
 
+/// Shared detection for a rejected session, from either a Worker response or
+/// a wrapped error. Keep startup checks and sync actions in agreement.
+bool isCloudflareSessionExpired(Object error) {
+  final message = error is CloudflareSyncException
+      ? error.message
+      : error.toString();
+  final text = message.toLowerCase();
+  return text.contains('session expired') ||
+      text.contains('unauthorized') ||
+      text.contains('sign in again');
+}
+
 /// Where the optional cloud account stands. The UI reads this instead of
 /// inferring state from scattered settings fields, so every screen shows the
 /// same thing.
@@ -74,7 +86,7 @@ class SyncStatus {
     if (expiry == null) return null;
     final left = expiry.difference(DateTime.now());
     if (left <= Duration.zero) return null;
-    return (left.inHours / 24).ceil();
+    return left.inDays;
   }
 
   static String? hostOf(String? url) {
@@ -94,12 +106,18 @@ class SyncStatus {
       username: settings.cloudflareUsername,
       host: hostOf(settings.cloudflareWorkerUrl),
       lastSyncAt: settings.cloudflareLastSyncAt,
-      rejected:
-          rejectedSession != null &&
-          rejectedSession == settings.cloudflareConnectedAt,
+      rejected: rejectedSession != null &&
+          (rejectedSession == settings.cloudflareConnectedAt ||
+              (settings.cloudflareConnectedAt == null &&
+                  rejectedSession == _legacyRejectedSession)),
     );
   }
 }
+
+/// Marker for legacy sessions that predate `cloudflareConnectedAt`. Without a
+/// real timestamp there is nothing to compare, so rejection needs a sentinel;
+/// a fresh sign-in always writes a new `connectedAt` and clears the state.
+final _legacyRejectedSession = DateTime.fromMillisecondsSinceEpoch(0);
 
 /// Remembers which session the server refused, so the UI can say "expired"
 /// without deleting the account. A fresh sign-in gets a new `connectedAt` and
@@ -109,7 +127,8 @@ class SyncSessionRejected extends Notifier<DateTime?> {
   DateTime? build() => null;
 
   void reject() {
-    state = ref.read(settingsProvider).cloudflareConnectedAt;
+    state = ref.read(settingsProvider).cloudflareConnectedAt ??
+        _legacyRejectedSession;
   }
 }
 

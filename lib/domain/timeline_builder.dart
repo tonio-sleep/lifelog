@@ -1,4 +1,5 @@
 ﻿import '../core/util/dates.dart';
+import 'meals_migration.dart';
 import 'models/archive.dart';
 import 'models/music.dart';
 import 'models/timeline.dart';
@@ -32,14 +33,16 @@ class TimelineItem {
   final Map<String, String> metadata;
 }
 
-/// Builds the unified timeline for a day from journal, trackers, locations,
-/// music, photos and manual events. Missing information is never invented.
+/// Builds the unified timeline for a day from journal, trackers, meals,
+/// locations, music, photos and manual events. Missing information is never
+/// invented.
 List<TimelineItem> buildTimelineForDay(
   Archive archive,
   DateTime day, {
   bool includeHidden = false,
 }) {
   final items = <TimelineItem>[];
+  final migratedRefs = migratedMealLegacyRefs(archive);
 
   for (final entry in archive.entriesOn(day)) {
     items.add(
@@ -57,6 +60,8 @@ List<TimelineItem> buildTimelineForDay(
   }
 
   for (final record in archive.trackerRecordsOn(day)) {
+    // Once a record has become a meal, showing it here too is a duplicate.
+    if (migratedRefs.contains('tracker:${record.id}')) continue;
     final tracker = archive.trackerById(record.trackerId);
     if (tracker == null) continue;
     final value = TrackerMath.recordLabel(tracker, record);
@@ -73,6 +78,35 @@ List<TimelineItem> buildTimelineForDay(
         derived: true,
         sourceId: record.id,
         metadata: {'trackerId': tracker.id},
+      ),
+    );
+  }
+
+  for (final meal in archive.mealsOn(day)) {
+    final note = meal.notes.trim();
+    final details = <String>[
+      meal.kind.label,
+      if (meal.amountLabel.isNotEmpty) meal.amountLabel,
+      if (note.isNotEmpty) note,
+      if (meal.tags.isNotEmpty) meal.tags.map((tag) => '#$tag').join(' '),
+      meal.timeLabel,
+    ];
+    items.add(
+      TimelineItem(
+        id: 'meal:${meal.id}',
+        at: meal.at,
+        title: meal.name,
+        subtitle: details.join(' · '),
+        source: TimelineSource.meal,
+        confidence: TimelineConfidence.confirmed,
+        derived: true,
+        sourceId: meal.id,
+        metadata: {
+          'mealId': meal.id,
+          'kind': meal.kind.name,
+          'timeKnown': '${meal.timeKnown}',
+          'timeLabel': meal.timeLabel,
+        },
       ),
     );
   }

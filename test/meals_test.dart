@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lifelog/domain/meals_migration.dart';
+import 'package:lifelog/domain/memories.dart';
 import 'package:lifelog/domain/models/archive.dart';
 import 'package:lifelog/domain/models/journal.dart';
 import 'package:lifelog/domain/models/meals.dart';
@@ -109,5 +110,161 @@ void main() {
     // Running again must not duplicate anything.
     final again = migrateLegacyMeals(migrated);
     expect(again.meals, hasLength(3));
+  });
+
+  test('a meal-only day counts as a day with records', () {
+    final day = DateTime(2026, 6, 1);
+    final meal = MealRecord.create(
+      at: DateTime(2026, 6, 1, 12, 30),
+      kind: MealKind.meal,
+      name: 'Soup',
+    );
+    final summary = DaySummary.of(Archive(meals: [meal]), day);
+
+    expect(summary.meals, [meal]);
+    expect(summary.totalRecords, 1);
+    expect(summary.isEmpty, isFalse);
+    expect(
+      OnThisDayMemory(day: day, summary: summary).description,
+      contains('1 meal'),
+    );
+  });
+
+  test('same-name meals with distinct details are kept', () {
+    final day = DateTime(2026, 6, 2);
+    final tracker = TrackerDefinition(
+      id: 'meals',
+      name: 'What I ate today',
+      type: TrackerType.text,
+      createdAt: day,
+      icon: 'meal',
+      category: 'Nutrition',
+    );
+    final records = [
+      TrackerRecord(
+        id: 'r1',
+        trackerId: tracker.id,
+        recordedAt: day,
+        startedAt: DateTime(2026, 6, 2, 12, 30),
+        text: 'Lunch: Pasta',
+        note: 'with salad',
+        value: 250,
+      ),
+      TrackerRecord(
+        id: 'r2',
+        trackerId: tracker.id,
+        recordedAt: day,
+        startedAt: DateTime(2026, 6, 2, 13),
+        text: 'Lunch: Pasta',
+        note: 'no dressing',
+        value: 300,
+      ),
+    ];
+
+    final migrated = migrateLegacyMeals(
+      Archive(trackers: [tracker], trackerRecords: records),
+    );
+
+    expect(migrated.meals, hasLength(2));
+    expect(
+      migrated.meals.map((m) => m.notes).toList(),
+      containsAll(['with salad', 'no dressing']),
+    );
+    expect(
+      migrateLegacyMeals(migrated).meals,
+      hasLength(2),
+      reason: 'migration must remain idempotent by legacyRef',
+    );
+  });
+
+  test('food-adjacent but unrelated trackers are never migrated or archived', () {
+    final day = DateTime(2026, 6, 2);
+    final trackers = [
+      TrackerDefinition(
+        id: 't1',
+        name: 'Eat more vegetables',
+        type: TrackerType.boolean,
+        createdAt: day,
+        icon: 'heart',
+        category: 'Wellness',
+      ),
+      TrackerDefinition(
+        id: 't2',
+        name: 'Ate out',
+        type: TrackerType.count,
+        createdAt: day,
+        icon: 'star',
+        category: 'Personal',
+      ),
+      TrackerDefinition(
+        id: 't3',
+        name: 'Meal prep',
+        type: TrackerType.text,
+        createdAt: day,
+        icon: 'note',
+        category: 'Personal',
+      ),
+    ];
+    final records = [
+      for (final tracker in trackers)
+        TrackerRecord(
+          id: 'record-${tracker.id}',
+          trackerId: tracker.id,
+          recordedAt: day,
+          text: 'Lunch: Pasta',
+        ),
+    ];
+
+    final migrated = migrateLegacyMeals(
+      Archive(trackers: trackers, trackerRecords: records),
+    );
+
+    expect(migrated.meals, isEmpty);
+    expect(migrated.trackers.every((t) => !t.archived), isTrue);
+  });
+
+  test('legacy meal notes do not invent a clock time', () {
+    final at = DateTime(2026, 6, 3, 8);
+    final entry = JournalEntry(
+      id: 'entry-2',
+      createdAt: at,
+      updatedAt: at,
+      title: 'A day',
+      body: '',
+      meals: 'Lunch: Soup',
+    );
+    final migrated = migrateLegacyMeals(Archive(entries: [entry]));
+    final meal = migrated.meals.single;
+
+    expect(meal.timeKnown, isFalse);
+    expect(meal.timeLabel, 'time not recorded');
+    expect(meal.toJson()['timeKnown'], isFalse);
+
+    final decoded = MealRecord.fromJson(meal.toJson());
+    expect(decoded.timeKnown, isFalse);
+    expect(decoded.timeLabel, 'time not recorded');
+
+    final oldJson = Map<String, dynamic>.from(meal.toJson())
+      ..remove('timeKnown');
+    expect(MealRecord.fromJson(oldJson).timeKnown, isTrue);
+  });
+
+  test('copyWith preserves an explicit day and unknown time unless time moves', () {
+    final meal = MealRecord(
+      id: 'm1',
+      at: DateTime(2026, 6, 3, 12),
+      day: '2026-06-02',
+      kind: MealKind.meal,
+      name: 'Soup',
+      timeKnown: false,
+    );
+
+    final renamed = meal.copyWith(name: 'Soup with bread');
+    expect(renamed.dayKey, '2026-06-02');
+    expect(renamed.timeKnown, isFalse);
+
+    final moved = meal.copyWith(at: DateTime(2026, 6, 4, 12));
+    expect(moved.dayKey, '2026-06-04');
+    expect(moved.timeKnown, isTrue);
   });
 }

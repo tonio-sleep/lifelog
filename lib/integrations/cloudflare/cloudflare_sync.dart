@@ -67,15 +67,15 @@ Future<void> maybePromptCloudflareRestore(
       await restoreFromCloudflare(context, ref);
     }
   } on CloudflareSyncException catch (e) {
-    final msg = e.message.toLowerCase();
-    if (msg.contains('session expired') ||
-        msg.contains('unauthorized') ||
-        msg.contains('sign in again')) {
+    if (isCloudflareSessionExpired(e)) {
       // Keep the account details; the sync card will offer "Sign in again".
       ref.read(syncSessionRejectedProvider.notifier).reject();
     }
     // silent on startup for other errors
-  } catch (_) {
-    // silent on startup
+  } catch (error) {
+    if (isCloudflareSessionExpired(error)) {
+      ref.read(syncSessionRejectedProvider.notifier).reject();
+    }
+    // silent on startup for other errors
   }
 }

@@ -17,6 +17,7 @@ import 'package:lifelog/core/storage/media_store.dart';
 import 'package:lifelog/core/storage/settings_store.dart';
 import 'package:lifelog/domain/models/archive.dart';
 import 'package:lifelog/domain/models/settings.dart';
+import 'package:lifelog/features/journal/journal_editor_screen.dart';
 import 'package:lifelog/features/photos/media_import.dart';
 import 'package:lifelog/integrations/cloudflare/cloudflare_sync_service.dart';
 import 'package:lifelog/integrations/health/health_steps_service.dart';
@@ -173,4 +174,124 @@ void main() {
     // askMediaDetails disposes its controllers after a short delay.
     await tester.pump(const Duration(milliseconds: 600));
   }, timeout: const Timeout(Duration(seconds: 20)));
+
+  testWidgets('Cancel in details sheet never reports media as added',
+      (tester) async {
+    final root = createTestDir('lifelog-media-cancel');
+    addTearDown(() => root.deleteSync(recursive: true));
+    final services = makeServices(root);
+    final bytes = samplePng();
+    final first = XFile.fromData(
+      bytes,
+      path: p.join(root.path, 'first.png'),
+      mimeType: 'image/png',
+    );
+    final second = XFile.fromData(
+      bytes,
+      path: p.join(root.path, 'second.png'),
+      mimeType: 'image/png',
+    );
+    MediaImportSummary? summary;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [appServicesProvider.overrideWithValue(services)],
+        child: MaterialApp(
+          theme: AppTheme.light(),
+          home: Scaffold(
+            body: Consumer(
+              builder: (context, ref, _) => ElevatedButton(
+                onPressed: () async {
+                  summary = await importPickedMedia(context, ref, [first, second]);
+                },
+                child: const Text('Import'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Import'));
+    await tester.pumpAndSettle();
+    expect(find.text('Cancel import'), findsOneWidget);
+    await tester.tap(find.text('Cancel import'));
+
+    for (var attempt = 0; attempt < 100 && summary == null; attempt++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
+
+    expect(summary, isNotNull);
+    final result = summary!;
+    expect(result.total, 2);
+    expect(result.added, 0);
+    expect(result.skipped, 2);
+    expect(result.failed, 0);
+    expect(result.message, '2 skipped.');
+    expect(find.textContaining('added'), findsNothing);
+    final saved = await tester.runAsync(() => services.archiveStore.load());
+    expect(saved?.media ?? const [], isEmpty);
+
+    await tester.pump(const Duration(milliseconds: 600));
+  }, timeout: const Timeout(Duration(seconds: 20)));
+
+  test('voice temp audio is removed once its bytes are consumed', () async {
+    final root = createTestDir('lifelog-voice-temp-');
+    addTearDown(() => root.deleteSync(recursive: true));
+    final file = File(p.join(root.path, 'voice_note.m4a'));
+    await file.writeAsBytes(const [1, 2, 3, 4]);
+
+    final bytes = await consumeVoiceTempFile(file.path);
+    expect(bytes, equals([1, 2, 3, 4]));
+    expect(await file.exists(), isFalse);
+  });
+
+  test('voice temp audio is removed after a failed handoff', () async {
+    final root = createTestDir('lifelog-voice-failure-');
+    addTearDown(() => root.deleteSync(recursive: true));
+    final file = File(p.join(root.path, 'voice_note.m4a'));
+    await file.writeAsBytes(const [5, 6]);
+
+    try {
+      await consumeVoiceTempFile(file.path);
+      throw StateError('simulated import failure');
+    } catch (_) {
+      // The editor's finally block always removes the temp file.
+    } finally {
+      await removeVoiceTempFile(file.path);
+    }
+    expect(await file.exists(), isFalse);
+  });
+
+  test('transcript insertion uses the cursor and adds paragraph spacing', () {
+    final appended = insertVoiceTranscript(
+      current: 'First paragraph',
+      start: 15,
+      end: 15,
+      transcript: 'Spoken words',
+    );
+    expect(appended.text, 'First paragraph\n\nSpoken words');
+    expect(appended.cursorOffset, 'First paragraph\n\nSpoken words'.length);
+
+    final inMiddle = insertVoiceTranscript(
+      current: 'First line\nSecond line',
+      start: 11,
+      end: 11,
+      transcript: 'T',
+    );
+    expect(inMiddle.text, 'First line\n\nT\n\nSecond line');
+    expect(inMiddle.cursorOffset, 'First line\n\nT'.length);
+
+    final empty = insertVoiceTranscript(
+      current: '',
+      start: 0,
+      end: 0,
+      transcript: 'Only transcript',
+    );
+    expect(empty.text, 'Only transcript');
+    expect(empty.cursorOffset, 'Only transcript'.length);
+  });
 }

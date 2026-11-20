@@ -8,7 +8,8 @@ enum TimelineSource {
   tracker,
   location,
   music,
-  photo;
+  photo,
+  meal;
 
   String get label => switch (this) {
     TimelineSource.manual => 'Manual',
@@ -17,6 +18,7 @@ enum TimelineSource {
     TimelineSource.location => 'Location',
     TimelineSource.music => 'Music',
     TimelineSource.photo => 'Photo',
+    TimelineSource.meal => 'Meal',
   };
 }
 

@@ -677,7 +677,12 @@ class _HabitInsightRow extends ConsumerWidget {
       if (history.doneOn(DateTime(start.year, start.month, start.day + i))) done++;
     }
     final series = TrackerMath.dailySeries(tracker, archive.trackerRecords, end, 14);
-    final streak = history.currentStreak(DateTime.now());
+    final now = DateTime.now();
+    var loggedInLast30 = 0;
+    for (var i = 0; i < 30; i++) {
+      final dayInWindow = DateTime(now.year, now.month, now.day - i);
+      if (history.loggedOn(dayInWindow)) loggedInLast30++;
+    }
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: Insets.md, vertical: Insets.sm),
       child: Row(
@@ -692,23 +697,12 @@ class _HabitInsightRow extends ConsumerWidget {
                 Row(
                   children: [
                     Text(
-                      '$done of $days days',
+                      'Logged $done of $days days · $loggedInLast30 of last 30',
                       style: context.text.labelSmall?.copyWith(
                         color: palette.mutedText,
                         fontFeatures: tabularFigures,
                       ),
                     ),
-                    if (streak >= 2) ...[
-                      const SizedBox(width: Insets.sm),
-                      Icon(Icons.local_fire_department_rounded, size: 13, color: context.scheme.secondary),
-                      Text(
-                        '$streak',
-                        style: context.text.labelSmall?.copyWith(
-                          color: context.scheme.secondary,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
                   ],
                 ),
               ],

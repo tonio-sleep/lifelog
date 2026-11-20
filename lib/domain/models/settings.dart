@@ -175,6 +175,7 @@ class AppSettings {
     this.cloudflareUsername,
     this.cloudflareSessionCipher,
     this.cloudflarePassphraseCipher,
+    this.cloudflarePassphraseOwner,
     this.cloudflareConnectedAt,
     this.cloudflareLastSyncAt,
     this.cloudflareSetupDone = false,
@@ -227,6 +228,10 @@ class AppSettings {
   /// unlocked on this device. Lets sync/restore reuse it after the first entry.
   final String? cloudflarePassphraseCipher;
 
+  /// Normalized account the remembered passphrase belongs to. A passphrase
+  /// without a matching owner is never reused automatically.
+  final String? cloudflarePassphraseOwner;
+
   final DateTime? cloudflareConnectedAt;
   final DateTime? cloudflareLastSyncAt;
 
@@ -259,6 +264,20 @@ class AppSettings {
       cloudflareSessionCipher != null &&
       cloudflareSessionCipher!.trim().isNotEmpty;
 
+  /// True only when the remembered passphrase is scoped to the account that is
+  /// currently signed in. Older settings without an owner do not qualify.
+  bool get hasRememberedCloudflarePassphrase {
+    final owner = cloudflarePassphraseOwner;
+    final username = cloudflareUsername?.trim().toLowerCase();
+    return owner != null &&
+        owner.isNotEmpty &&
+        username != null &&
+        username.isNotEmpty &&
+        owner == username &&
+        cloudflarePassphraseCipher != null &&
+        cloudflarePassphraseCipher!.trim().isNotEmpty;
+  }
+
   AppSettings copyWith({
     bool? onboardingComplete,
     AppThemeMode? themeMode,
@@ -290,6 +309,8 @@ class AppSettings {
     bool clearCloudflareSession = false,
     String? cloudflarePassphraseCipher,
     bool clearCloudflarePassphrase = false,
+    String? cloudflarePassphraseOwner,
+    bool clearCloudflarePassphraseOwner = false,
     DateTime? cloudflareConnectedAt,
     DateTime? cloudflareLastSyncAt,
     bool? cloudflareSetupDone,
@@ -339,9 +360,16 @@ class AppSettings {
       cloudflareSessionCipher: clearCloud
           ? null
           : (cloudflareSessionCipher ?? this.cloudflareSessionCipher),
-      cloudflarePassphraseCipher: clearCloudflarePassphrase
-          ? null
-          : (cloudflarePassphraseCipher ?? this.cloudflarePassphraseCipher),
+      cloudflarePassphraseCipher:
+          clearCloud || clearCloudflarePassphrase
+              ? null
+              : (cloudflarePassphraseCipher ?? this.cloudflarePassphraseCipher),
+      cloudflarePassphraseOwner:
+          clearCloud ||
+                  clearCloudflarePassphrase ||
+                  clearCloudflarePassphraseOwner
+              ? null
+              : (cloudflarePassphraseOwner ?? this.cloudflarePassphraseOwner),
       cloudflareConnectedAt:
           clearCloud ? null : (cloudflareConnectedAt ?? this.cloudflareConnectedAt),
       cloudflareLastSyncAt:
@@ -378,6 +406,7 @@ class AppSettings {
         'cloudflareUsername': cloudflareUsername,
         'cloudflareSessionCipher': cloudflareSessionCipher,
         'cloudflarePassphraseCipher': cloudflarePassphraseCipher,
+        'cloudflarePassphraseOwner': cloudflarePassphraseOwner,
         'cloudflareConnectedAt': cloudflareConnectedAt?.toIso8601String(),
         'cloudflareLastSyncAt': cloudflareLastSyncAt?.toIso8601String(),
         'cloudflareSetupDone': cloudflareSetupDone,
@@ -433,6 +462,7 @@ class AppSettings {
       cloudflareSessionCipher: json['cloudflareSessionCipher'] as String?,
       cloudflarePassphraseCipher:
           json['cloudflarePassphraseCipher'] as String?,
+      cloudflarePassphraseOwner: json['cloudflarePassphraseOwner'] as String?,
       cloudflareConnectedAt:
           DateTime.tryParse(json['cloudflareConnectedAt'] as String? ?? ''),
       cloudflareLastSyncAt:

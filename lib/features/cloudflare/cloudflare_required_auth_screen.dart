@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -10,13 +11,15 @@ import '../../app/widgets/common.dart';
 import '../../app/widgets/components.dart';
 import '../../core/util/dates.dart';
 import '../../domain/models/settings.dart';
+import '../../integrations/cloudflare/cloud_remote_state.dart';
 import '../../integrations/cloudflare/cloudflare_sync_service.dart';
+import '../../integrations/cloudflare/sync_status.dart';
 import '../settings/cloudflare_sync_actions.dart';
 
-/// Required sign-in/sign-up screen for Cloudflare sync.
+/// Optional sign-in/sign-up screen for Cloudflare sync.
 ///
-/// Shown when the user must be signed in to continue. This screen never deletes
-/// or modifies local journal/archive data.
+/// Lifelog is local-first; this screen offers an encrypted off-device backup
+/// copy and can always be skipped. It never deletes or modifies local data.
 class CloudflareRequiredAuthScreen extends ConsumerStatefulWidget {
   const CloudflareRequiredAuthScreen({super.key, this.embedded = false});
 
@@ -64,6 +67,11 @@ class _CloudflareRequiredAuthScreenState
     final password = _password.text;
     if (url.isEmpty) {
       setState(() => _error = 'Enter your Worker URL.');
+      return;
+    }
+    final urlWarning = CloudflareSyncService.workerUrlWarning(url);
+    if (urlWarning != null) {
+      setState(() => _error = urlWarning);
       return;
     }
     if (username.length < 2) {
@@ -117,6 +125,8 @@ class _CloudflareRequiredAuthScreenState
             username: session.username,
             sessionJson: jsonEncode(session.toJson()),
           );
+      ref.invalidate(cloudRemoteMetaProvider);
+      ref.invalidate(syncSessionRejectedProvider);
       // A remembered passphrase unlocks one specific account's backup.
       if (previousUsername != null &&
           previousUsername.isNotEmpty &&
@@ -174,12 +184,18 @@ class _CloudflareRequiredAuthScreenState
           // ignore after successful sign-in
         }
       }
+    } on TimeoutException {
+      if (!mounted) return;
+      setState(
+        () => _error =
+            'The sync server took too long to respond. Check your connection and try again.',
+      );
     } on CloudflareSyncException catch (e) {
       if (!mounted) return;
       setState(() => _error = e.message);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = '$e');
+      setState(() => _error = friendlyCloudflareSyncError(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -193,6 +209,7 @@ class _CloudflareRequiredAuthScreenState
     final isDefault =
         _url.text.trim() == AppSettings.defaultCloudflareWorkerUrl ||
             _url.text.trim().isEmpty;
+    final urlWarning = CloudflareSyncService.workerUrlWarning(_url.text);
 
     final form = Center(
       child: ConstrainedBox(
@@ -226,13 +243,13 @@ class _CloudflareRequiredAuthScreenState
                 ),
                 const SizedBox(height: Insets.lg),
                 Text(
-                  'Sign in to continue',
+                  'Encrypted backups (optional)',
                   textAlign: TextAlign.center,
                   style: text.headlineMedium,
                 ),
                 const SizedBox(height: Insets.sm),
                 Text(
-                  'A Cloudflare sync account is required to use this app. Sign in or create an account to continue. Your local data is safe on this device.',
+                  'Lifelog works fully offline. Cloudflare is an optional way to keep an encrypted backup copy. Your journal stays on this device unless you sign in.',
                   textAlign: TextAlign.center,
                   style: text.bodyMedium?.copyWith(color: palette.mutedText),
                 ),
@@ -357,8 +374,12 @@ class _CloudflareRequiredAuthScreenState
                                 hintText:
                                     AppSettings.defaultCloudflareWorkerUrl,
                                 prefixIcon: const Icon(Icons.link_rounded),
-                                helperText:
+                                helperText: urlWarning ??
                                     'Built-in by default. Change only if you use your own deployed Worker.',
+                                helperStyle: urlWarning != null
+                                    ? text.bodySmall
+                                        ?.copyWith(color: scheme.error)
+                                    : null,
                               ),
                               keyboardType: TextInputType.url,
                               autocorrect: false,
@@ -423,9 +444,31 @@ class _CloudflareRequiredAuthScreenState
                   ],
                 ),
               ),
+              if (!widget.embedded) ...[
+                const SizedBox(height: Insets.sm),
+                TextButton(
+                  onPressed: _loading
+                      ? null
+                      : () async {
+                          try {
+                            await ref.read(settingsProvider.notifier).update(
+                                  (current) => current.copyWith(
+                                    cloudflareSetupDone: true,
+                                  ),
+                                );
+                          } catch (e) {
+                            if (!mounted) return;
+                            setState(
+                              () => _error = 'Could not save this choice: $e',
+                            );
+                          }
+                        },
+                  child: const Text('Continue locally'),
+                ),
+              ],
               const SizedBox(height: Insets.md),
               Text(
-                'Cloud sync is required. Your journal stays on this device, and backups can sync everything to your Cloudflare Worker when you choose.',
+                'Cloud sync is optional. Your journal stays on this device, and an encrypted backup can sync to your Cloudflare Worker whenever you choose.',
                 textAlign: TextAlign.center,
                 style: text.bodySmall?.copyWith(color: palette.dimText),
               ),

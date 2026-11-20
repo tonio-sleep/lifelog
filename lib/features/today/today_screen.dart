@@ -241,6 +241,7 @@ class _DayBody extends ConsumerWidget {
             TimelineSource.location,
             TimelineSource.manual,
             TimelineSource.photo,
+            TimelineSource.meal,
           },
           emptyMessage: isToday
               ? 'Nothing here yet. A small check-in, a habit, a photo, or a few words is a great way to start.'

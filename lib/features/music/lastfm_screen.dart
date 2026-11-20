@@ -324,15 +324,23 @@ class _LastfmScreenState extends ConsumerState<LastfmScreen> {
           );
       if (!mounted) return;
       final added = await ref.read(archiveProvider.notifier).importScrobbles(tracks);
-      await ref.read(settingsProvider.notifier).recordLastfmSync(
-            now,
-            tracks.isEmpty ? null : tracks.first.playedAt,
-          );
+      String? bookkeepingError;
+      try {
+        await ref.read(settingsProvider.notifier).recordLastfmSync(
+              now,
+              tracks.isEmpty ? null : tracks.first.playedAt,
+            );
+      } catch (_) {
+        // The import succeeded; only the local sync marker failed.
+        bookkeepingError =
+            'Tracks were imported, but the Last.fm sync time could not be saved.';
+      }
       if (!mounted) return;
       setState(() {
         _status = tracks.isEmpty
             ? 'No scrobbles found in this range.'
             : '$added new ${added == 1 ? 'scrobble' : 'scrobbles'} imported (${tracks.length} received).';
+        _error = bookkeepingError;
       });
     } on LastfmException catch (error) {
       if (mounted) setState(() => _error = error.message);
@@ -355,11 +363,15 @@ class _LastfmScreenState extends ConsumerState<LastfmScreen> {
     );
     if (!ok) return;
     if (!mounted) return;
-    await guard(
+    final disconnected = await guard<int>(
       context,
-      ref.read(settingsProvider.notifier).disconnectLastfm(),
+      ref
+          .read(settingsProvider.notifier)
+          .disconnectLastfm()
+          .then((_) => 1),
       errorPrefix: 'Could not disconnect',
     );
+    if (disconnected == null) return;
     _apiKey.clear();
     if (mounted) {
       setState(() {
@@ -386,11 +398,15 @@ class _LastfmScreenState extends ConsumerState<LastfmScreen> {
     );
     if (!ok) return;
     if (!mounted) return;
-    await guard(
+    final deleted = await guard<int>(
       context,
-      ref.read(archiveProvider.notifier).removeImportedMusic(),
+      ref
+          .read(archiveProvider.notifier)
+          .removeImportedMusic()
+          .then((_) => 1),
       errorPrefix: 'Could not delete imported music',
     );
+    if (deleted == null) return;
     if (mounted) setState(() => _status = 'Imported music history deleted.');
   }
 }

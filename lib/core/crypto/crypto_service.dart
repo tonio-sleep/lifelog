@@ -7,15 +7,37 @@ import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path/path.dart' as p;
 
-/// Loads the archive's root key from platform secure storage. On desktop
-/// systems without a usable secure store, a local key file is used as a
-/// documented fallback so the archive remains usable.
+enum SecureKeyStatus { found, absent, unavailable }
+
+class SecureKeyLookup {
+  const SecureKeyLookup(this.status, {this.key, this.error});
+
+  final SecureKeyStatus status;
+  final SecretKey? key;
+  final Object? error;
+}
+
+class KeyUnavailableException implements Exception {
+  KeyUnavailableException(this.message, [this.cause]);
+
+  final String message;
+  final Object? cause;
+
+  @override
+  String toString() => cause == null ? message : '$message Cause: $cause';
+}
+
+/// Loads the archive's root key from platform secure storage. On systems
+/// without a usable secure store, a local key file is used as a documented
+/// fallback so the archive remains usable.
 class KeyVault {
   KeyVault({required this.directory, FlutterSecureStorage? storage})
     : _storage = storage ?? const FlutterSecureStorage();
 
   static const secureKeyName = 'lifelog.master_key.v1';
   static const _fallbackFileName = 'master.key';
+  static const _tempSuffix = '.tmp';
+  static const _backupSuffix = '.bak';
 
   final Directory directory;
   final FlutterSecureStorage _storage;
@@ -24,54 +46,105 @@ class KeyVault {
   /// because platform secure storage was unavailable.
   bool usedFallback = false;
 
+  /// Non-null when a degraded path was used at startup, for example a
+  /// temporarily unavailable secure store recovered from the local key file.
+  String? lastWarning;
+
   File get fallbackFile => File(p.join(directory.path, _fallbackFileName));
 
-  Future<SecretKey> loadOrCreate() async {
+  /// [archiveExists] must be supplied by the caller. A brand new install can
+  /// safely create a key; doing so while an archive is present would silently
+  /// orphan every existing entry.
+  Future<SecretKey> loadOrCreate({bool archiveExists = false}) async {
     await directory.create(recursive: true);
 
-    final fromSecure = await _readSecure();
-    if (fromSecure != null) return fromSecure;
-
-    final file = fallbackFile;
-    if (await file.exists()) {
-      final encoded = (await file.readAsString()).trim();
-      if (encoded.isNotEmpty) {
-        try {
-          final bytes = base64Decode(encoded);
-          if (bytes.length == 32) {
-            usedFallback = true;
-            return SecretKey(bytes);
-          }
-        } on FormatException {
-          // Fall through and create a new key; a corrupt fallback key means the
-          // existing archive cannot be decrypted and the UI will explain that.
-        }
-      }
+    final secure = await _readSecure();
+    if (secure.status == SecureKeyStatus.found) {
+      usedFallback = false;
+      return secure.key!;
     }
 
-    final algorithm = AesGcm.with256bits();
-    final key = await algorithm.newSecretKey();
+    final fallback = await _readFallback();
+    if (fallback != null) {
+      usedFallback = true;
+      if (secure.status == SecureKeyStatus.unavailable) {
+        lastWarning =
+            'Platform secure storage was temporarily unavailable; the local '
+            'key file was used instead.';
+      }
+      return SecretKey(fallback);
+    }
+
+    if (archiveExists) {
+      // Never create a new key when an archive is already on disk. A transient
+      // platform failure must not look like a fresh install.
+      throw KeyUnavailableException(
+        secure.status == SecureKeyStatus.unavailable
+            ? 'The secure key store is temporarily unavailable and no local '
+                'key is present. A new key was not created because an existing '
+                'archive was found.'
+            : 'No archive key was found. A new key was not created because an '
+                'existing archive was found; restore from a backup instead.',
+        secure.error,
+      );
+    }
+
+    final key = await AesGcm.with256bits().newSecretKey();
     final bytes = await key.extractBytes();
     final encoded = base64Encode(bytes);
 
-    final secureStored = await _writeSecure(encoded);
-    if (!secureStored) {
-      usedFallback = true;
-      await file.writeAsString(encoded, flush: true);
+    if (await _writeSecure(encoded)) {
+      usedFallback = false;
+      return key;
     }
-    return SecretKey(bytes);
+
+    usedFallback = true;
+    lastWarning = 'Platform secure storage was unavailable; the archive key '
+        'was stored in a local file.';
+    await _writeFallback(bytes);
+    return key;
   }
 
-  Future<SecretKey?> _readSecure() async {
+  /// Distinguishes "no key stored" from "could not talk to the key store".
+  /// Both look like null to the caller of FlutterSecureStorage.read, but only
+  /// the former permits creating a new key.
+  Future<SecureKeyLookup> _readSecure() async {
+    String? encoded;
     try {
-      final encoded = await _storage.read(key: secureKeyName);
-      if (encoded == null || encoded.isEmpty) return null;
-      final bytes = base64Decode(encoded);
-      if (bytes.length != 32) return null;
-      return SecretKey(bytes);
-    } catch (_) {
-      return null;
+      encoded = await _storage.read(key: secureKeyName);
+    } catch (error) {
+      return SecureKeyLookup(SecureKeyStatus.unavailable, error: error);
     }
+    if (encoded == null || encoded.isEmpty) {
+      return const SecureKeyLookup(SecureKeyStatus.absent);
+    }
+    try {
+      final bytes = base64Decode(encoded);
+      if (bytes.length != 32) {
+        return SecureKeyLookup(
+          SecureKeyStatus.unavailable,
+          error: const FormatException('Stored key is not 32 bytes'),
+        );
+      }
+      return SecureKeyLookup(SecureKeyStatus.found, key: SecretKey(bytes));
+    } catch (error) {
+      return SecureKeyLookup(SecureKeyStatus.unavailable, error: error);
+    }
+  }
+
+  Future<List<int>?> _readFallback() async {
+    final file = fallbackFile;
+    if (!await file.exists()) return null;
+    try {
+      final encoded = (await file.readAsString()).trim();
+      if (encoded.isEmpty) return null;
+      final bytes = base64Decode(encoded);
+      if (bytes.length == 32) return bytes;
+    } catch (_) {
+      // A corrupt fallback key is never silently replaced while an archive
+      // exists; loadOrCreate reports KeyUnavailableException in that case.
+    }
+    return null;
   }
 
   Future<bool> _writeSecure(String encoded) async {
@@ -81,6 +154,42 @@ class KeyVault {
       return check == encoded;
     } catch (_) {
       return false;
+    }
+  }
+
+  /// Verifies the complete key file before it can replace an existing one.
+  Future<void> _writeFallback(List<int> bytes) async {
+    final encoded = base64Encode(bytes);
+    final file = fallbackFile;
+    final temp = File('${file.path}$_tempSuffix');
+    final backup = File('${file.path}$_backupSuffix');
+
+    await temp.writeAsString(encoded, flush: true);
+    if ((await temp.readAsString()).trim() != encoded) {
+      throw StateError('The fallback key file did not verify after writing.');
+    }
+
+    if (await file.exists()) {
+      try {
+        await backup.writeAsString(await file.readAsString(), flush: true);
+      } catch (_) {
+        // Best effort: the existing key is still intact until the rename.
+      }
+    }
+
+    try {
+      await temp.rename(file.path);
+    } catch (_) {
+      if (await backup.exists()) {
+        try {
+          await backup.copy(file.path);
+        } catch (_) {}
+      }
+      rethrow;
+    }
+
+    if ((await file.readAsString()).trim() != encoded) {
+      throw StateError('The fallback key file did not verify after replacement.');
     }
   }
 }

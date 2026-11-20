@@ -16,8 +16,15 @@ final cloudRemoteMetaProvider = FutureProvider<CloudflareBackupMeta?>((ref) asyn
   final workerUrl = ref.watch(
     settingsProvider.select((s) => s.cloudflareWorkerUrl),
   );
-  // Invalidate when the account changes so metadata never belongs to the
-  // previous Cloudflare user.
+  // Re-read metadata whenever credentials or the account change, so it never
+  // belongs to the previous Cloudflare user.
+  ref.watch(
+    settingsProvider.select((s) => (
+      s.cloudflareSessionCipher,
+      s.cloudflareUsername,
+      s.cloudflareConnectedAt,
+    )),
+  );
   ref.watch(syncSessionRejectedProvider);
   if (!signedIn || workerUrl == null || workerUrl.trim().isEmpty) return null;
 

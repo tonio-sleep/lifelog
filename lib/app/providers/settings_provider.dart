@@ -188,14 +188,28 @@ class SettingsController extends Notifier<AppSettings> {
         .read(appServicesProvider)
         .crypto
         .encryptString(sessionJson, aad: _cloudflareSessionAad);
+    final owner = username.trim().toLowerCase();
     await update(
-      (current) => current.copyWith(
-        cloudflareWorkerUrl: workerUrl.trim(),
-        cloudflareUsername: username.trim(),
-        cloudflareSessionCipher: cipher,
-        cloudflareConnectedAt: DateTime.now(),
-        cloudflareSetupDone: true,
-      ),
+      (current) {
+        // A remembered passphrase unlocks one account's backup only. Reuse it
+        // when re-signing in to the same account; drop it on any account switch.
+        final keepPassphrase =
+            owner.isNotEmpty && current.cloudflarePassphraseOwner == owner;
+        return current.copyWith(
+          cloudflareWorkerUrl: workerUrl.trim(),
+          cloudflareUsername: username.trim(),
+          cloudflareSessionCipher: cipher,
+          cloudflareConnectedAt: DateTime.now(),
+          cloudflareSetupDone: true,
+          cloudflarePassphraseCipher: keepPassphrase
+              ? current.cloudflarePassphraseCipher
+              : null,
+          clearCloudflarePassphrase: !keepPassphrase,
+          cloudflarePassphraseOwner:
+              keepPassphrase ? current.cloudflarePassphraseOwner : null,
+          clearCloudflarePassphraseOwner: !keepPassphrase,
+        );
+      },
     );
   }
 
@@ -212,8 +226,10 @@ class SettingsController extends Notifier<AppSettings> {
     }
   }
 
-  /// Returns the backup passphrase remembered on this device, if any.
+  /// Returns the backup passphrase remembered for the current account, if any.
+  /// Legacy settings without an owner are not reused automatically.
   Future<String?> cloudflareBackupPassphrase() async {
+    if (!state.hasRememberedCloudflarePassphrase) return null;
     final cipher = state.cloudflarePassphraseCipher;
     if (cipher == null || cipher.trim().isEmpty) return null;
     try {
@@ -227,31 +243,47 @@ class SettingsController extends Notifier<AppSettings> {
   }
 
   Future<void> rememberCloudflareBackupPassphrase(String passphrase) async {
+    final owner = state.cloudflareUsername?.trim().toLowerCase();
+    if (owner == null || owner.isEmpty) {
+      throw StateError('Sign in before remembering a backup passphrase.');
+    }
     final cipher = await ref
         .read(appServicesProvider)
         .crypto
         .encryptString(passphrase, aad: _cloudflarePassphraseAad);
     await update(
-      (current) => current.copyWith(cloudflarePassphraseCipher: cipher),
+      (current) => current.copyWith(
+        cloudflarePassphraseCipher: cipher,
+        cloudflarePassphraseOwner: owner,
+        clearCloudflarePassphrase: false,
+        clearCloudflarePassphraseOwner: false,
+      ),
     );
   }
 
   Future<void> forgetCloudflareBackupPassphrase() => update(
-        (current) =>
-            current.copyWith(clearCloudflarePassphrase: true),
+        (current) => current.copyWith(
+          clearCloudflarePassphrase: true,
+          clearCloudflarePassphraseOwner: true,
+        ),
       );
 
   Future<void> recordCloudflareSync(DateTime at) => update(
         (current) => current.copyWith(cloudflareLastSyncAt: at),
       );
 
-  Future<void> disconnectCloudflareSync() =>
-      update((current) => current.copyWith(clearCloudflareSession: true));
+  Future<void> disconnectCloudflareSync() => update(
+        (current) => current.copyWith(
+          clearCloudflareSession: true,
+          clearCloudflarePassphrase: true,
+        ),
+      );
 
   Future<void> clearCloudflareWorkerUrl() => update(
         (current) => current.copyWith(
           clearCloudflareWorkerUrl: true,
           clearCloudflareSession: true,
+          clearCloudflarePassphrase: true,
         ),
       );
 

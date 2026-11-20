@@ -563,7 +563,7 @@ class Artwork extends ConsumerWidget {
         child: Icon(
           icon,
           size: size * 0.42,
-          color: Colors.white.withValues(alpha: 0.82),
+          color: context.palette.onPhoto.withValues(alpha: 0.95),
         ),
       ),
     );
@@ -626,23 +626,28 @@ class FilterRow<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
-    return SizedBox(
-      height: 38,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: values.length,
-        separatorBuilder: (_, _) => const SizedBox(width: Insets.sm),
-        itemBuilder: (context, index) {
-          final value = values[index];
-          final isSelected = value == selected;
-          final accent = colorFor?.call(value) ?? context.scheme.primary;
-          final icon = iconFor?.call(value);
-          return Pressable(
+    return ListView.separated(
+      scrollDirection: Axis.horizontal,
+      shrinkWrap: true,
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      itemCount: values.length,
+      separatorBuilder: (_, _) => const SizedBox(width: Insets.sm),
+      itemBuilder: (context, index) {
+        final value = values[index];
+        final isSelected = value == selected;
+        final accent = colorFor?.call(value) ?? context.scheme.primary;
+        final icon = iconFor?.call(value);
+        return Semantics(
+          button: true,
+          selected: isSelected,
+          label: labelFor(value),
+          child: Pressable(
             borderRadius: BorderRadius.circular(Radii.pill),
             haptic: true,
             onTap: () => onChanged(value),
             child: AnimatedContainer(
               duration: Motion.fast,
+              constraints: const BoxConstraints(minHeight: 44),
               padding: const EdgeInsets.symmetric(horizontal: Insets.md),
               alignment: Alignment.center,
               decoration: BoxDecoration(
@@ -672,9 +677,9 @@ class FilterRow<T> extends StatelessWidget {
                 ],
               ),
             ),
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -699,7 +704,7 @@ class SegmentedPills<T> extends StatelessWidget {
     final palette = context.palette;
     final index = math.max(0, values.indexOf(selected));
     return Container(
-      height: 40,
+      constraints: const BoxConstraints(minHeight: 44),
       padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(
         color: palette.subtle,
@@ -737,20 +742,28 @@ class SegmentedPills<T> extends StatelessWidget {
                 children: [
                   for (final value in values)
                     Expanded(
-                      child: Pressable(
-                        borderRadius: BorderRadius.circular(Radii.pill),
-                        scale: 0.98,
-                        onTap: () => onChanged(value),
-                        child: Center(
-                          child: AnimatedDefaultTextStyle(
-                            duration: Motion.fast,
-                            style: (context.text.labelLarge ?? const TextStyle())
-                                .copyWith(
-                                  color: value == selected
-                                      ? context.scheme.onSurface
-                                      : palette.mutedText,
-                                ),
-                            child: Text(labelFor(value)),
+                      child: Semantics(
+                        button: true,
+                        selected: value == selected,
+                        label: labelFor(value),
+                        child: Pressable(
+                          borderRadius: BorderRadius.circular(Radii.pill),
+                          scale: 0.98,
+                          onTap: () => onChanged(value),
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(minHeight: 44),
+                            child: Center(
+                              child: AnimatedDefaultTextStyle(
+                                duration: Motion.fast,
+                                style: (context.text.labelLarge ?? const TextStyle())
+                                    .copyWith(
+                                      color: value == selected
+                                          ? context.scheme.onSurface
+                                          : palette.mutedText,
+                                    ),
+                                child: Text(labelFor(value)),
+                              ),
+                            ),
                           ),
                         ),
                       ),
@@ -833,31 +846,52 @@ class KeyboardDoneBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
+    // Opaque surface so the bar stays legible when a keyboard or sheet has no
+    // backdrop filter. It deliberately never pops a route: Done only unfocuses.
     return Container(
-      height: 44,
       decoration: BoxDecoration(
-        color: palette.glass,
-        border: Border(top: BorderSide(color: palette.border, width: 0.5)),
+        color: palette.card,
+        border: Border(top: BorderSide(color: palette.border, width: 1)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(
+              alpha: palette.isDark ? 0.28 : 0.08,
+            ),
+            blurRadius: 12,
+            offset: const Offset(0, -4),
+          ),
+        ],
       ),
-      child: Row(
-        children: [
-          const Spacer(),
-          if (trailing != null) ...trailing!,
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: Insets.lg),
-            child: TextButton(
-              onPressed: onDone ??
-                  () => FocusManager.instance.primaryFocus?.unfocus(),
-              child: Text(
-                'Done',
-                style: context.text.labelLarge?.copyWith(
-                  color: context.scheme.primary,
-                  fontWeight: FontWeight.w600,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 44),
+        child: Row(
+          children: [
+            const Spacer(),
+            ...(trailing ?? const <Widget>[]),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: Insets.lg),
+              child: Semantics(
+                button: true,
+                label: 'Dismiss keyboard',
+                child: TextButton(
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(64, 44),
+                    tapTargetSize: MaterialTapTargetSize.padded,
+                  ),
+                  onPressed: onDone ??
+                      () => FocusManager.instance.primaryFocus?.unfocus(),
+                  child: Text(
+                    'Done',
+                    style: context.text.labelLarge?.copyWith(
+                      color: context.scheme.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

@@ -38,6 +38,7 @@ class MealRecord {
     this.unit = '',
     this.tags = const [],
     this.legacyRef,
+    this.timeKnown = true,
   });
 
   final String id;
@@ -55,8 +56,16 @@ class MealRecord {
   /// migration idempotent without touching old archive keys.
   final String? legacyRef;
 
+  /// Legacy journal meal notes never stored a clock time. When false, [at] is
+  /// only an ordering anchor and must not be shown as a real time.
+  final bool timeKnown;
+
   String get dayKey => day ?? dayKeyFor(at);
-  String get timeLabel => dates.formatTime(at);
+
+  /// Never fabricate a time for records that only carry a day.
+  String get timeLabel => timeKnown ? dates.formatTime(at) : 'time not recorded';
+
+  String get timeDisplay => timeLabel;
 
   String get amountLabel {
     if (amount == null) return '';
@@ -82,20 +91,27 @@ class MealRecord {
     List<String>? tags,
     String? legacyRef,
     bool clearLegacyRef = false,
+    bool? timeKnown,
   }) {
     final nextAt = at ?? this.at;
+    final atChanged = at != null && at != this.at;
+    // An explicit day is meaningful (the date can be stored independently of
+    // the ordering timestamp). Only recompute it when the time actually moves.
+    final nextDay = atChanged ? dayKeyFor(nextAt) : (day ?? this.day);
+    final nextTimeKnown = timeKnown ?? (atChanged ? true : this.timeKnown);
     return MealRecord(
       id: id ?? this.id,
       at: nextAt,
       kind: kind ?? this.kind,
       name: name ?? this.name,
       createdAt: createdAt ?? this.createdAt,
-      day: day ?? dayKeyFor(nextAt),
+      day: nextDay,
       notes: notes ?? this.notes,
       amount: clearAmount ? null : (amount ?? this.amount),
       unit: unit ?? this.unit,
       tags: tags ?? this.tags,
       legacyRef: clearLegacyRef ? null : (legacyRef ?? this.legacyRef),
+      timeKnown: nextTimeKnown,
     );
   }
 
@@ -111,19 +127,42 @@ class MealRecord {
         'unit': unit,
         'tags': tags,
         if (legacyRef != null) 'legacyRef': legacyRef,
+        'timeKnown': timeKnown,
       };
 
   factory MealRecord.fromJson(Map<String, dynamic> json) {
-    final at = DateTime.tryParse(json['at'] as String? ?? '') ??
+    var at = DateTime.tryParse(json['at'] as String? ?? '') ??
         DateTime.tryParse(json['createdAt'] as String? ?? '') ??
         DateTime.now();
+    final storedDay = json['day'] as String?;
+    final day = storedDay != null && storedDay.trim().isNotEmpty
+        ? storedDay.trim()
+        : dayKeyFor(at);
+    // Keep the stored day authoritative for grouping while retaining the
+    // recorded clock time. Old archives with a slightly drifted timestamp stay
+    // readable and still appear on the day the user saved.
+    if (dayKeyFor(at) != day) {
+      final parsedDay = dates.parseDayKey(day);
+      at = DateTime(
+        parsedDay.year,
+        parsedDay.month,
+        parsedDay.day,
+        at.hour,
+        at.minute,
+        at.second,
+        at.millisecond,
+        at.microsecond,
+      );
+    }
+    final kind = MealKind.fromJson(json['kind'] as String?);
+    final rawName = (json['name'] as String? ?? '').trim();
     return MealRecord(
       id: json['id'] as String? ?? _uuid.v4(),
       at: at,
       createdAt: DateTime.tryParse(json['createdAt'] as String? ?? ''),
-      day: json['day'] as String? ?? dayKeyFor(at),
-      kind: MealKind.fromJson(json['kind'] as String?),
-      name: json['name'] as String? ?? '',
+      day: day,
+      kind: kind,
+      name: rawName.isEmpty ? 'Untitled ${kind.label.toLowerCase()}' : rawName,
       notes: json['notes'] as String? ?? '',
       amount: (json['amount'] as num?)?.toDouble(),
       unit: json['unit'] as String? ?? '',
@@ -133,6 +172,8 @@ class MealRecord {
           .where((tag) => tag.isNotEmpty)
           .toList(),
       legacyRef: json['legacyRef'] as String?,
+      // Absent in old archives: those records always carried a real `at`.
+      timeKnown: json['timeKnown'] is bool ? json['timeKnown'] as bool : true,
     );
   }
 

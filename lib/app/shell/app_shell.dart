@@ -49,7 +49,19 @@ class _AppShellState extends ConsumerState<AppShell> {
   AppDestination _destination = AppDestination.today;
   int _tab = 0;
 
-  static const _tabNames = ['today', 'journal', 'trackers', 'library', 'settings'];
+  /// Each mobile tab owns its own stack so pushing a detail page does not
+  /// affect the other tabs and tapping the active tab can pop to root.
+  final List<GlobalKey<NavigatorState>> _tabNavigators = List.generate(
+    5,
+    (_) => GlobalKey<NavigatorState>(),
+  );
+
+  static const _tabByName = <String, int>{
+    'today': 0,
+    'journal': 1,
+    'trackers': 2,
+    'settings': 4,
+  };
 
   void _select(AppDestination destination) {
     if (_destination == destination) return;
@@ -57,6 +69,19 @@ class _AppShellState extends ConsumerState<AppShell> {
   }
 
   void _openPage(AppDestination destination) {
+    if (!mounted) return;
+    // Tab destinations must never produce a blank pushed page.
+    final tab = switch (destination) {
+      AppDestination.today => 0,
+      AppDestination.journal => 1,
+      AppDestination.trackers => 2,
+      AppDestination.settings => 4,
+      _ => null,
+    };
+    if (tab != null) {
+      setState(() => _tab = tab);
+      return;
+    }
     final Widget screen = switch (destination) {
       AppDestination.photos => const PhotosScreen(),
       AppDestination.places => const MapScreen(),
@@ -65,10 +90,22 @@ class _AppShellState extends ConsumerState<AppShell> {
       AppDestination.timeline => const TimelineScreen(),
       AppDestination.insights => const InsightsScreen(),
       AppDestination.search => const SearchScreen(),
-      AppDestination.settings => const SettingsScreen(),
-      _ => const SizedBox.shrink(),
+      _ => Scaffold(
+            appBar: AppBar(title: const Text('Unavailable')),
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  'This screen is not available: ${destination.name}',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          ),
     };
-    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => screen));
+    Navigator.of(context).push(
+      CupertinoPageRoute<void>(builder: (_) => screen),
+    );
   }
 
   void _navigateByName(String name) {
@@ -79,8 +116,8 @@ class _AppShellState extends ConsumerState<AppShell> {
         _select(destination);
         return;
       }
-      final tab = _tabNames.indexOf(name);
-      if (tab >= 0) {
+      final tab = _tabByName[name];
+      if (tab != null) {
         setState(() => _tab = tab);
       } else {
         _openPage(destination);
@@ -135,11 +172,36 @@ class _AppShellState extends ConsumerState<AppShell> {
         child: _TabStack(
           index: _tab,
           children: [
-            TodayScreen(onNavigate: _navigateByName),
-            const JournalScreen(),
-            const TrackersScreen(),
-            LibraryScreen(onOpen: _navigateByName),
-            const SettingsScreen(),
+            Navigator(
+              key: _tabNavigators[0],
+              onGenerateRoute: (_) => CupertinoPageRoute<void>(
+                builder: (_) => TodayScreen(onNavigate: _navigateByName),
+              ),
+            ),
+            Navigator(
+              key: _tabNavigators[1],
+              onGenerateRoute: (_) => CupertinoPageRoute<void>(
+                builder: (_) => const JournalScreen(),
+              ),
+            ),
+            Navigator(
+              key: _tabNavigators[2],
+              onGenerateRoute: (_) => CupertinoPageRoute<void>(
+                builder: (_) => const TrackersScreen(),
+              ),
+            ),
+            Navigator(
+              key: _tabNavigators[3],
+              onGenerateRoute: (_) => CupertinoPageRoute<void>(
+                builder: (_) => LibraryScreen(onOpen: _navigateByName),
+              ),
+            ),
+            Navigator(
+              key: _tabNavigators[4],
+              onGenerateRoute: (_) => CupertinoPageRoute<void>(
+                builder: (_) => const SettingsScreen(),
+              ),
+            ),
           ],
         ),
       ),
@@ -148,7 +210,14 @@ class _AppShellState extends ConsumerState<AppShell> {
         child: _BottomBar(
           selected: _tab,
           onSelect: (index) {
-            if (index != _tab) setState(() => _tab = index);
+            if (index == _tab) {
+              // iOS convention: tapping the active tab returns to its root.
+              _tabNavigators[index].currentState?.popUntil(
+                (route) => route.isFirst,
+              );
+              return;
+            }
+            setState(() => _tab = index);
           },
         ),
       ),

@@ -462,7 +462,7 @@ class _DaySwitcherState extends State<DaySwitcher> {
       layoutBuilder: (current, previous) => Stack(
         alignment: Alignment.topCenter,
         fit: StackFit.passthrough,
-        children: [...previous, if (current != null) current],
+        children: [...previous, ?current],
       ),
       transitionBuilder: (child, animation) {
         final incoming = child.key == key;

@@ -56,6 +56,7 @@ class _MemoriesScreenState extends ConsumerState<MemoriesScreen> {
       (icon: Icons.place_rounded, count: summary.visits.length, color: palette.place),
       (icon: Icons.graphic_eq_rounded, count: summary.scrobbles.length, color: palette.music),
       (icon: Icons.task_alt_rounded, count: summary.trackerRecords.length, color: palette.tracker),
+      (icon: Icons.restaurant_outlined, count: summary.meals.length, color: palette.tracker),
     ].where((c) => c.count > 0).toList();
 
     return ScreenFrame(

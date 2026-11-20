@@ -6,7 +6,9 @@ import '../../app/providers/providers.dart';
 import '../../app/providers/settings_provider.dart';
 import '../../app/theme/app_theme.dart';
 import '../../app/widgets/common.dart';
+import '../../app/widgets/components.dart';
 import '../../domain/models/settings.dart';
+import '../../integrations/health/health_steps_service.dart';
 import '../security/pin_dialogs.dart';
 import '../settings/cloudflare_sync_actions.dart';
 
@@ -85,11 +87,13 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   _PageFrame(
                     wide: wide,
                     illustration: const _SignInArt(),
-                    eyebrow: 'Account required',
-                    title: 'Sign in to continue',
+                    eyebrow: 'Optional encrypted backup',
+                    title: 'Keep a copy if you want one',
                     body:
-                        'A Cloudflare account is required to use Lifelog. '
-                        'Sign in or create an account to continue. Your data stays on this device, and you can sync everything (entries, photos, videos, habits, places, music) with end-to-end encryption.',
+                        'Lifelog works fully offline with no account. If you '
+                        'want an encrypted backup copy through your own '
+                        'Cloudflare Worker, set it up now or later in Settings. '
+                        'Nothing here blocks you from using the app.',
                     children: [
                       if (settings.cloudflareConnected)
                         QuietCard(
@@ -103,7 +107,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                               const SizedBox(width: Insets.sm),
                               Expanded(
                                 child: Text(
-                                  'Signed in as ${settings.cloudflareUsername ?? 'your account'}. You can continue setup.',
+                                  'Encrypted backup connected as ${settings.cloudflareUsername ?? 'your account'}. You can change this later in Settings.',
                                   style: Theme.of(context)
                                       .textTheme
                                       .bodySmall
@@ -121,7 +125,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                           icon: Icons.login_rounded,
                           title: 'Sign in',
                           subtitle:
-                              'Use your existing Cloudflare sync account',
+                              'Use a Cloudflare account for encrypted backup',
                           primary: true,
                           onTap: () async {
                             await connectCloudflareSync(context, ref);
@@ -137,7 +141,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                         const SizedBox(height: Insets.md),
                         _SignInChoiceCard(
                           icon: Icons.person_add_alt_1_rounded,
-                          title: 'Create account',
+                          title: 'Set up backup',
                           subtitle:
                               'First-time setup for your personal Cloudflare Worker (built-in URL preconfigured)',
                           onTap: () async {
@@ -154,6 +158,17 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                               );
                             }
                           },
+                        ),
+                        const SizedBox(height: Insets.sm),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton(
+                            onPressed: () => _pages.nextPage(
+                              duration: const Duration(milliseconds: 280),
+                              curve: Curves.easeOutCubic,
+                            ),
+                            child: const Text('Not now — continue without an account'),
+                          ),
                         ),
                       ],
                     ],
@@ -175,7 +190,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                       ),
                       const _FactRow(
                         icon: Icons.cloud_off_outlined,
-                        text: 'No account, no analytics, no cloud sync.',
+                        text: 'Works offline. An encrypted Cloudflare backup copy is optional.',
                       ),
                       const _FactRow(
                         icon: Icons.touch_app_outlined,
@@ -248,9 +263,13 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                       _PermissionCard(
                         icon: Icons.favorite_border_rounded,
                         title: 'Health, sleep & steps',
-                        subtitle: _healthGranted == true
-                            ? 'Access requested. Apple may not confirm read access; allow Steps and Sleep for Lifelog in Health if syncing does not work.'
-                            : 'Read-only access to automatically sync sleep and steps from Apple Health / Health Connect.',
+                        subtitle: _healthStatus.state == HealthAccessState.readable
+                            ? 'Observed health data: ${_healthStatus.stepsReadable ? 'steps' : ''}${_healthStatus.stepsReadable && _healthStatus.sleepReadable ? ', ' : ''}${_healthStatus.sleepReadable ? 'sleep' : ''}.'
+                            : _healthStatus.state == HealthAccessState.requested
+                                ? 'Access requested. Apple does not confirm read access; allow Steps and Sleep for Lifelog in Health if syncing does not work.'
+                                : _healthStatus.state == HealthAccessState.unavailable
+                                    ? 'Health access is not available on this device.'
+                                    : 'Read-only access to automatically sync sleep and steps from Apple Health / Health Connect.',
                         actionLabel: _requestingHealth ? '...' : _healthStatusLabel(),
                         onTap: _requestingHealth
                             ? () {}
@@ -435,12 +454,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     const SizedBox(width: Insets.xl),
                     if (_page == 0)
                       FilledButton.icon(
-                        onPressed: settings.cloudflareConnected
-                            ? () => _pages.nextPage(
-                                  duration: const Duration(milliseconds: 280),
-                                  curve: Curves.easeOutCubic,
-                                )
-                            : null,
+                        onPressed: () => _pages.nextPage(
+                          duration: const Duration(milliseconds: 280),
+                          curve: Curves.easeOutCubic,
+                        ),
                         icon: const Icon(Icons.arrow_forward_rounded, size: 17),
                         label: const Text('Continue'),
                       )
@@ -470,7 +487,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   static const _pagesInitialised = 6;
 
   LocationPermission? _locationPermission;
-  bool? _healthGranted;
+  HealthAccessStatus _healthStatus = const HealthAccessStatus(
+    state: HealthAccessState.unknown,
+  );
   bool _requestingLocation = false;
   bool _requestingHealth = false;
 
@@ -486,14 +505,14 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       location = await Geolocator.checkPermission();
     } catch (_) {}
     final services = ref.read(appServicesProvider);
-    bool? health;
+    HealthAccessStatus? health;
     try {
-      health = await services.healthSteps.hasPermission();
+      health = await services.healthSteps.refreshAccessStatus();
     } catch (_) {}
     if (!mounted) return;
     setState(() {
       _locationPermission = location;
-      _healthGranted = health;
+      if (health != null) _healthStatus = health;
     });
   }
 
@@ -508,9 +527,12 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 
   String _healthStatusLabel() {
-    if (_healthGranted == true) return 'Requested';
-    if (_healthGranted == false) return 'Allow';
-    return 'Allow';
+    return switch (_healthStatus.state) {
+      HealthAccessState.readable => 'Readable',
+      HealthAccessState.requested => 'Requested',
+      HealthAccessState.unavailable => 'Not available',
+      HealthAccessState.unknown => 'Allow',
+    };
   }
 
   Future<void> _requestLocationPermission(BuildContext context) async {
@@ -570,21 +592,17 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         }
         return;
       }
-      final ok = await services.healthSteps.requestPermission();
-      final status = await services.healthSteps.hasPermission();
+      final requested = await services.healthSteps.requestAccessDetailed();
       if (!context.mounted) return;
-      setState(() => _healthGranted = status ?? ok);
-      if (ok || status == true) {
-        showSnack(context, 'Health access requested. If sleep or steps do not sync, allow Steps and Sleep for Lifelog in the Health app or device Settings.');
-      } else {
-        final isApple = Theme.of(context).platform == TargetPlatform.iOS ||
-            Theme.of(context).platform == TargetPlatform.macOS;
-        if (isApple) {
-          showSnack(context, 'Could not enable Health access. Open iPhone Settings > Privacy & Security > Health (or Health app > Apps > Lifelog) and allow Steps and Sleep.');
-        } else {
-          showSnack(context, 'Could not enable Health access. Open Health Connect and allow Lifelog to read Steps and Sleep.');
-        }
-        await Geolocator.openAppSettings();
+      setState(() => _healthStatus = requested);
+      switch (requested.state) {
+        case HealthAccessState.readable:
+          showSnack(context, 'Health data is readable on this device.');
+        case HealthAccessState.requested:
+          showSnack(context, 'Access requested. Apple does not confirm read access; allow Steps and Sleep for Lifelog in Health if syncing does not work.');
+        case HealthAccessState.unavailable:
+        case HealthAccessState.unknown:
+          await _showHealthHelpSheet(context);
       }
     } catch (e) {
       if (context.mounted) {
@@ -594,6 +612,54 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       if (mounted) setState(() => _requestingHealth = false);
       await _refreshPermissionStatuses();
     }
+  }
+
+  /// Health permissions can only be changed by the person, in Health or
+  /// Health Connect. Never route this through the app settings page.
+  Future<void> _showHealthHelpSheet(BuildContext context) async {
+    final isApple = Theme.of(context).platform == TargetPlatform.iOS ||
+        Theme.of(context).platform == TargetPlatform.macOS;
+    await showLifelogSheet<void>(
+      context,
+      builder: (sheetContext) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SheetTitle(
+            title: 'Allow Health access manually',
+            subtitle: 'Read-only sleep and steps',
+          ),
+          Text(
+            isApple
+                ? 'Open the Health app, then go to Profile > Apps > Lifelog '
+                    'and turn on Steps and Sleep. You can also check '
+                    'iPhone Settings > Privacy & Security > Health > Lifelog.'
+                : 'Open Health Connect and allow Lifelog to read Steps and '
+                    'Sleep. Make sure Health Connect is installed and enabled.',
+            style: Theme.of(sheetContext).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: Insets.md),
+          if (isApple)
+            Text(
+              'Apple does not tell apps whether read access was granted. '
+              'A successful request is not the same as confirmed access; if '
+              'sync shows no data, check the switches above and make sure '
+              'sleep and step data exists in Health.',
+              style: Theme.of(sheetContext).textTheme.bodySmall?.copyWith(
+                    color: LifelogPalette.of(sheetContext).mutedText,
+                  ),
+            ),
+          const SizedBox(height: Insets.lg),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: () => Navigator.of(sheetContext).pop(),
+              child: const Text('Close'),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _advance() async {

@@ -6,8 +6,10 @@ import 'package:intl/intl.dart';
 DateTime dayStart(DateTime value) =>
     DateTime(value.year, value.month, value.day);
 
-DateTime dayEnd(DateTime value) =>
-    dayStart(value).add(const Duration(days: 1));
+DateTime dayEnd(DateTime value) {
+  final start = dayStart(value);
+  return DateTime(start.year, start.month, start.day + 1);
+}
 
 bool sameDay(DateTime a, DateTime b) =>
     a.year == b.year && a.month == b.month && a.day == b.day;
@@ -49,7 +51,11 @@ String formatShortDate(DateTime value) => DateFormat('MMM d').format(value);
 String relativeDayLabel(DateTime value, {DateTime? now}) {
   final today = dayStart(now ?? DateTime.now());
   final target = dayStart(value);
-  final diff = target.difference(today).inDays;
+  // Calendar-day delta in UTC avoids DST changing a local duration to 23 or
+  // 25 hours, which would make `inDays` off by one.
+  final diff = DateTime.utc(target.year, target.month, target.day)
+      .difference(DateTime.utc(today.year, today.month, today.day))
+      .inDays;
   if (diff == 0) return 'Today';
   if (diff == -1) return 'Yesterday';
   if (diff == 1) return 'Tomorrow';

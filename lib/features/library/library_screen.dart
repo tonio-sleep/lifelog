@@ -223,7 +223,7 @@ class _LibraryTile extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            if (background != null) background!,
+            ?background,
             if (onImage)
               DecoratedBox(
                 decoration: BoxDecoration(

@@ -1,15 +1,43 @@
-﻿import 'dart:convert';
+﻿import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
+/// Reports bytes confirmed by the server. It is only called after a 2xx
+/// response, so a caller can present the value as actually uploaded.
 typedef UploadByteProgress = void Function(int sent, int total);
 
+const Duration _syncTimeout = Duration(seconds: 30);
+
 /// The Worker sends `expiresIn`; older builds of this app stored
-/// `expiresInSeconds`. Accept both so existing sessions keep their expiry.
+/// `expiresInSeconds`. Both may arrive as a number or a numeric string.
 int? _sessionExpirySeconds(Map<String, dynamic> json) {
   final value = json['expiresIn'] ?? json['expiresInSeconds'];
-  return (value as num?)?.toInt();
+  final parsed = switch (value) {
+    final num number => number,
+    final String text => num.tryParse(text.trim()),
+    _ => null,
+  };
+  if (parsed == null || parsed.isNaN || parsed.isInfinite) return null;
+  final seconds = parsed.toInt();
+  return seconds >= 0 ? seconds : null;
+}
+
+/// Plain HTTP is only acceptable for an explicitly local Worker.
+bool _isLoopbackHost(String host) {
+  final normalized = host.toLowerCase();
+  return normalized == 'localhost' ||
+      normalized == '127.0.0.1' ||
+      normalized == '::1';
+}
+
+String friendlyCloudflareSyncError(Object error) {
+  if (error is TimeoutException) {
+    return 'The sync server took too long to respond. Check your connection and try again.';
+  }
+  if (error is CloudflareSyncException) return error.message;
+  return '$error';
 }
 
 class CloudflareSyncException implements Exception {
@@ -77,7 +105,24 @@ class CloudflareSyncService {
     while (v.endsWith('/')) {
       v = v.substring(0, v.length - 1);
     }
+    final warning = workerUrlWarning(v);
+    if (warning != null) throw CloudflareSyncException(warning);
     return v;
+  }
+
+  /// Non-blocking validation for the advanced Worker URL fields. Mirrors
+  /// [normalizeBaseUrl] so the form can warn before a request is attempted.
+  static String? workerUrlWarning(String raw) {
+    var v = raw.trim();
+    if (v.isEmpty) return null;
+    if (!v.contains('://')) v = 'https://$v';
+    final uri = Uri.tryParse(v);
+    if (uri == null || uri.scheme.isEmpty || uri.host.isEmpty) {
+      return 'Enter a valid Worker URL.';
+    }
+    if (uri.scheme == 'https') return null;
+    if (uri.scheme == 'http' && _isLoopbackHost(uri.host)) return null;
+    return 'Use an HTTPS Worker URL. Plain HTTP is only allowed for localhost.';
   }
 
   Uri _uri(String baseUrl, String path) {
@@ -89,12 +134,14 @@ class CloudflareSyncService {
   Map<String, String> _authHeaders(String token, {Map<String, String>? extra}) {
     return {
       'Authorization': 'Bearer $token',
-      if (extra != null) ...extra,
+      ...?extra,
     };
   }
 
   Future<void> checkHealth(String baseUrl) async {
-    final resp = await _http.get(_uri(baseUrl, '/api/health'));
+    final resp = await _http
+        .get(_uri(baseUrl, '/api/health'))
+        .timeout(_syncTimeout);
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
       throw CloudflareSyncException(_friendlyHttpError(resp, fallback: 'Could not reach the sync server.'));
     }
@@ -105,11 +152,13 @@ class CloudflareSyncService {
     required String username,
     required String password,
   }) async {
-    final resp = await _http.post(
-      _uri(baseUrl, '/api/auth/register'),
-      headers: const {'Content-Type': 'application/json'},
-      body: jsonEncode({'username': username.trim(), 'password': password}),
-    );
+    final resp = await _http
+        .post(
+          _uri(baseUrl, '/api/auth/register'),
+          headers: const {'Content-Type': 'application/json'},
+          body: jsonEncode({'username': username.trim(), 'password': password}),
+        )
+        .timeout(_syncTimeout);
     final data = _decodeJson(resp);
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
       throw CloudflareSyncException(_messageFrom(data) ?? _friendlyHttpError(resp, fallback: 'Could not create account.'));
@@ -132,11 +181,13 @@ class CloudflareSyncService {
     required String username,
     required String password,
   }) async {
-    final resp = await _http.post(
-      _uri(baseUrl, '/api/auth/login'),
-      headers: const {'Content-Type': 'application/json'},
-      body: jsonEncode({'username': username.trim(), 'password': password}),
-    );
+    final resp = await _http
+        .post(
+          _uri(baseUrl, '/api/auth/login'),
+          headers: const {'Content-Type': 'application/json'},
+          body: jsonEncode({'username': username.trim(), 'password': password}),
+        )
+        .timeout(_syncTimeout);
     final data = _decodeJson(resp);
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
       throw CloudflareSyncException(_messageFrom(data) ?? _friendlyHttpError(resp, fallback: 'Could not sign in.'));
@@ -158,10 +209,12 @@ class CloudflareSyncService {
     required String baseUrl,
     required String token,
   }) async {
-    final resp = await _http.get(
-      _uri(baseUrl, '/api/backup/meta'),
-      headers: _authHeaders(token),
-    );
+    final resp = await _http
+        .get(
+          _uri(baseUrl, '/api/backup/meta'),
+          headers: _authHeaders(token),
+        )
+        .timeout(_syncTimeout);
     final data = _decodeJson(resp);
     if (resp.statusCode == 401) {
       throw CloudflareSyncException('Session expired. Please sign in again.');
@@ -169,8 +222,12 @@ class CloudflareSyncService {
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
       throw CloudflareSyncException(_messageFrom(data) ?? _friendlyHttpError(resp, fallback: 'Could not check cloud backup.'));
     }
-    final exists = data['exists'] == true;
-    if (!exists) return CloudflareBackupMeta(exists: false);
+    final rawExists = data['exists'];
+    if (rawExists is! bool) {
+      // Missing/unknown metadata must never be read as "no remote backup".
+      throw CloudflareSyncException('Could not confirm the cloud backup state.');
+    }
+    if (!rawExists) return CloudflareBackupMeta(exists: false);
     return CloudflareBackupMeta(
       exists: true,
       size: (data['size'] as num?)?.toInt(),
@@ -204,18 +261,24 @@ class CloudflareSyncService {
 
     // Stream the exact same bytes as the old single PUT; Workers read the
     // body with arrayBuffer(), so chunked transfer stays wire-compatible.
-    const chunkSize = 64 * 1024;
-    for (var offset = 0; offset < bytes.length; offset += chunkSize) {
-      final end = offset + chunkSize < bytes.length
-          ? offset + chunkSize
-          : bytes.length;
-      request.sink.add(Uint8List.sublistView(bytes, offset, end));
-      onByteProgress?.call(end, bytes.length);
+    // Writing to the sink only queues bytes locally: never report them as sent
+    // before the Worker answers.
+    try {
+      const chunkSize = 64 * 1024;
+      for (var offset = 0; offset < bytes.length; offset += chunkSize) {
+        final end = offset + chunkSize < bytes.length
+            ? offset + chunkSize
+            : bytes.length;
+        request.sink.add(Uint8List.sublistView(bytes, offset, end));
+      }
+    } finally {
+      await request.sink.close().timeout(_syncTimeout);
     }
-    await request.sink.close();
 
-    final streamed = await response;
-    final resp = await http.Response.fromStream(streamed);
+    final streamed = await response.timeout(_syncTimeout);
+    final resp = await http.Response
+        .fromStream(streamed)
+        .timeout(_syncTimeout);
     if (resp.statusCode == 401) {
       throw CloudflareSyncException('Session expired. Please sign in again.');
     }
@@ -223,16 +286,20 @@ class CloudflareSyncService {
       final data = _decodeJson(resp);
       throw CloudflareSyncException(_messageFrom(data) ?? _friendlyHttpError(resp, fallback: 'Could not upload backup.'));
     }
+    // The Worker accepted the whole body. Only now is byte progress truthful.
+    onByteProgress?.call(bytes.length, bytes.length);
   }
 
   Future<Uint8List> downloadBackup({
     required String baseUrl,
     required String token,
   }) async {
-    final resp = await _http.get(
-      _uri(baseUrl, '/api/backup'),
-      headers: _authHeaders(token),
-    );
+    final resp = await _http
+        .get(
+          _uri(baseUrl, '/api/backup'),
+          headers: _authHeaders(token),
+        )
+        .timeout(_syncTimeout);
     if (resp.statusCode == 401) {
       throw CloudflareSyncException('Session expired. Please sign in again.');
     }

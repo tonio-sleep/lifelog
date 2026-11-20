@@ -87,19 +87,31 @@ class _LockGateState extends ConsumerState<LockGate> with WidgetsBindingObserver
   @override
   Widget build(BuildContext context) {
     final locked = ref.watch(sessionLockProvider);
-    if (locked) {
-      return LockScreen(
-        onUnlocked: () {
-          _bump();
-          ref.read(sessionLockProvider.notifier).unlock();
-        },
-      );
-    }
-    return Listener(
-      behavior: HitTestBehavior.translucent,
-      onPointerDown: (_) => _bump(),
-      onPointerMove: (_) => _bump(),
-      child: widget.child,
+    // Keep the main app mounted underneath the privacy screen. Replacing the
+    // child used to destroy per-tab navigators, scroll positions and in-progress
+    // screens every time the app locked and unlocked.
+    return Stack(
+      children: [
+        Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: (_) => _bump(),
+          onPointerMove: (_) => _bump(),
+          child: widget.child,
+        ),
+        if (locked) ...[
+          const Positioned.fill(
+            child: ModalBarrier(dismissible: false, color: Colors.transparent),
+          ),
+          Positioned.fill(
+            child: LockScreen(
+              onUnlocked: () {
+                _bump();
+                ref.read(sessionLockProvider.notifier).unlock();
+              },
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

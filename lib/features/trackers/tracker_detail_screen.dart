@@ -50,8 +50,11 @@ class TrackerDetailScreen extends ConsumerWidget {
     ];
     final values = series.map((point) => point.value).toList();
     final unit = tracker.unit.trim();
-    final streak = history.currentStreak(today);
-    final best = history.bestStreak();
+    var loggedInLast30 = 0;
+    for (var i = 0; i < 30; i++) {
+      final dayInWindow = DateTime(today.year, today.month, today.day - i);
+      if (history.loggedOn(dayInWindow)) loggedInLast30++;
+    }
 
     return ScreenFrame(
       title: tracker.name,
@@ -123,20 +126,20 @@ class TrackerDetailScreen extends ConsumerWidget {
                   Expanded(
                     child: StatTile(
                       compact: true,
-                      icon: Icons.local_fire_department_rounded,
-                      accent: context.scheme.secondary,
-                      value: '$streak',
-                      label: 'Current streak',
+                      icon: Icons.event_note_outlined,
+                      accent: accent,
+                      value: '$loggedInLast30 of 30',
+                      label: 'Days logged',
                     ),
                   ),
                   const SizedBox(width: Insets.md),
                   Expanded(
                     child: StatTile(
                       compact: true,
-                      icon: Icons.emoji_events_outlined,
+                      icon: Icons.history_rounded,
                       accent: accent,
-                      value: '$best',
-                      label: 'Best streak',
+                      value: '${records.length}',
+                      label: 'Total records',
                     ),
                   ),
                 ],

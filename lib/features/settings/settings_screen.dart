@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 import '../../app/providers/providers.dart';
 import '../../app/providers/session_provider.dart';
@@ -19,11 +18,58 @@ import '../security/pin_dialogs.dart';
 import 'account_sync_card.dart';
 import 'backup_actions.dart';
 
-class SettingsScreen extends ConsumerWidget {
+class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  HealthAccessState _healthStatus = HealthAccessState.unknown;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshHealthStatus();
+  }
+
+  /// Read permission is not reliably observable on iOS. A confirmed readable
+  /// probe is the only positive signal; a successful request stays "requested".
+  Future<void> _refreshHealthStatus() async {
+    final services = ref.read(appServicesProvider);
+    if (!services.healthSteps.isSupported) {
+      if (!mounted) return;
+      setState(() => _healthStatus = HealthAccessState.unavailable);
+      return;
+    }
+    final permission = await services.healthSteps.hasPermission();
+    var status = HealthAccessState.unknown;
+    if (permission == true) {
+      status = HealthAccessState.readable;
+    } else {
+      final summary = await services.healthSteps.getDailySummary(DateTime.now());
+      if (summary.hasData) status = HealthAccessState.readable;
+    }
+    if (!mounted) return;
+    setState(() => _healthStatus = status);
+  }
+
+  String _healthStatusSubtitle() {
+    return switch (_healthStatus) {
+      HealthAccessState.readable =>
+        'Health data is readable on this device. Tap for manual instructions.',
+      HealthAccessState.requested =>
+        'Access requested, not confirmed readable. Tap for manual instructions.',
+      HealthAccessState.unavailable =>
+        'Health store unavailable on this device.',
+      HealthAccessState.unknown =>
+        'Status unknown. Tap to read the manual instructions.',
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final settings = ref.watch(settingsProvider);
     final archive = ref.watch(archiveProvider);
     final services = ref.watch(appServicesProvider);
@@ -232,7 +278,7 @@ class SettingsScreen extends ConsumerWidget {
                 icon: Icons.favorite_border_rounded,
                 iconColor: palette.tracker,
                 title: 'Health access',
-                subtitle: 'Allow read-only access to sync sleep and steps from Apple Health / Health Connect',
+                subtitle: _healthStatusSubtitle(),
                 chevron: true,
                 onTap: () => _requestHealthAccess(context, ref),
               ),
@@ -250,7 +296,7 @@ class SettingsScreen extends ConsumerWidget {
           ListGroup(
             title: 'Health sync',
             footer:
-                'Sleep and steps are read from Health and saved as day health metrics (separate from check-ins). Read-only; nothing is written to Health. On iPhone, Health does not reveal read permission status.',
+                'Sleep and steps are read from Health and saved as day health metrics (separate from check-ins). Read-only; nothing is written to Health. Requesting access is not the same as confirmed read access: on iPhone, Health does not reveal read permission status.',
             children: [
               ListRow(
                 icon: Icons.sync_rounded,
@@ -337,7 +383,7 @@ class SettingsScreen extends ConsumerWidget {
         ),
         ListGroup(
           title: 'About',
-          footer: 'Lifelog 1.0.0. No account required and no analytics. Your data is stored locally and encrypted on this device.',
+          footer: 'Lifelog 1.0.0. No account required and no analytics. Your data is stored locally and encrypted on this device. Cloudflare is optional: an encrypted backup copy via your own Worker.',
           children: [
             ListRow(
               icon: Icons.info_outline_rounded,
@@ -493,13 +539,14 @@ class SettingsScreen extends ConsumerWidget {
       errorPrefix: 'Could not request Health access',
     );
     if (!context.mounted) return;
+    setState(() => _healthStatus = access ?? HealthAccessState.unknown);
     switch (access) {
       case HealthAccessState.readable:
-        showSnack(context, 'Health access is working. Steps and sleep can be synced.');
+        showSnack(context, 'Health data is readable. Steps and sleep can be synced.');
       case HealthAccessState.requested:
         showSnack(
           context,
-          'Permission requested. Apple does not confirm read access — if steps or sleep do not sync, allow Steps and Sleep for Lifelog in the Health app.',
+          'Access requested, not confirmed readable. Apple does not reveal read access; allow Steps and Sleep for Lifelog in Health if syncing does not work.',
         );
       case HealthAccessState.unavailable:
       case HealthAccessState.unknown:
@@ -540,26 +587,13 @@ class SettingsScreen extends ConsumerWidget {
               body: 'Open Health Connect and allow Lifelog to read Steps and Sleep. Make sure Health Connect is installed/enabled on your device.',
             ),
           ],
-          const SizedBox(height: Insets.sm),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => Navigator.of(sheetContext).pop(),
-                  child: const Text('Close'),
-                ),
-              ),
-              const SizedBox(width: Insets.sm),
-              Expanded(
-                child: FilledButton(
-                  onPressed: () async {
-                    Navigator.of(sheetContext).pop();
-                    await openAppSettings();
-                  },
-                  child: const Text('Open Settings'),
-                ),
-              ),
-            ],
+          const SizedBox(height: Insets.lg),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: () => Navigator.of(sheetContext).pop(),
+              child: const Text('Close'),
+            ),
           ),
         ],
       ),
@@ -641,6 +675,7 @@ class SettingsScreen extends ConsumerWidget {
       await _showHealthAccessHelp(context);
       return;
     }
+    if (!context.mounted) return;
     final today = DateTime.now();
     final summary = await guard(
       context,

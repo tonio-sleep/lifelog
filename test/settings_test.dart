@@ -22,4 +22,33 @@ void main() {
       isNull,
     );
   });
+
+  test('a remembered passphrase is account-scoped and cleared on sign-out', () {
+    final settings = AppSettings(
+      cloudflareUsername: 'me@example.com',
+      cloudflarePassphraseCipher: 'encrypted-value',
+      cloudflarePassphraseOwner: 'me@example.com',
+    );
+    final restored = AppSettings.fromJson(settings.toJson());
+    expect(restored.cloudflarePassphraseOwner, 'me@example.com');
+    expect(restored.hasRememberedCloudflarePassphrase, isTrue);
+
+    final switched = restored.copyWith(cloudflareUsername: 'other');
+    expect(switched.hasRememberedCloudflarePassphrase, isFalse);
+    final signedOut = restored.copyWith(clearCloudflareSession: true);
+    expect(signedOut.cloudflarePassphraseCipher, isNull);
+    expect(signedOut.cloudflarePassphraseOwner, isNull);
+  });
+
+  test('legacy settings without an owner never reuse a passphrase', () {
+    final json = AppSettings(
+      cloudflareUsername: 'me',
+      cloudflarePassphraseCipher: 'encrypted-value',
+    ).toJson()
+      ..remove('cloudflarePassphraseOwner');
+    final restored = AppSettings.fromJson(json);
+
+    expect(restored.cloudflarePassphraseCipher, 'encrypted-value');
+    expect(restored.hasRememberedCloudflarePassphrase, isFalse);
+  });
 }

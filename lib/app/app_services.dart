@@ -31,6 +31,7 @@ class AppServices {
     required this.archive,
     required this.settings,
     required this.keySource,
+    this.startupWarnings = const [],
   });
 
   final Directory rootDirectory;
@@ -46,6 +47,10 @@ class AppServices {
   final AppSettings settings;
   final String keySource;
 
+  /// Non-fatal problems found while loading the key, settings or archive.
+  /// Surfaces degraded recoveries without discarding the user's data.
+  final List<String> startupWarnings;
+
   Directory get mediaDirectory => mediaStore.directory;
 
   static Future<AppServices> bootstrap() async {
@@ -60,8 +65,14 @@ class AppServices {
       await backups.create(recursive: true);
     } catch (_) {}
 
+    // Check before loading the key: a new key must never be generated just
+    // because secure storage is temporarily unreadable on an existing install.
+    final archiveExists = await File(
+      p.join(root.path, ArchiveStore.fileName),
+    ).exists();
+
     final vault = KeyVault(directory: root);
-    final key = await vault.loadOrCreate();
+    final key = await vault.loadOrCreate(archiveExists: archiveExists);
     final crypto = CryptoService(key);
     final keySource = vault.usedFallback
         ? 'Local key file (platform secure storage unavailable)'
@@ -75,6 +86,11 @@ class AppServices {
     final settingsStore = SettingsStore(directory: root);
     var settings = await settingsStore.load();
     var archive = await archiveStore.load() ?? Archive.empty();
+
+    final startupWarnings = <String>[
+      if (vault.lastWarning != null) vault.lastWarning!,
+      if (settingsStore.lastLoadError != null) settingsStore.lastLoadError!,
+    ];
 
     // Additive, one-time migration of legacy meal habits and entry meal text.
     // Old JSON keys stay readable; only the archive's new `meals` list is added.
@@ -103,6 +119,7 @@ class AppServices {
       archive: archive,
       settings: settings,
       keySource: keySource,
+      startupWarnings: startupWarnings,
     );
   }
 }

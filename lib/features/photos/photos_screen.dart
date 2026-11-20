@@ -57,6 +57,40 @@ class _PhotosScreenState extends ConsumerState<PhotosScreen> {
     final months = byMonth.keys.toList()..sort((a, b) => b.compareTo(a));
     final totalBytes = all.fold<int>(0, (sum, item) => sum + item.bytes);
 
+    final frameChildren = <Widget>[
+      if (all.isNotEmpty)
+        FilterRow<_MediaFilter>(
+          values: _MediaFilter.values,
+          selected: _filter,
+          labelFor: (value) => switch (value) {
+            _MediaFilter.all => 'All',
+            _MediaFilter.photos => 'Photos',
+            _MediaFilter.videos => 'Videos',
+            _MediaFilter.favourites => 'Favourites',
+          },
+          iconFor: (value) =>
+              value == _MediaFilter.favourites ? Icons.star_rounded : null,
+          onChanged: (value) => setState(() => _filter = value),
+        ),
+      if (all.isEmpty)
+        EmptyState(
+          icon: Icons.photo_library_outlined,
+          color: palette.photo,
+          title: 'No media yet',
+          message: 'Photos and videos you add are encrypted before they are stored.',
+          actionLabel: 'Add media',
+          onAction: () =>
+              importMediaForDay(context, ref, dayStart(selectedDay)),
+        )
+      else if (filtered.isEmpty)
+        const EmptyState(
+          icon: Icons.filter_list_off_rounded,
+          title: 'Nothing here',
+          message: 'No items match this filter.',
+          compact: true,
+        ),
+    ];
+
     return ScreenFrame(
       title: 'Media',
       subtitle: all.isEmpty
@@ -69,39 +103,6 @@ class _PhotosScreenState extends ConsumerState<PhotosScreen> {
           filled: true,
           onPressed: () => importMediaForDay(context, ref, dayStart(selectedDay)),
         ),
-      ],
-      children: [
-        if (all.isNotEmpty)
-          FilterRow<_MediaFilter>(
-            values: _MediaFilter.values,
-            selected: _filter,
-            labelFor: (value) => switch (value) {
-              _MediaFilter.all => 'All',
-              _MediaFilter.photos => 'Photos',
-              _MediaFilter.videos => 'Videos',
-              _MediaFilter.favourites => 'Favourites',
-            },
-            iconFor: (value) =>
-                value == _MediaFilter.favourites ? Icons.star_rounded : null,
-            onChanged: (value) => setState(() => _filter = value),
-          ),
-        if (all.isEmpty)
-          EmptyState(
-            icon: Icons.photo_library_outlined,
-            color: palette.photo,
-            title: 'No media yet',
-            message: 'Photos and videos you add are encrypted before they are stored.',
-            actionLabel: 'Add media',
-            onAction: () =>
-                importMediaForDay(context, ref, dayStart(selectedDay)),
-          )
-        else if (filtered.isEmpty)
-          const EmptyState(
-            icon: Icons.filter_list_off_rounded,
-            title: 'Nothing here',
-            message: 'No items match this filter.',
-            compact: true,
-          ),
       ],
       slivers: [
         for (final key in months) ...[
@@ -156,6 +157,7 @@ class _PhotosScreenState extends ConsumerState<PhotosScreen> {
           ),
         ],
       ],
+      children: frameChildren,
     );
   }
 }

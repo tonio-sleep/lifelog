@@ -125,7 +125,7 @@ class AppTheme {
           tertiary: dark ? const Color(0xFF7CCBA4) : const Color(0xFF2B7A58),
           surface: surface,
           onSurface: ink,
-          onSurfaceVariant: ink.withValues(alpha: 0.66),
+          onSurfaceVariant: ink.withValues(alpha: 0.78),
           surfaceContainerLowest: surface,
           surfaceContainerLow: card,
           surfaceContainer: card,
@@ -140,11 +140,11 @@ class AppTheme {
       card: card,
       subtle: subtle,
       border: border,
-      // Body-level secondary text.
-      mutedText: ink.withValues(alpha: 0.66),
+      // Body-level secondary text. Kept readable against both card surfaces.
+      mutedText: ink.withValues(alpha: 0.78),
       // Non-essential metadata only (timestamps, footnotes). Never the only
-      // carrier of meaning.
-      dimText: ink.withValues(alpha: 0.50),
+      // carrier of meaning, but still readable without relying on colour alone.
+      dimText: ink.withValues(alpha: 0.66),
       glass: dark ? const Color(0xD91C1C1E) : const Color(0xD9FFFFFF),
       success: scheme.tertiary,
       warning: scheme.secondary,
@@ -156,6 +156,8 @@ class AppTheme {
       music: dark ? const Color(0xFFBBA8E6) : const Color(0xFF7A62B5),
       photo: dark ? const Color(0xFFDDB27A) : const Color(0xFFA9702B),
       manual: dark ? const Color(0xFFA7ABB8) : const Color(0xFF6B6F7B),
+      // High-contrast foreground for labels drawn over artwork/photographs.
+      onPhoto: Colors.white,
       isDark: dark,
     );
 
@@ -488,6 +490,7 @@ class LifelogPalette extends ThemeExtension<LifelogPalette> {
     required this.music,
     required this.photo,
     required this.manual,
+    this.onPhoto = Colors.white,
     required this.isDark,
   });
 
@@ -510,6 +513,9 @@ class LifelogPalette extends ThemeExtension<LifelogPalette> {
   final Color photo;
   final Color manual;
 
+  /// Foreground for text/icons drawn on top of image or artwork surfaces.
+  final Color onPhoto;
+
   final bool isDark;
 
   static LifelogPalette of(BuildContext context) =>
@@ -531,6 +537,7 @@ class LifelogPalette extends ThemeExtension<LifelogPalette> {
     Color? music,
     Color? photo,
     Color? manual,
+    Color? onPhoto,
     bool? isDark,
   }) {
     return LifelogPalette(
@@ -548,6 +555,7 @@ class LifelogPalette extends ThemeExtension<LifelogPalette> {
       music: music ?? this.music,
       photo: photo ?? this.photo,
       manual: manual ?? this.manual,
+      onPhoto: onPhoto ?? this.onPhoto,
       isDark: isDark ?? this.isDark,
     );
   }
@@ -570,6 +578,7 @@ class LifelogPalette extends ThemeExtension<LifelogPalette> {
       music: Color.lerp(music, other.music, t)!,
       photo: Color.lerp(photo, other.photo, t)!,
       manual: Color.lerp(manual, other.manual, t)!,
+      onPhoto: Color.lerp(onPhoto, other.onPhoto, t)!,
       isDark: t < 0.5 ? isDark : other.isDark,
     );
   }

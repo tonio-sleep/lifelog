@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -17,11 +18,12 @@ import '../../integrations/cloudflare/cloud_remote_state.dart';
 import '../../integrations/cloudflare/cloudflare_sync_service.dart';
 import '../../integrations/cloudflare/sync_status.dart';
 
-bool _isSessionExpired(CloudflareSyncException e) {
-  final m = e.message.toLowerCase();
-  return m.contains('session expired') ||
-      m.contains('unauthorized') ||
-      m.contains('sign in again');
+const String _timeoutMessage =
+    'The sync server took too long to respond. Check your connection and try again.';
+
+String _syncError(Object error) {
+  if (error is TimeoutException) return _timeoutMessage;
+  return friendlyCloudflareSyncError(error);
 }
 
 Future<void> _handleAuthFailure(BuildContext context, WidgetRef ref) async {
@@ -55,51 +57,65 @@ Future<void> connectCloudflareSync(
   );
   if (result == null || !context.mounted) return;
 
+  final urlWarning = CloudflareSyncService.workerUrlWarning(result.workerUrl);
+  if (urlWarning != null) {
+    if (context.mounted) showSnack(context, urlWarning);
+    return;
+  }
   final services = ref.read(appServicesProvider);
   final baseUrl = CloudflareSyncService.normalizeBaseUrl(result.workerUrl);
   final username = result.username.trim().toLowerCase();
   final password = result.password;
+  final errorPrefix = result.createAccount
+      ? 'Could not create account'
+      : 'Could not sign in';
 
-  final session = await guard<CloudflareSession>(
-    context,
-    () async {
-      if (result.createAccount) {
-        try {
-          await services.cloudflareSync.register(
-            baseUrl: baseUrl,
-            username: username,
-            password: password,
-          );
-        } on CloudflareSyncException catch (e) {
-          // If first-user setup already happened, fall through to login.
-          final msg = e.message.toLowerCase();
-          if (!msg.contains('already') && !msg.contains('exists')) {
-            rethrow;
-          }
+  CloudflareSession? session;
+  try {
+    if (result.createAccount) {
+      try {
+        await services.cloudflareSync.register(
+          baseUrl: baseUrl,
+          username: username,
+          password: password,
+        );
+      } on CloudflareSyncException catch (e) {
+        // If first-user setup already happened, fall through to login.
+        final msg = e.message.toLowerCase();
+        if (!msg.contains('already') && !msg.contains('exists')) {
+          rethrow;
         }
       }
-      return services.cloudflareSync.login(
-        baseUrl: baseUrl,
-        username: username,
-        password: password,
-      );
-    }(),
-    errorPrefix: result.createAccount
-        ? 'Could not create account'
-        : 'Could not sign in',
-  );
-  if (session == null || !context.mounted) return;
+    }
+    session = await services.cloudflareSync.login(
+      baseUrl: baseUrl,
+      username: username,
+      password: password,
+    );
+  } on TimeoutException {
+    if (context.mounted) showSnack(context, _timeoutMessage);
+    return;
+  } catch (error) {
+    if (context.mounted) showSnack(context, '$errorPrefix: ${_syncError(error)}');
+    return;
+  }
+  if (!context.mounted) return;
 
-  await guard(
-    context,
-    ref.read(settingsProvider.notifier).saveCloudflareSession(
+  try {
+    await ref.read(settingsProvider.notifier).saveCloudflareSession(
           workerUrl: baseUrl,
           username: session.username,
           sessionJson: jsonEncode(session.toJson()),
-        ),
-    errorPrefix: 'Could not save session',
-  );
-  if (!context.mounted) return;
+        );
+  } catch (error) {
+    if (context.mounted) {
+      showSnack(context, 'Could not save session: ${_syncError(error)}');
+    }
+    return;
+  }
+  // New account: remote metadata and "session rejected" belong to the old one.
+  ref.invalidate(cloudRemoteMetaProvider);
+  ref.invalidate(syncSessionRejectedProvider);
 
   // A remembered passphrase belongs to the previous account's backup. Never
   // reuse it automatically after switching accounts.
@@ -184,6 +200,8 @@ Future<void> signOutCloudflareSync(BuildContext context, WidgetRef ref) async {
     ref.read(settingsProvider.notifier).disconnectCloudflareSync(),
     errorPrefix: 'Could not sign out',
   );
+  ref.invalidate(cloudRemoteMetaProvider);
+  ref.invalidate(syncSessionRejectedProvider);
   if (context.mounted) showSnack(context, 'Signed out of Cloudflare sync.');
 }
 
@@ -224,11 +242,15 @@ Future<void> forgetCloudflareBackupPassphrase(
 }
 
 Future<void> backupToCloudflare(BuildContext context, WidgetRef ref) async {
+  final progress = ref.read(backupUploadProvider.notifier);
+  // A previous attempt may have left a failed/stuck progress block behind.
+  progress.clear();
   final auth = await _requireCloudflareSession(context, ref, promptSignIn: true);
   if (auth == null || !context.mounted) return;
 
-  // A push overwrites the single remote blob. Never let an empty local archive
-  // quietly erase a real cloud backup.
+  // A push overwrites the single remote blob. An empty local archive may only
+  // proceed when the server positively reported "no backup"; errors and unknown
+  // responses fail closed.
   if (ref.read(archiveProvider).isEmpty) {
     CloudflareBackupMeta? remote;
     try {
@@ -236,8 +258,33 @@ Future<void> backupToCloudflare(BuildContext context, WidgetRef ref) async {
             baseUrl: auth.workerUrl,
             token: auth.token,
           );
-    } catch (_) {}
-    if (remote?.exists == true && context.mounted) {
+    } on TimeoutException {
+      progress.fail('Cloud check timed out. Push cancelled: $_timeoutMessage');
+      if (context.mounted) showSnack(context, _timeoutMessage);
+      return;
+    } on CloudflareSyncException catch (e) {
+      progress.fail('Could not check cloud backup before push: ${e.message}');
+      if (!context.mounted) return;
+      if (isCloudflareSessionExpired(e)) {
+        await _handleAuthFailure(context, ref);
+      } else {
+        showSnack(
+          context,
+          'Could not check cloud backup: ${e.message}. Push cancelled.',
+        );
+      }
+      return;
+    } catch (e) {
+      final message = _syncError(e);
+      progress.fail('Could not check cloud backup before push: $message');
+      if (context.mounted) {
+        showSnack(context, 'Could not check cloud backup: $message. Push cancelled.');
+      }
+      return;
+    }
+    // Every unsuccessful check above returned; only a positive exists=false
+    // (or an explicitly confirmed existing backup) reaches this point.
+    if (remote.exists && context.mounted) {
       final overwrite = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -277,7 +324,6 @@ Future<void> backupToCloudflare(BuildContext context, WidgetRef ref) async {
   }
 
   final services = ref.read(appServicesProvider);
-  final progress = ref.read(backupUploadProvider.notifier);
   progress.begin();
 
   late Uint8List data;
@@ -289,9 +335,10 @@ Future<void> backupToCloudflare(BuildContext context, WidgetRef ref) async {
       onProgress: progress.packed,
     );
   } catch (e) {
-    progress.fail('Could not create encrypted backup: $e');
+    final message = _syncError(e);
+    progress.fail('Could not create encrypted backup: $message');
     if (context.mounted) {
-      showSnack(context, 'Could not create encrypted backup: $e');
+      showSnack(context, 'Could not create encrypted backup: $message');
     }
     return;
   }
@@ -305,36 +352,49 @@ Future<void> backupToCloudflare(BuildContext context, WidgetRef ref) async {
       baseUrl: auth.workerUrl,
       token: auth.token,
       bytes: data,
-      onByteProgress: progress.uploading,
+      // Called only after a 2xx, so the progress value is truthful.
+      onByteProgress: (sent, total) => progress.uploading(sent, total),
     );
+  } on TimeoutException {
+    progress.fail('Could not upload backup: $_timeoutMessage');
+    if (context.mounted) showSnack(context, _timeoutMessage);
+    return;
   } on CloudflareSyncException catch (e) {
     progress.fail('Could not upload backup: ${e.message}');
     if (!context.mounted) return;
-    if (_isSessionExpired(e)) {
+    if (isCloudflareSessionExpired(e)) {
       await _handleAuthFailure(context, ref);
       return;
     }
     showSnack(context, 'Could not upload backup: ${e.message}');
     return;
   } catch (e) {
-    progress.fail('Could not upload backup: $e');
-    if (context.mounted) showSnack(context, 'Could not upload backup: $e');
+    final message = _syncError(e);
+    progress.fail('Could not upload backup: $message');
+    if (context.mounted) showSnack(context, 'Could not upload backup: $message');
     return;
   }
 
-  if (!passphraseWasRemembered) {
-    await settings.rememberCloudflareBackupPassphrase(passphrase);
-  }
-  await settings.recordCloudflareSync(DateTime.now());
-  ref.invalidate(cloudRemoteMetaProvider);
-  progress.finish();
-  if (context.mounted) {
-    showSnack(
-      context,
-      passphraseWasRemembered
-          ? 'Encrypted backup synced to Cloudflare.'
-          : 'Encrypted backup synced. Passphrase remembered on this device — write it down for new devices.',
-    );
+  var rememberedNow = false;
+  try {
+    if (!passphraseWasRemembered) {
+      await settings.rememberCloudflareBackupPassphrase(passphrase);
+      rememberedNow = true;
+    }
+    await settings.recordCloudflareSync(DateTime.now());
+  } catch (_) {
+    // Local bookkeeping is best-effort: the upload itself already succeeded.
+  } finally {
+    ref.invalidate(cloudRemoteMetaProvider);
+    progress.finish();
+    if (context.mounted) {
+      showSnack(
+        context,
+        rememberedNow
+            ? 'Encrypted backup synced. Passphrase remembered on this device — write it down for new devices.'
+            : 'Encrypted backup synced to Cloudflare.',
+      );
+    }
   }
 }
 
@@ -347,6 +407,8 @@ Future<void> pushToCloudflare(BuildContext context, WidgetRef ref) =>
     backupToCloudflare(context, ref);
 
 Future<void> restoreFromCloudflare(BuildContext context, WidgetRef ref) async {
+  // Clear any progress left over from an earlier push before starting a pull.
+  ref.read(backupUploadProvider.notifier).clear();
   final auth = await _requireCloudflareSession(context, ref, promptSignIn: true);
   if (auth == null || !context.mounted) return;
 
@@ -358,16 +420,21 @@ Future<void> restoreFromCloudflare(BuildContext context, WidgetRef ref) async {
       baseUrl: auth.workerUrl,
       token: auth.token,
     );
+  } on TimeoutException {
+    if (context.mounted) showSnack(context, _timeoutMessage);
+    return;
   } on CloudflareSyncException catch (e) {
     if (!context.mounted) return;
-    if (_isSessionExpired(e)) {
+    if (isCloudflareSessionExpired(e)) {
       await _handleAuthFailure(context, ref);
       return;
     }
     showSnack(context, 'Could not check cloud backup: ${e.message}');
     return;
   } catch (e) {
-    if (context.mounted) showSnack(context, 'Could not check cloud backup: $e');
+    if (context.mounted) {
+      showSnack(context, 'Could not check cloud backup: ${_syncError(e)}');
+    }
     return;
   }
 
@@ -387,7 +454,7 @@ Future<void> restoreFromCloudflare(BuildContext context, WidgetRef ref) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(
-      title: const Text('Restore from Cloudflare?'),
+      title: const Text('Replace from cloud backup?'),
       content: Text(
         when != null
             ? 'This will replace the data on this device with the encrypted cloud backup from ${formatDayLong(when)} ${formatTime(when)}. ${passphraseWasRemembered ? 'Your saved passphrase will be used automatically.' : 'Your backup passphrase is required.'}'
@@ -424,21 +491,27 @@ Future<void> restoreFromCloudflare(BuildContext context, WidgetRef ref) async {
       baseUrl: auth.workerUrl,
       token: auth.token,
     );
+  } on TimeoutException {
+    if (context.mounted) showSnack(context, _timeoutMessage);
+    return;
   } on CloudflareSyncException catch (e) {
     if (!context.mounted) return;
-    if (_isSessionExpired(e)) {
+    if (isCloudflareSessionExpired(e)) {
       await _handleAuthFailure(context, ref);
       return;
     }
     showSnack(context, 'Could not download backup: ${e.message}');
     return;
   } catch (e) {
-    if (context.mounted) showSnack(context, 'Could not download backup: $e');
+    if (context.mounted) {
+      showSnack(context, 'Could not download backup: ${_syncError(e)}');
+    }
     return;
   }
 
   var unlockPassphrase = passphrase;
   var canRetryWithPrompt = true;
+  var passphraseCorrected = false;
   while (true) {
     late BackupContents contents;
     try {
@@ -463,6 +536,7 @@ Future<void> restoreFromCloudflare(BuildContext context, WidgetRef ref) async {
       );
       if (retry == null || !context.mounted) return;
       unlockPassphrase = retry;
+      passphraseCorrected = true;
       continue;
     }
 
@@ -475,12 +549,20 @@ Future<void> restoreFromCloudflare(BuildContext context, WidgetRef ref) async {
       if (context.mounted) showSnack(context, 'Could not save restored data: $e');
       return;
     }
-    if (!passphraseWasRemembered) {
-      await settings.rememberCloudflareBackupPassphrase(unlockPassphrase);
-    }
-    ref.invalidate(cloudRemoteMetaProvider);
-    if (context.mounted) {
-      showSnack(context, 'Backup restored from Cloudflare.');
+    try {
+      // Persist a newly entered or corrected passphrase so the next sync does
+      // not repeat the prompt. A failed local save must not hide a good restore.
+      if (!passphraseWasRemembered || passphraseCorrected) {
+        await settings.rememberCloudflareBackupPassphrase(unlockPassphrase);
+      }
+      await settings.recordCloudflareSync(DateTime.now());
+    } catch (_) {
+      // Local bookkeeping is best-effort; the restore itself succeeded.
+    } finally {
+      ref.invalidate(cloudRemoteMetaProvider);
+      if (context.mounted) {
+        showSnack(context, 'Backup restored from Cloudflare.');
+      }
     }
     return;
   }
@@ -603,6 +685,11 @@ class _CloudflareConnectSheetState extends State<_CloudflareConnectSheet> {
       setState(() => _error = 'Enter your Worker URL.');
       return;
     }
+    final urlWarning = CloudflareSyncService.workerUrlWarning(url);
+    if (urlWarning != null) {
+      setState(() => _error = urlWarning);
+      return;
+    }
     if (username.length < 2) {
       setState(() => _error = 'Enter a username (at least 2 characters).');
       return;
@@ -633,6 +720,7 @@ class _CloudflareConnectSheetState extends State<_CloudflareConnectSheet> {
     final isDefault =
         _url.text.trim() == AppSettings.defaultCloudflareWorkerUrl ||
             _url.text.trim().isEmpty;
+    final urlWarning = CloudflareSyncService.workerUrlWarning(_url.text);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -770,8 +858,11 @@ class _CloudflareConnectSheetState extends State<_CloudflareConnectSheet> {
                     labelText: 'Worker URL',
                     hintText: AppSettings.defaultCloudflareWorkerUrl,
                     prefixIcon: const Icon(Icons.link_rounded),
-                    helperText:
+                    helperText: urlWarning ??
                         'Built-in by default. Change only if you use your own deployed Worker.',
+                    helperStyle: urlWarning != null
+                        ? text.bodySmall?.copyWith(color: scheme.error)
+                        : null,
                   ),
                   keyboardType: TextInputType.url,
                   autocorrect: false,
@@ -858,59 +949,64 @@ Future<String?> _askSyncPassphrase(
   final p1 = TextEditingController();
   final p2 = TextEditingController();
   String? error;
-  return showDialog<String>(
-    context: context,
-    builder: (ctx) => StatefulBuilder(
-      builder: (ctx, setState) => AlertDialog(
-        title: Text(title),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(subtitle, style: const TextStyle(fontSize: 13)),
-            const SizedBox(height: 12),
-            TextField(
-              controller: p1,
-              obscureText: true,
-              decoration: InputDecoration(
-                labelText: 'Backup passphrase',
-                errorText: error,
-              ),
-              autofocus: true,
-            ),
-            if (confirm) ...[
-              const SizedBox(height: 8),
+  try {
+    return await showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: Text(title),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(subtitle, style: const TextStyle(fontSize: 13)),
+              const SizedBox(height: 12),
               TextField(
-                controller: p2,
+                controller: p1,
                 obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Confirm backup passphrase',
+                decoration: InputDecoration(
+                  labelText: 'Backup passphrase',
+                  errorText: error,
                 ),
+                autofocus: true,
               ),
+              if (confirm) ...[
+                const SizedBox(height: 8),
+                TextField(
+                  controller: p2,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Confirm backup passphrase',
+                  ),
+                ),
+              ],
             ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final a = p1.text;
+                if (a.trim().length < 8) {
+                  setState(() => error = 'Use at least 8 characters.');
+                  return;
+                }
+                if (confirm && a != p2.text) {
+                  setState(() => error = 'Passphrases do not match.');
+                  return;
+                }
+                Navigator.pop(ctx, a);
+              },
+              child: const Text('Continue'),
+            ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final a = p1.text;
-              if (a.trim().length < 8) {
-                setState(() => error = 'Use at least 8 characters.');
-                return;
-              }
-              if (confirm && a != p2.text) {
-                setState(() => error = 'Passphrases do not match.');
-                return;
-              }
-              Navigator.pop(ctx, a);
-            },
-            child: const Text('Continue'),
-          ),
-        ],
       ),
-    ),
-  );
+    );
+  } finally {
+    p1.dispose();
+    p2.dispose();
+  }
 }

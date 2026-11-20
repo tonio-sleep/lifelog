@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -8,6 +11,7 @@ import '../../app/widgets/common.dart';
 import '../../app/widgets/components.dart';
 import '../../core/util/dates.dart';
 import '../../domain/models/places.dart';
+import '../../integrations/location/background_location_channel.dart';
 import '../../integrations/location/location_tracking.dart';
 import '../../integrations/location/location_tracking_controller.dart';
 import 'place_dialogs.dart';
@@ -23,11 +27,25 @@ class MapScreen extends ConsumerStatefulWidget {
 class _MapScreenState extends ConsumerState<MapScreen> {
   late DateTime _day;
   bool _privateMode = false;
+  BackgroundLocationStatus? _backgroundStatus;
 
   @override
   void initState() {
     super.initState();
     _day = dayStart(DateTime.now());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_refreshBackgroundStatus());
+    });
+  }
+
+  bool get _isIOS => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+
+  Future<void> _refreshBackgroundStatus() async {
+    final status =
+        await ref.read(locationTrackingControllerProvider).backgroundStatus();
+    if (!mounted) return;
+    setState(() => _backgroundStatus = status);
   }
 
   void _shift(int delta) =>
@@ -85,27 +103,55 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   Future<void> _toggleBackgroundTracking(bool value) async {
     final controller = ref.read(locationTrackingControllerProvider);
-    await controller.setBackgroundEnabled(value);
+    final status = await controller.setBackgroundEnabled(value);
     if (!mounted) return;
-    if (value) {
-      final status = await ref
-          .read(backgroundLocationChannelProvider)
-          .authorizationStatus();
-      if (!mounted) return;
-      if (status == 'always') {
-        showSnack(
-          context,
-          'Background visits are on. iOS will add places you visit to your private map.',
-        );
-      } else {
-        showSnack(
-          context,
-          'Background visits are on. Open iOS Settings → Location → Always to track while the app is closed.',
-        );
-      }
-    } else {
+    setState(() => _backgroundStatus = status);
+    if (!value) {
       showSnack(context, 'Background visits are off. Saved places remain.');
+      return;
     }
+    if (status.isEffectivelyOn) {
+      showSnack(
+        context,
+        'Background visits are on. iOS will add places you visit to your private map.',
+      );
+      return;
+    }
+    showSnack(context, _backgroundStatusMessage(status));
+  }
+
+  /// Honest label for the background row: never say "On" unless iOS is really
+  /// monitoring with Always authorization.
+  String _backgroundRowSubtitle(BackgroundLocationStatus status) {
+    if (!status.enabled) return 'Off';
+    if (!status.locationServicesEnabled) return 'Off · Location Services are off';
+    switch (status.authorization) {
+      case BackgroundLocationAuthorization.restricted:
+        return 'Restricted · iOS does not allow location monitoring';
+      case BackgroundLocationAuthorization.denied:
+        return 'Needs Always · Location access is off';
+      case BackgroundLocationAuthorization.whenInUse:
+      case BackgroundLocationAuthorization.notDetermined:
+      case BackgroundLocationAuthorization.unknown:
+      case BackgroundLocationAuthorization.unavailable:
+        return 'Needs Always · choose Always in iOS Settings';
+      case BackgroundLocationAuthorization.always:
+        if (!status.monitoringActive) {
+          return 'Off · iOS monitoring is unavailable';
+        }
+        return 'On · iOS reports places you visit while the app is closed';
+    }
+  }
+
+  String _backgroundStatusMessage(BackgroundLocationStatus status) {
+    final label = _backgroundRowSubtitle(status);
+    if (label.startsWith('Restricted')) {
+      return 'Restricted · iOS won’t start background visits. Check Location privacy controls or Screen Time.';
+    }
+    if (label.startsWith('Needs Always')) {
+      return 'Needs Always · Background visits will stay off until you open iOS Settings → Location → Always.';
+    }
+    return '$label · Background visits are paused until location access is fixed.';
   }
 
   Future<void> _openLocationSettings() =>
@@ -135,6 +181,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final palette = context.palette;
     final places = [...archive.places]
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    final backgroundStatus = _backgroundStatus ??
+        BackgroundLocationStatus(
+          enabled: settings.backgroundLocationEnabled,
+          authorization: BackgroundLocationAuthorization.unknown,
+          monitoringActive: false,
+          locationServicesEnabled: true,
+        );
 
     return ScreenFrame(
       title: 'Places',
@@ -171,8 +224,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         const SizedBox(height: Insets.md),
         ListGroup(
           title: 'Day tracking',
-          footer:
-              'Day tracking records your route while the app is in use. Background visits use iOS place monitoring (not continuous GPS) and need Location Access set to Always in iOS Settings. All of it stays on this device in your encrypted archive — nothing is sent to a server.',
+          footer: _isIOS
+              ? 'Day tracking records your route while the app is in use. Background visits use iOS place monitoring (not continuous GPS) and need Location Access set to Always in iOS Settings. All of it stays on this device in your encrypted archive — nothing is sent to a server.'
+              : 'Day tracking records your route while the app is in use. Background visits are an iOS-only feature. All of it stays on this device in your encrypted archive — nothing is sent to a server.',
           children: [
             ListRow(
               icon: Icons.location_searching_rounded,
@@ -195,27 +249,31 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 chevron: true,
                 onTap: _recordLocationNow,
               ),
-            ListRow(
-              icon: Icons.hourglass_top_rounded,
-              iconColor: palette.place,
-              title: 'Background visits',
-              subtitle: settings.backgroundLocationEnabled
-                  ? 'On · iOS reports places you visit while the app is closed'
-                  : 'Off',
-              trailing: Switch.adaptive(
-                value: settings.backgroundLocationEnabled,
-                onChanged: _toggleBackgroundTracking,
-              ),
-            ),
-            if (settings.backgroundLocationEnabled)
+            if (_isIOS) ...[
               ListRow(
-                icon: Icons.settings_outlined,
+                icon: Icons.hourglass_top_rounded,
                 iconColor: palette.place,
-                title: 'Location Access in iOS Settings',
-                subtitle: 'Choose Always for background visit tracking',
-                chevron: true,
-                onTap: _openLocationSettings,
+                title: 'Background visits',
+                subtitle: _backgroundRowSubtitle(backgroundStatus),
+                trailing: Switch.adaptive(
+                  value: settings.backgroundLocationEnabled,
+                  onChanged: _toggleBackgroundTracking,
+                ),
               ),
+              if (settings.backgroundLocationEnabled)
+                ListRow(
+                  icon: Icons.settings_outlined,
+                  iconColor: palette.place,
+                  title: 'Location Access in iOS Settings',
+                  subtitle: 'Choose Always for background visit tracking',
+                  chevron: true,
+                  onTap: () async {
+                    await _openLocationSettings();
+                    if (!mounted) return;
+                    unawaited(_refreshBackgroundStatus());
+                  },
+                ),
+            ],
           ],
         ),
         const SizedBox(height: Insets.md),
@@ -367,9 +425,14 @@ class _NowCard extends StatelessWidget {
     final now = DateTime.now();
     final updatedAgo = now.difference(status.lastUpdated);
     final isTravel = status.kind == DayLocationKind.travel;
+    final current = status.isCurrent && isToday;
     final icon = isTravel ? Icons.directions_car_rounded : Icons.place_rounded;
     final accent = isTravel ? palette.music : palette.place;
-    final title = isToday ? status.title : '${status.title} (last for this day)';
+    final title = current
+        ? status.title
+        : isToday
+            ? '${status.title} (last known)'
+            : '${status.title} (last for this day)';
     final detailLines = <String>[
       if (isTravel && fromLabel != null && fromLabel!.isNotEmpty)
         'Left $fromLabel at ${formatTime(status.since)}',
@@ -392,7 +455,11 @@ class _NowCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  isToday ? 'Where you are now' : 'Last location this day',
+                  current
+                      ? 'Where you are now'
+                      : isToday
+                          ? 'Last known location'
+                          : 'Last location this day',
                   style: text.labelMedium?.copyWith(
                     color: palette.mutedText,
                     fontWeight: FontWeight.w600,
@@ -409,7 +476,7 @@ class _NowCard extends StatelessWidget {
                       style: text.bodySmall?.copyWith(color: palette.mutedText),
                     ),
                   ),
-                if (isTravel && isToday)
+                if (isTravel && current)
                   Padding(
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(

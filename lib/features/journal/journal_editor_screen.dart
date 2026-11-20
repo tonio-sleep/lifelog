@@ -20,6 +20,58 @@ import 'voice_note_sheet.dart';
 
 enum _SaveState { idle, unsaved, saving, saved, error }
 
+/// Reads the recorded bytes and removes the temporary recording on every
+/// path. Once a voice note is handed to the editor the temp file is no longer
+/// needed, including when the import fails before the bytes are consumed.
+Future<Uint8List> consumeVoiceTempFile(String path) async {
+  final file = File(path);
+  try {
+    return Uint8List.fromList(await file.readAsBytes());
+  } finally {
+    await removeVoiceTempFile(path);
+  }
+}
+
+Future<void> removeVoiceTempFile(String path) async {
+  try {
+    final file = File(path);
+    if (await file.exists()) await file.delete();
+  } catch (_) {}
+}
+
+String _leadingTranscriptBreak(String before) {
+  if (before.isEmpty || before.endsWith('\n\n')) return '';
+  if (before.endsWith('\n')) return '\n';
+  return '\n\n';
+}
+
+String _trailingTranscriptBreak(String after) {
+  if (after.isEmpty || after.startsWith('\n\n')) return '';
+  if (after.startsWith('\n')) return '\n';
+  return '\n\n';
+}
+
+/// Inserts a transcript at the current selection without gluing it to
+/// surrounding words. Returns the new text and the cursor position after the
+/// inserted transcript.
+({String text, int cursorOffset}) insertVoiceTranscript({
+  required String current,
+  required int start,
+  required int end,
+  required String transcript,
+}) {
+  final from = start.clamp(0, current.length);
+  final to = end.clamp(from, current.length);
+  final before = current.substring(0, from);
+  final after = current.substring(to);
+  final leading = _leadingTranscriptBreak(before);
+  final trailing = _trailingTranscriptBreak(after);
+  return (
+    text: '$before$leading$transcript$trailing$after',
+    cursorOffset: from + leading.length + transcript.length,
+  );
+}
+
 class JournalEditorScreen extends ConsumerStatefulWidget {
   const JournalEditorScreen({
     super.key,
@@ -65,6 +117,8 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
   final List<FocusNode> _vocabTermFocuses = [];
 
   Timer? _debounce;
+  Future<void>? _saveFuture;
+  bool _dirtyWhileSaving = false;
   _SaveState _state = _SaveState.idle;
   String? _error;
   bool _importing = false;
@@ -157,7 +211,11 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
 
   void _onChanged() {
     final state = _state;
-    if (state != _SaveState.unsaved) {
+    if (state == _SaveState.saving) {
+      // The in-flight write has its own snapshot. Remember that newer text
+      // exists so it is saved once the current write settles.
+      _dirtyWhileSaving = true;
+    } else if (state != _SaveState.unsaved) {
       setState(() => _state = _SaveState.unsaved);
     }
     _debounce?.cancel();
@@ -225,9 +283,24 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
     );
   }
 
-  Future<void> _saveDraft() async {
+  /// Serialises writes so a debounced save, a forced shell save and a media
+  /// handoff cannot race each other. [force] bypasses the empty-draft guard,
+  /// which is needed before attaching media to a brand new entry.
+  Future<void> _saveDraft({bool force = false}) async {
     if (_deleted) return;
-    if (!_hasContent && _source == null) return;
+    final inFlight = _saveFuture;
+    if (inFlight != null) {
+      await inFlight;
+      if (_deleted || !mounted) return;
+    }
+
+    final shouldSave = force ||
+        _state == _SaveState.unsaved ||
+        _state == _SaveState.error ||
+        (_source == null && _hasContent);
+    if (!shouldSave) return;
+    if (!force && !_hasContent && _source == null) return;
+
     _debounce?.cancel();
     if (mounted) {
       setState(() {
@@ -235,16 +308,30 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
         _error = null;
       });
     }
+
+    final work = _writeEntrySnapshot();
+    _saveFuture = work;
+    try {
+      await work;
+    } finally {
+      if (identical(_saveFuture, work)) _saveFuture = null;
+    }
+  }
+
+  Future<void> _writeEntrySnapshot() async {
+    final dirty = _dirtyWhileSaving;
+    _dirtyWhileSaving = false;
     try {
       await ref.read(archiveProvider.notifier).saveEntry(_buildEntry());
       if (!mounted) return;
       setState(() {
-        _state = _SaveState.saved;
-        _lastSavedAt = DateTime.now();
+        _state = dirty ? _SaveState.unsaved : _SaveState.saved;
+        if (!dirty) _lastSavedAt = DateTime.now();
       });
     } catch (error) {
       if (!mounted) return;
       setState(() {
+        _dirtyWhileSaving = dirty;
         _state = _SaveState.error;
         _error = '$error';
       });
@@ -253,7 +340,8 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
 
   Future<void> _finish() async {
     _draft = false;
-    await _saveDraft();
+    _state = _SaveState.unsaved;
+    await _saveDraft(force: true);
     if (!mounted) return;
     if (_state == _SaveState.error) return;
     _allowPop = true;
@@ -275,6 +363,7 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
 
   Future<void> _archive() async {
     _archived = !_archived;
+    _state = _SaveState.unsaved;
     await _saveDraft();
     if (!mounted) return;
     showSnack(
@@ -339,15 +428,22 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
 
   Future<void> _addVoiceNote() async {
     final result = await showVoiceNoteSheet(context);
-    if (result == null || !mounted) return;
+    if (result == null) return;
+    if (!mounted) {
+      await removeVoiceTempFile(result.audioPath);
+      return;
+    }
     setState(() => _importing = true);
-    var imported = false;
+    var audioSaved = false;
+    var transcriptRequested = false;
+    var transcriptSaved = false;
     try {
-      if (!await _ensureSaved()) return;
-      final bytes = await File(result.audioPath).readAsBytes();
+      // A brand new entry must exist before media can point at it.
+      if (!await _ensureSaved(force: true)) return;
+      final bytes = await consumeVoiceTempFile(result.audioPath);
       if (!mounted) return;
       await ref.read(archiveProvider.notifier).importMedia(
-            bytes: Uint8List.fromList(bytes),
+            bytes: bytes,
             fileName: result.fileName,
             mimeType: result.mimeType,
             caption: 'Voice note',
@@ -355,49 +451,58 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
             journalEntryId: _id,
             createdAt: _createdAt,
           );
+      audioSaved = true;
 
       final transcript = result.transcript.trim();
-      if (transcript.isNotEmpty) {
+      transcriptRequested = transcript.isNotEmpty;
+      if (transcriptRequested) {
         final current = _body.text;
-        final needsSpace = current.isNotEmpty && !current.endsWith('\n');
-        final addition = needsSpace ? '\n\n$transcript' : transcript;
         final selection = _body.selection;
-        if (selection.isValid && selection.start >= 0 && selection.end >= 0) {
-          final start = selection.start.clamp(0, current.length);
-          final end = selection.end.clamp(0, current.length);
-          final updated = current.replaceRange(start, end, addition);
-          _body.value = TextEditingValue(
-            text: updated,
-            selection: TextSelection.collapsed(offset: start + addition.length),
-          );
-        } else {
-          _body.text = '$current$addition';
-          _body.selection = TextSelection.collapsed(offset: _body.text.length);
-        }
-        // A voice note is easy to close accidentally. Persist the transcript
-        // immediately instead of waiting for the regular typing debounce.
-        unawaited(_saveDraft());
+        final start = selection.isValid ? selection.start : current.length;
+        final end = selection.isValid ? selection.end : current.length;
+        final inserted = insertVoiceTranscript(
+          current: current,
+          start: start,
+          end: end,
+          transcript: transcript,
+        );
+        _body.value = TextEditingValue(
+          text: inserted.text,
+          selection: TextSelection.collapsed(
+            offset: inserted.cursorOffset,
+          ),
+        );
+        // Wait for the real save: a voice note is easy to close accidentally
+        // and the old code reported success even when the write failed.
+        await _saveDraft();
+        transcriptSaved = _state != _SaveState.error;
       }
 
       if (!mounted) return;
-      showSnack(
-        context,
-        transcript.isEmpty
-            ? 'Voice note audio saved to this entry.'
-            : 'Voice note saved with transcript.',
-      );
-      imported = true;
+      showSnack(context, _voiceHandoffMessage(
+        audioSaved: audioSaved,
+        transcriptRequested: transcriptRequested,
+        transcriptSaved: transcriptSaved,
+      ));
     } catch (error) {
       if (mounted) showSnack(context, 'Could not save voice note: $error');
     } finally {
-      if (imported) {
-        try {
-          final f = File(result.audioPath);
-          if (await f.exists()) await f.delete();
-        } catch (_) {}
-      }
+      // Covers early returns and errors before the bytes were consumed too.
+      await removeVoiceTempFile(result.audioPath);
       if (mounted) setState(() => _importing = false);
     }
+  }
+
+  String _voiceHandoffMessage({
+    required bool audioSaved,
+    required bool transcriptRequested,
+    required bool transcriptSaved,
+  }) {
+    if (!audioSaved) return 'The voice note could not be saved.';
+    if (!transcriptRequested) return 'Voice note audio saved to this entry.';
+    return transcriptSaved
+        ? 'Voice note saved with transcript.'
+        : 'Voice note audio saved, but the transcript could not be saved.';
   }
 
   Future<void> _attachFiles() async {
@@ -405,7 +510,9 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
     try {
       final files = await pickMediaFromPhotosOrFiles(context);
       if (files.isEmpty || !mounted) return;
-      if (!await _ensureSaved()) return;
+      // Force-save a shell entry so imported media never points at an entry
+      // that is only in memory.
+      if (!await _ensureSaved(force: true)) return;
       if (!mounted) return;
       // Photos attached today belong to the entry's day in the timeline, not
       // to the moment the entry was first created months ago.
@@ -417,7 +524,7 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
         journalEntryId: _id,
         createdAt: attachAt,
       );
-      if (summary.added > 0 && mounted) unawaited(_saveDraft());
+      if (summary.added > 0 && mounted) await _saveDraft();
     } catch (error) {
       if (mounted) showSnack(context, 'Could not import media: $error');
     } finally {
@@ -425,11 +532,9 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
     }
   }
 
-  Future<bool> _ensureSaved() async {
-    if (_state == _SaveState.saving) {
-      await _saveDraft();
-    }
-    await _saveDraft();
+  Future<bool> _ensureSaved({bool force = false}) async {
+    // _saveDraft already waits for the in-flight future, so one call is enough.
+    await _saveDraft(force: force);
     return _state != _SaveState.error;
   }
 

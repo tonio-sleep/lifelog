@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../core/backup/backup_service.dart';
 import '../../core/util/dates.dart';
+import '../../domain/meals_migration.dart';
 import '../../domain/models/archive.dart';
 import '../../domain/models/journal.dart';
 import '../../domain/models/media.dart';
@@ -24,9 +25,58 @@ final archiveProvider = NotifierProvider<ArchiveController, Archive>(
   ArchiveController.new,
 );
 
+/// Readable save state for screens that only watch providers. The controller's
+/// plain fields are not notifiable, so they are mirrored here.
+class ArchiveSaveStatus {
+  const ArchiveSaveStatus({this.isSaving = false, this.error});
+
+  final bool isSaving;
+  final String? error;
+}
+
+class ArchiveSaveStatusController extends Notifier<ArchiveSaveStatus> {
+  @override
+  ArchiveSaveStatus build() => const ArchiveSaveStatus();
+
+  void update({required bool isSaving, String? error}) {
+    state = ArchiveSaveStatus(isSaving: isSaving, error: error);
+  }
+}
+
+final archiveSaveStatusProvider =
+    NotifierProvider<ArchiveSaveStatusController, ArchiveSaveStatus>(
+  ArchiveSaveStatusController.new,
+);
+
+/// Incremented whenever media bytes on disk may have changed (for example a
+/// restore). Image widgets watch this so they reload cached bytes.
+final mediaRevisionProvider = NotifierProvider<MediaRevisionController, int>(
+  MediaRevisionController.new,
+);
+
+class MediaRevisionController extends Notifier<int> {
+  @override
+  int build() => 0;
+
+  void bump() => state = state + 1;
+}
+
+class MediaWriteException implements Exception {
+  MediaWriteException(this.message, [this.cause]);
+
+  final String message;
+  final Object? cause;
+
+  @override
+  String toString() => cause == null ? message : '$message Cause: $cause';
+}
+
 class ArchiveController extends Notifier<Archive> {
   Future<void> _writeQueue = Future.value();
-  bool isSaving = false;
+  int _pendingWrites = 0;
+
+  /// True while any write is queued or in flight, not just the current one.
+  bool get isSaving => _pendingWrites > 0;
   String? lastSaveError;
 
   AppServices get _services => ref.read(appServicesProvider);
@@ -34,10 +84,18 @@ class ArchiveController extends Notifier<Archive> {
   @override
   Archive build() => ref.watch(appServicesProvider).archive;
 
+  void _publishSaveStatus() {
+    ref.read(archiveSaveStatusProvider.notifier).update(
+          isSaving: isSaving,
+          error: lastSaveError,
+        );
+  }
+
   Future<void> _persist(Archive next) {
     state = next;
     final snapshot = next;
-    isSaving = true;
+    _pendingWrites++;
+    _publishSaveStatus();
     final write = _writeQueue.then((_) async {
       try {
         await _services.archiveStore.save(snapshot);
@@ -46,7 +104,8 @@ class ArchiveController extends Notifier<Archive> {
         lastSaveError = error.toString();
         rethrow;
       } finally {
-        isSaving = false;
+        _pendingWrites--;
+        _publishSaveStatus();
       }
     });
     _writeQueue = write.catchError((_) {});
@@ -70,14 +129,11 @@ class ArchiveController extends Notifier<Archive> {
 
   Future<void> deleteEntry(String id, {bool deleteMedia = true}) async {
     final next = state.copy();
+    final linked = next.media
+        .where((m) => m.journalEntryId == id)
+        .toList(growable: false);
     next.entries.removeWhere((e) => e.id == id);
     if (deleteMedia) {
-      final linked = next.media
-          .where((m) => m.journalEntryId == id)
-          .toList(growable: false);
-      for (final item in linked) {
-        await _services.mediaStore.delete(item);
-      }
       next.media.removeWhere((m) => m.journalEntryId == id);
     } else {
       for (var i = 0; i < next.media.length; i++) {
@@ -86,7 +142,22 @@ class ArchiveController extends Notifier<Archive> {
         }
       }
     }
+
+    // Metadata first: a media file is only removed after the archive no
+    // longer references it.
     await _persist(next);
+    if (deleteMedia) {
+      for (final item in linked) {
+        try {
+          await _services.mediaStore.delete(item);
+        } catch (error) {
+          throw MediaWriteException(
+            'The entry was deleted, but an attached file could not be removed.',
+            error,
+          );
+        }
+      }
+    }
   }
 
   Future<void> archiveEntry(String id) async {
@@ -179,9 +250,17 @@ class ArchiveController extends Notifier<Archive> {
   Future<void> deleteMedia(String id) async {
     final media = state.mediaById(id);
     if (media == null) return;
-    await _services.mediaStore.delete(media);
     final next = state.copy()..media.removeWhere((m) => m.id == id);
     await _persist(next);
+    try {
+      await _services.mediaStore.delete(media);
+    } catch (error) {
+      throw MediaWriteException(
+        'The media record was removed, but its encrypted file could not be '
+        'deleted.',
+        error,
+      );
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -479,30 +558,53 @@ class ArchiveController extends Notifier<Archive> {
     Archive restored, {
     List<BackupMediaFile> mediaFiles = const [],
   }) async {
-    await _services.mediaStore.deleteAll();
-    if (mediaFiles.isNotEmpty) {
-      final byId = {for (final item in restored.media) item.id: item};
-      for (final file in mediaFiles) {
-        final item = byId[file.id];
-        if (item == null) continue;
-        try {
-          await _services.mediaStore.writeRestoredItem(
-            item: item,
-            originalBytes: file.originalBytes,
-            thumbnailBytes: file.thumbnailBytes,
-          );
-        } catch (_) {
-          // Keep archive metadata; missing/unwritable media can be handled gracefully.
-        }
+    // Restored archives can contain the legacy meal fields. Apply the same
+    // additive migration used at startup before anything is persisted.
+    final migrated = migrateLegacyMeals(restored);
+    final byId = {for (final item in migrated.media) item.id: item};
+    final failures = <String>[];
+
+    // Never wipe the vault first: incoming metadata can reference media whose
+    // bytes are still only on this device (the backup may omit media files).
+    for (final file in mediaFiles) {
+      final item = byId[file.id];
+      if (item == null) continue;
+      try {
+        await _services.mediaStore.writeRestoredItem(
+          item: item,
+          originalBytes: file.originalBytes,
+          thumbnailBytes: file.thumbnailBytes,
+        );
+      } catch (error) {
+        failures.add('${item.originalName}: $error');
       }
     }
-    await _persist(restored);
+
+    await _persist(migrated);
+    if (failures.isNotEmpty) {
+      ref.read(mediaRevisionProvider.notifier).bump();
+      throw MediaWriteException(
+        'The archive was restored, but ${failures.length} media file(s) could '
+        'not be written: ${failures.join('; ')}',
+      );
+    }
+    if (mediaFiles.isNotEmpty) {
+      ref.read(mediaRevisionProvider.notifier).bump();
+    }
     return true;
   }
 
   Future<bool> clearArchiveData() async {
-    await _services.mediaStore.deleteAll();
     await _persist(Archive.empty());
+    try {
+      await _services.mediaStore.deleteAll();
+    } catch (error) {
+      throw MediaWriteException(
+        'The archive was cleared, but the media vault could not be removed.',
+        error,
+      );
+    }
+    ref.read(mediaRevisionProvider.notifier).bump();
     return true;
   }
 

@@ -16,4 +16,9 @@ void main() {
     const summary = MediaImportSummary(total: 1, added: 1, skipped: 0, failed: 0);
     expect(summary.message, '1 item added.');
   });
+
+  test('a cancelled batch still counts bytes that were actually written', () {
+    const summary = MediaImportSummary(total: 4, added: 1, skipped: 3, failed: 0);
+    expect(summary.message, '1 item added, 3 skipped.');
+  });
 }

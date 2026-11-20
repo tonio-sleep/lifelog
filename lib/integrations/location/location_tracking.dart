@@ -104,6 +104,15 @@ class LocationTracking {
   /// Minimum interval between stored samples when tracking periodically.
   static const sampleInterval = Duration(minutes: 10);
 
+  /// A last-known position older than this must not be shown as "now".
+  /// Background visits can arrive late, so a calendar day match is not enough.
+  static const currentLocationFreshness = Duration(minutes: 30);
+
+  /// Whether [at] is recent enough to justify a "now" label.
+  static bool isFresh(DateTime at, {DateTime? now}) =>
+      (now ?? DateTime.now()).difference(at).abs() <=
+      currentLocationFreshness;
+
   /// Capture the current device position, if permission/services allow.
   /// Returns null when unavailable or denied.
   static Future<Position?> getCurrentPosition({
@@ -303,7 +312,7 @@ class LocationTracking {
     for (var i = 0; i < merged.length; i++) {
       final seg = merged[i];
       final isLast = i == merged.length - 1;
-      final isCurrent = isToday && isLast;
+      final isCurrent = isToday && isLast && isFresh(seg.end, now: now);
       final end = seg.end;
       String label;
       String? detail;
@@ -369,31 +378,39 @@ class LocationTracking {
     final last = segments.last;
     final since = last.startAt;
     final updated = last.endAt.isAfter(lastSampleAt) ? last.endAt : lastSampleAt;
+    final current = isToday && isFresh(updated);
+    final mins = updated.difference(since).inMinutes;
     if (last.kind == DayLocationKind.travel) {
-      final mins = updated.difference(since).inMinutes;
       return DayLocationStatus(
         kind: DayLocationKind.travel,
         title: 'On the road',
-        subtitle: isToday
+        subtitle: current
             ? 'Traveling now${mins > 0 ? ' · for ${formatDurationMinutes(mins)}' : ''}'
-            : 'Traveling${mins > 0 ? ' · ${formatDurationMinutes(mins)}' : ''}',
+            : isToday
+                ? 'Last movement${mins > 0 ? ' · ${formatDurationMinutes(mins)}' : ''}'
+                : 'Traveling${mins > 0 ? ' · ${formatDurationMinutes(mins)}' : ''}',
         since: since,
         lastUpdated: updated,
-        isCurrent: isToday,
+        isCurrent: current,
       );
     }
-    final mins = updated.difference(since).inMinutes;
     final atLabel = last.label == 'Another location' ? 'At another location' : 'At ${last.label}';
     return DayLocationStatus(
       kind: DayLocationKind.stay,
       title: atLabel,
-      subtitle: isToday
-          ? (mins > 0 ? 'Here for about ${formatDurationMinutes(mins)}' : 'You are here now')
-          : (mins > 0 ? 'For about ${formatDurationMinutes(mins)}' : 'Stopped here'),
+      subtitle: current
+          ? (mins > 0
+              ? 'Here for about ${formatDurationMinutes(mins)}'
+              : 'You are here now')
+          : isToday
+              ? (mins > 0
+                  ? 'Last seen here for about ${formatDurationMinutes(mins)}'
+                  : 'Last known place')
+              : (mins > 0 ? 'For about ${formatDurationMinutes(mins)}' : 'Stopped here'),
       since: since,
       lastUpdated: updated,
       placeId: last.placeId,
-      isCurrent: isToday,
+      isCurrent: current,
     );
   }
 
@@ -471,9 +488,14 @@ class LocationTracking {
   static DateTime _endForLastSample(LocationSample sample, DateTime day) {
     final now = DateTime.now();
     if (sameDay(day, now)) {
-      return now.isAfter(sample.recordedAt)
-          ? now
-          : sample.recordedAt.add(const Duration(minutes: 10));
+      // Only extend a *fresh* sample to now. Stale last-known locations keep a
+      // short inferred segment so they cannot be labelled as current.
+      if (isFresh(sample.recordedAt, now: now) && now.isAfter(sample.recordedAt)) {
+        return now;
+      }
+      final guess = sample.recordedAt.add(sampleInterval);
+      if (guess.isAfter(now) && now.isAfter(sample.recordedAt)) return now;
+      return guess;
     }
     final endOfDay = DateTime(day.year, day.month, day.day, 23, 59);
     final guess = sample.recordedAt.add(const Duration(minutes: 30));

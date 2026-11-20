@@ -97,6 +97,12 @@ class BackupService {
     return Uint8List.fromList(List<int>.generate(16, (_) => random.nextInt(256)));
   }
 
+  static int? _boundedKdfValue(Object? value, int min, int max) {
+    final parsed = (value as num?)?.toInt();
+    if (parsed == null || parsed < min || parsed > max) return null;
+    return parsed;
+  }
+
   Future<Uint8List> createBackup({
     required Archive archive,
     required String passphrase,
@@ -223,17 +229,40 @@ class BackupService {
           'This backup uses an unsupported format version.',
         );
       }
+      if (decoded['cipher'] != 'aes-256-gcm') {
+        throw BackupException('This backup uses an unsupported cipher.');
+      }
       final kdf = decoded['kdf'];
       if (kdf is! Map) {
         throw BackupException('The backup key derivation settings are missing.');
       }
+      if (kdf['name'] != 'argon2id') {
+        throw BackupException('This backup uses an unsupported key derivation.');
+      }
+      int bounded(Object? value, int min, int max, int fallback) {
+        if (value == null) return fallback;
+        final parsed = _boundedKdfValue(value, min, max);
+        if (parsed == null) {
+          throw BackupException('The backup key derivation settings are out of range.');
+        }
+        return parsed;
+      }
+
+      // Missing values keep the long-standing defaults; present values must be
+      // within bounds so a hostile backup cannot request extreme KDF work.
+      final memory = bounded(kdf['memory'], 1, 65536, 19456);
+      final iterations = bounded(kdf['iterations'], 1, 10, 2);
+      final parallelism = bounded(kdf['parallelism'], 1, 8, 1);
       final salt = base64Decode(kdf['salt'] as String? ?? '');
+      if (salt.length < 8 || salt.length > 64) {
+        throw BackupException('The backup salt is invalid.');
+      }
       final key = await CryptoService.deriveBackupKey(
         passphrase: passphrase,
         salt: Uint8List.fromList(salt),
-        memory: (kdf['memory'] as num?)?.toInt() ?? 19456,
-        iterations: (kdf['iterations'] as num?)?.toInt() ?? 2,
-        parallelism: (kdf['parallelism'] as num?)?.toInt() ?? 1,
+        memory: memory,
+        iterations: iterations,
+        parallelism: parallelism,
       );
       final encrypted = base64Decode(decoded['payload'] as String? ?? '');
       final aad = containerVersion == 1 ? _aadV1 : _aadV2;

@@ -13,6 +13,8 @@ private final class LocationVisitManager: NSObject, CLLocationManagerDelegate {
   private let enabledKey = "lifelog.backgroundLocation.enabled"
   private let queueKey = "lifelog.backgroundLocation.pending"
   private let maximumQueuedEvents = 200
+  // Event ids must not depend on the device locale (decimal commas, etc.).
+  private let posixLocale = Locale(identifier: "en_US_POSIX")
 
   private let locationManager = CLLocationManager()
   private let isoFormatter: ISO8601DateFormatter = {
@@ -25,6 +27,7 @@ private final class LocationVisitManager: NSObject, CLLocationManagerDelegate {
   private var eventChannel: FlutterEventChannel?
   private var eventSink: FlutterEventSink?
   private var enabled = false
+  private var monitoringActive = false
 
   private override init() {
     super.init()
@@ -33,7 +36,17 @@ private final class LocationVisitManager: NSObject, CLLocationManagerDelegate {
     // Visit and significant-change monitoring do not need continuous updates.
     locationManager.allowsBackgroundLocationUpdates = false
     enabled = UserDefaults.standard.bool(forKey: enabledKey)
-    if enabled { startMonitoring() }
+  }
+
+  /// Called from `didFinishLaunchingWithOptions` so a terminated app relaunched
+  /// by Core Location restores monitoring before Flutter attaches its channels.
+  func restoreEnabledState() {
+    enabled = UserDefaults.standard.bool(forKey: enabledKey)
+    if enabled {
+      startMonitoring()
+    } else {
+      stopMonitoring()
+    }
   }
 
   func register(with registrar: FlutterPluginRegistrar) {
@@ -51,11 +64,22 @@ private final class LocationVisitManager: NSObject, CLLocationManagerDelegate {
       case "setEnabled":
         let value = call.arguments as? Bool ?? false
         self.setEnabled(value)
-        result(self.enabled)
-      case "takePending":
+        // Return an effective status object, not just the requested bool.
+        result(self.statusDictionary())
+      case "takePending", "peekPending":
+        // Legacy name kept for compatibility: this is now a non-destructive
+        // peek. Dart acks each event with `ackPending` after it is persisted.
         result(self.takePending())
+      case "ackPending":
+        self.ackPending(self.eventIds(from: call.arguments))
+        result(nil)
+      case "clearPending":
+        self.clearPending()
+        result(nil)
       case "authorizationStatus":
         result(self.authorizationStatus())
+      case "locationStatus":
+        result(self.statusDictionary())
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -81,6 +105,27 @@ private final class LocationVisitManager: NSObject, CLLocationManagerDelegate {
     }
   }
 
+  private var canMonitor: Bool {
+    enabled &&
+      CLLocationManager.locationServicesEnabled() &&
+      locationManager.authorizationStatus == .authorizedAlways
+  }
+
+  private func statusDictionary() -> [String: Any] {
+    let servicesEnabled = CLLocationManager.locationServicesEnabled()
+    let always = locationManager.authorizationStatus == .authorizedAlways
+    return [
+      "enabled": enabled,
+      "authorization": authorizationStatus(),
+      "monitoringActive": monitoringActive,
+      "locationServicesEnabled": servicesEnabled,
+      "canMonitorVisits": servicesEnabled && always &&
+        CLLocationManager.isMonitoringAvailable(for: CLVisit.self),
+      "canMonitorSignificantChanges": servicesEnabled && always &&
+        CLLocationManager.significantLocationChangeMonitoringAvailable(),
+    ]
+  }
+
   private func setEnabled(_ value: Bool) {
     enabled = value
     UserDefaults.standard.set(value, forKey: enabledKey)
@@ -94,17 +139,26 @@ private final class LocationVisitManager: NSObject, CLLocationManagerDelegate {
       startMonitoring()
     } else {
       stopMonitoring()
+      // Disabled means the person does not want these events at all.
+      clearPending()
     }
   }
 
   private func startMonitoring() {
-    guard CLLocationManager.locationServicesEnabled() else { return }
+    guard canMonitor else {
+      monitoringActive = false
+      return
+    }
+    var started = false
     if CLLocationManager.isMonitoringAvailable(for: CLVisit.self) {
       locationManager.startMonitoringVisits()
+      started = true
     }
     if CLLocationManager.significantLocationChangeMonitoringAvailable() {
       locationManager.startMonitoringSignificantLocationChanges()
+      started = true
     }
+    monitoringActive = started
   }
 
   private func stopMonitoring() {
@@ -114,6 +168,7 @@ private final class LocationVisitManager: NSObject, CLLocationManagerDelegate {
     if CLLocationManager.significantLocationChangeMonitoringAvailable() {
       locationManager.stopMonitoringSignificantLocationChanges()
     }
+    monitoringActive = false
   }
 
   private var pending: [[String: Any]] {
@@ -136,19 +191,48 @@ private final class LocationVisitManager: NSObject, CLLocationManagerDelegate {
     eventSink?(event)
   }
 
-  /// Hands queued events to Dart and clears them. Dart writes them into the
-  /// encrypted archive immediately and de-duplicates by event id.
+  /// Non-destructive read. Events stay queued until Dart calls `ackPending`
+  /// with the ids it actually persisted, so a failed write can be retried.
   private func takePending() -> [[String: Any]] {
-    let events = pending
-    if !events.isEmpty { pending = [] }
-    return events
+    pending
+  }
+
+  private func eventIds(from arguments: Any?) -> Set<String> {
+    if let ids = arguments as? [String] {
+      return Set(ids)
+    }
+    if let events = arguments as? [[String: Any]] {
+      return Set(events.compactMap { $0["id"] as? String })
+    }
+    if let event = arguments as? [String: Any], let id = event["id"] as? String {
+      return [id]
+    }
+    return []
+  }
+
+  private func ackPending(_ ids: Set<String>) {
+    guard !ids.isEmpty else { return }
+    let current = pending
+    let remaining = current.filter { event in
+      guard let id = event["id"] as? String else { return true }
+      return !ids.contains(id)
+    }
+    if remaining.count != current.count {
+      pending = remaining
+    }
+  }
+
+  private func clearPending() {
+    pending = []
   }
 
   func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
     guard enabled else { return }
-    if manager.authorizationStatus == .authorizedAlways ||
-        manager.authorizationStatus == .authorizedWhenInUse {
+    if manager.authorizationStatus == .authorizedAlways {
       startMonitoring()
+    } else {
+      // When-In-Use cannot deliver background visits. Never monitor with it.
+      stopMonitoring()
     }
   }
 
@@ -159,7 +243,13 @@ private final class LocationVisitManager: NSObject, CLLocationManagerDelegate {
     let departure = isoFormatter.string(from: visit.departureDate)
     let millis = Int(visit.arrivalDate.timeIntervalSince1970 * 1000)
     var event: [String: Any] = [
-      "id": String(format: "visit-%d-%.5f-%.5f", millis, latitude, longitude),
+      "id": String(
+        format: "visit-%d-%.5f-%.5f",
+        locale: posixLocale,
+        millis,
+        latitude,
+        longitude
+      ),
       "source": "visit",
       "latitude": latitude,
       "longitude": longitude,
@@ -179,8 +269,13 @@ private final class LocationVisitManager: NSObject, CLLocationManagerDelegate {
     let timestamp = isoFormatter.string(from: location.timestamp)
     let millis = Int(location.timestamp.timeIntervalSince1970 * 1000)
     let event: [String: Any] = [
-      "id": String(format: "significant-%d-%.5f-%.5f",
-                   millis, location.coordinate.latitude, location.coordinate.longitude),
+      "id": String(
+        format: "significant-%d-%.5f-%.5f",
+        locale: posixLocale,
+        millis,
+        location.coordinate.latitude,
+        location.coordinate.longitude
+      ),
       "source": "significant",
       "latitude": location.coordinate.latitude,
       "longitude": location.coordinate.longitude,
@@ -194,8 +289,10 @@ private final class LocationVisitManager: NSObject, CLLocationManagerDelegate {
 extension LocationVisitManager: FlutterStreamHandler {
   func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
     eventSink = events
-    // Send anything collected before the Dart listener was ready.
-    for event in takePending() { events(event) }
+    // Replay anything collected before Dart was listening. The queue is not
+    // cleared here; `_handleBackgroundEvent` acks it through the same path as
+    // the periodic flush.
+    for event in pending { events(event) }
     return nil
   }
 
@@ -211,7 +308,12 @@ extension LocationVisitManager: FlutterStreamHandler {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    // Force-create before Flutter registers plugins. A background visit can
+    // relaunch the app directly into this path; monitoring must already be on.
+    _ = LocationVisitManager.shared
+    LocationVisitManager.shared.restoreEnabledState()
+    return result
   }
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {

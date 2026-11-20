@@ -74,16 +74,15 @@ class MealsDayCard extends ConsumerWidget {
             ),
           ] else ...[
             const SizedBox(height: Insets.xs),
-            for (final meal in shown)
-              _MealTile(
-                meal: meal,
-                onTap: () => showMealEditor(
-                  context,
-                  ref,
-                  day,
-                  existing: meal,
-                ),
+            MealRows(
+              meals: shown,
+              onTap: (meal) => showMealEditor(
+                context,
+                ref,
+                day,
+                existing: meal,
               ),
+            ),
             if (shown.length < meals.length)
               Align(
                 alignment: Alignment.centerLeft,
@@ -95,6 +94,26 @@ class MealsDayCard extends ConsumerWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// Just the meal rows, without the card and heading. Used where the parent
+/// section already supplies a "Meals and drinks" header.
+class MealRows extends StatelessWidget {
+  const MealRows({super.key, required this.meals, required this.onTap});
+
+  final List<MealRecord> meals;
+  final ValueChanged<MealRecord> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final meal in meals)
+          _MealTile(meal: meal, onTap: () => onTap(meal)),
+      ],
     );
   }
 }
@@ -124,9 +143,10 @@ class _MealTile extends StatelessWidget {
         child: Row(
           children: [
             SizedBox(
-              width: 48,
+              width: meal.timeKnown ? 48 : 76,
               child: Text(
                 meal.timeLabel,
+                maxLines: 2,
                 style: text.labelMedium?.copyWith(
                   color: palette.mutedText,
                   fontFeatures: tabularFigures,

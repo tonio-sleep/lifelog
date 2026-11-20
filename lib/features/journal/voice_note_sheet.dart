@@ -45,7 +45,8 @@ class _VoiceNoteSheet extends StatefulWidget {
   State<_VoiceNoteSheet> createState() => _VoiceNoteSheetState();
 }
 
-class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
+class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
+    with WidgetsBindingObserver {
   final AudioRecorder _recorder = AudioRecorder();
   final stt.SpeechToText _speech = stt.SpeechToText();
   final TranscriptAccumulator _transcript = TranscriptAccumulator();
@@ -53,8 +54,11 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
   bool _initializing = true;
   bool _recording = false;
   bool _saving = false;
+  bool _saveInFlight = false;
   bool _speechAvailable = false;
   bool _listenPending = false;
+  bool _restartInFlight = false;
+  bool _speechEnded = false;
   bool _userStopping = false;
   bool _abandoned = false;
   bool _resultHandedOff = false;
@@ -65,8 +69,10 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
   List<stt.LocaleName> _locales = const [];
   DateTime? _startedAt;
   DateTime? _lastListenAttempt;
+  DateTime? _lastResultAt;
+  DateTime? _nextRestartAt;
   Timer? _ticker;
-  Timer? _restartTimer;
+  int _generation = 0;
   int _retryDelayMs = 400;
 
   bool get _hasWork => _recording || !_transcript.isEmpty || _audioPath != null;
@@ -74,6 +80,7 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _init();
   }
 
@@ -88,6 +95,7 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
         return;
       }
       final micOk = await _recorder.hasPermission();
+      if (!mounted) return;
       if (!micOk) {
         setState(() {
           _error =
@@ -99,8 +107,21 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
       }
       try {
         _speechAvailable = await _speech.initialize(
-          onStatus: (_) {},
-          onError: (_) {},
+          onStatus: (status) {
+            if (!mounted) return;
+            final listening = status.toLowerCase() == 'listening';
+            setState(() => _speechEnded = !listening);
+          },
+          onError: (error) {
+            if (!mounted) return;
+            final message = error.errorMsg.trim();
+            setState(() {
+              _speechEnded = true;
+              if (message.isNotEmpty) {
+                _error = 'Transcription paused: $message. Recording continues.';
+              }
+            });
+          },
         );
       } catch (_) {
         _speechAvailable = false;
@@ -132,12 +153,31 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
   }
 
   Future<void> _start() async {
-    if (_initializing || _recording || _saving) return;
+    if (_initializing || _recording || _saving || _saveInFlight) return;
+
+    // A failed save can leave a temporary file behind. A fresh recording gets
+    // a fresh file, so remove the old one instead of leaking it.
+    final oldPath = _audioPath;
+    if (oldPath != null) {
+      try {
+        final old = File(oldPath);
+        if (await old.exists()) await old.delete();
+      } catch (_) {}
+    }
+    if (!mounted) return;
+
     setState(() {
       _error = null;
       _transcript.reset();
       _userStopping = false;
+      _abandoned = false;
+      _resultHandedOff = false;
+      _saveInFlight = false;
+      _restartInFlight = false;
+      _speechEnded = false;
       _retryDelayMs = 400;
+      _nextRestartAt = null;
+      _generation++;
     });
     try {
       final dir = await getTemporaryDirectory();
@@ -153,6 +193,8 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
       );
       _audioPath = path;
       _startedAt = DateTime.now();
+      _lastListenAttempt = DateTime.now();
+      _lastResultAt = null;
       _ticker?.cancel();
       _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
         if (!mounted) return;
@@ -181,6 +223,8 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
     if (_listenPending || _speech.isListening || !mounted) return;
     _listenPending = true;
     _lastListenAttempt = DateTime.now();
+    _speechEnded = false;
+    _nextRestartAt = null;
     final session = _transcript.nextSession();
     _transcript.startNewSession();
     try {
@@ -188,6 +232,14 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
         onResult: (result) {
           if (!mounted) return;
           setState(() {
+            if (result.recognizedWords.trim().isNotEmpty) {
+              // A fresh result means speech is healthy again: clear stale
+              // errors and restart the silence watchdog.
+              _lastResultAt = DateTime.now();
+              _speechEnded = false;
+              _error = null;
+              _retryDelayMs = 400;
+            }
             _transcript.addResult(
               eventSession: session,
               recognizedWords: result.recognizedWords,
@@ -214,38 +266,148 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
     }
   }
 
+  DateTime? _lastSpeechSignal() {
+    final dates = <DateTime>[
+      ?_lastResultAt,
+      ?_lastListenAttempt,
+      ?_startedAt,
+    ];
+    if (dates.isEmpty) return null;
+    return dates.reduce((a, b) => a.isAfter(b) ? a : b);
+  }
+
+  Duration _silenceSinceLastSignal() {
+    final last = _lastSpeechSignal() ?? DateTime.now();
+    return DateTime.now().difference(last);
+  }
+
   /// Detects a recognition session that the platform ended on its own and
   /// restarts it without dropping the words already captured.
+  ///
+  /// `isListening` is not enough: iOS can end a session silently and leave the
+  /// plugin's flag set. A long silence therefore forces a restart too. The
+  /// next-restart timestamp prevents the 1-second ticker from cancelling a
+  /// backoff before it fires.
   void _checkSpeechSession() {
-    if (!_recording || _userStopping || _abandoned || !_speechAvailable) return;
-    if (_listenPending || _speech.isListening) {
+    if (!_recording ||
+        _userStopping ||
+        _abandoned ||
+        _saveInFlight ||
+        !_speechAvailable ||
+        _listenPending ||
+        _restartInFlight) {
+      return;
+    }
+    final now = DateTime.now();
+    final next = _nextRestartAt;
+    if (next != null && now.isBefore(next)) return;
+
+    final silentEnd = !_speech.isListening ||
+        _speechEnded ||
+        _silenceSinceLastSignal() >= const Duration(seconds: 12);
+    if (!silentEnd) {
       _retryDelayMs = 400;
       return;
     }
-    final last = _lastListenAttempt;
-    if (last != null && DateTime.now().difference(last) < Duration(milliseconds: _retryDelayMs + 400)) {
-      return;
-    }
+
+    _nextRestartAt = now.add(Duration(milliseconds: _retryDelayMs));
     final error = _speech.lastError?.errorMsg.trim() ?? '';
     if (error.isNotEmpty && mounted) {
-      setState(() => _error = 'Transcription paused: $error. Recording continues.');
+      setState(() {
+        _error = 'Transcription paused: $error. Recording continues.';
+      });
     }
-    _restartTimer?.cancel();
-    _restartTimer = Timer(Duration(milliseconds: _retryDelayMs), () {
-      if (!mounted) return;
+    unawaited(_restartListening(_generation));
+  }
+
+  Future<void> _restartListening(int generation) async {
+    if (_restartInFlight) return;
+    _restartInFlight = true;
+    final delay = _retryDelayMs;
+    _retryDelayMs = (_retryDelayMs * 2).clamp(400, 4000);
+    try {
+      await Future<void>.delayed(Duration(milliseconds: delay));
+      if (!mounted ||
+          generation != _generation ||
+          !_recording ||
+          _userStopping ||
+          _abandoned ||
+          _saveInFlight) {
+        return;
+      }
       _transcript.finalizePartial();
-      _retryDelayMs = (_retryDelayMs * 2).clamp(400, 4000);
+      if (_speech.isListening) {
+        try {
+          await _speech.cancel();
+        } catch (_) {}
+      }
+      if (!mounted ||
+          generation != _generation ||
+          !_recording ||
+          _userStopping ||
+          _abandoned ||
+          _saveInFlight) {
+        return;
+      }
+      _speechEnded = false;
+      _nextRestartAt = null;
       unawaited(_listenOnce());
-    });
+    } finally {
+      if (generation == _generation) _restartInFlight = false;
+    }
+  }
+
+  /// Used after an app lifecycle resume, where the platform may have revoked
+  /// the speech audio session without telling us.
+  Future<void> _forceSpeechRestart() async {
+    if (!_recording ||
+        _userStopping ||
+        _abandoned ||
+        _saveInFlight ||
+        !_speechAvailable) {
+      return;
+    }
+    _transcript.finalizePartial();
+    _nextRestartAt = null;
+    try {
+      if (_speech.isListening) await _speech.cancel();
+    } catch (_) {}
+    if (!mounted || !_recording || _userStopping || _abandoned) return;
+    _speechEnded = false;
+    _lastListenAttempt = null;
+    unawaited(_listenOnce());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!mounted || !_recording) return;
+    if (state == AppLifecycleState.paused) {
+      _transcript.finalizePartial();
+      setState(() {
+        _status = 'Recording paused by the system; captured words are safe.';
+      });
+    } else if (state == AppLifecycleState.resumed && !_userStopping) {
+      setState(() => _status = 'Recording...');
+      unawaited(_forceSpeechRestart());
+    }
   }
 
   Future<void> _stopAndSave() async {
-    if (!_recording || _saving) return;
+    if (_saving || _saveInFlight) return;
+    // A failed stop can leave an audio file without an active recording. It is
+    // still valid work and must be handable off instead of becoming a dead end.
+    if (!_recording && _audioPath == null) return;
+
     setState(() => _saving = true);
+    // Protect the temporary audio immediately: from here on it belongs to the
+    // handoff, even if the sheet is closed while disk I/O is in flight.
+    _saveInFlight = true;
+    _resultHandedOff = true;
     _userStopping = true;
-    _restartTimer?.cancel();
+    _generation++;
+    _nextRestartAt = null;
     try {
-      if (_speechAvailable) {
+      if (_recording && _speechAvailable) {
         try {
           await _speech.stop();
           // Give the platform a moment to deliver its final result before the
@@ -255,18 +417,21 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
       }
       if (!mounted) return;
       _transcript.finalizePartial();
-      String? path;
-      try {
-        path = await _recorder.stop();
-      } catch (_) {
-        path = _audioPath;
+      String? path = _audioPath;
+      if (_recording) {
+        try {
+          path = await _recorder.stop();
+        } catch (_) {}
       }
       path ??= _audioPath;
       if (path == null || path.isEmpty) {
+        if (!mounted) return;
         setState(() {
           _saving = false;
           _recording = false;
           _userStopping = false;
+          _saveInFlight = false;
+          _resultHandedOff = false;
           _error = 'No audio was captured.';
         });
         return;
@@ -278,12 +443,13 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
           _saving = false;
           _recording = false;
           _userStopping = false;
+          _saveInFlight = false;
+          _resultHandedOff = false;
           _error = 'Recorded audio file was not found.';
         });
         return;
       }
       final name = path.split(Platform.pathSeparator).last;
-      _resultHandedOff = true;
       if (!mounted) return;
       Navigator.of(context).pop(
         VoiceNoteResult(
@@ -299,6 +465,10 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
         _saving = false;
         _recording = false;
         _userStopping = false;
+        _saveInFlight = false;
+        // The handoff failed, so the sheet still owns (and must delete) the
+        // temporary recording on dispose.
+        _resultHandedOff = false;
         _error = 'Could not save voice note: $e';
       });
     }
@@ -307,8 +477,10 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
   Future<void> _discard() async {
     _abandoned = true;
     _userStopping = true;
+    _saveInFlight = false;
+    _generation++;
     _ticker?.cancel();
-    _restartTimer?.cancel();
+    _nextRestartAt = null;
     try {
       if (_speechAvailable) await _speech.cancel();
     } catch (_) {}
@@ -326,7 +498,10 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
   }
 
   Future<void> _requestClose() async {
-    if (!_hasWork || _saving) {
+    // A save is already handing the audio to the editor. Popping here used to
+    // dispose the sheet and delete the temporary recording mid-save.
+    if (_saving || _saveInFlight) return;
+    if (!_hasWork) {
       Navigator.of(context).pop();
       return;
     }
@@ -385,13 +560,7 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
     );
     if (chosen == null || !mounted) return;
     setState(() => _localeId = chosen.localeId);
-    if (_recording) {
-      _transcript.finalizePartial();
-      try {
-        await _speech.cancel();
-      } catch (_) {}
-      unawaited(_listenOnce());
-    }
+    if (_recording) unawaited(_forceSpeechRestart());
   }
 
   String _elapsedLabel() {
@@ -405,8 +574,9 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _ticker?.cancel();
-    _restartTimer?.cancel();
+    _generation++;
     if (!_resultHandedOff && !_abandoned) {
       unawaited(_speech.cancel());
       final path = _audioPath;
@@ -534,21 +704,25 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
               children: [
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: _saving ? null : _requestClose,
+                    onPressed: _saving || _saveInFlight ? null : _requestClose,
                     child: const Text('Cancel'),
                   ),
                 ),
                 const SizedBox(width: Insets.sm),
                 Expanded(
                   child: FilledButton.icon(
-                    onPressed: (_saving || (_error != null && !_recording))
+                    // Errors are retryable; the old code disabled Start forever
+                    // after one failed attempt.
+                    onPressed: (_saving || _saveInFlight)
                         ? null
                         : (_recording ? _stopAndSave : _start),
                     icon: Icon(_recording ? Icons.stop_rounded : Icons.mic_rounded),
                     label: Text(
                       _saving
                           ? 'Saving...'
-                          : (_recording ? 'Stop & save' : 'Start recording'),
+                          : (_recording
+                              ? 'Stop & save'
+                              : (_error != null ? 'Retry recording' : 'Start recording')),
                     ),
                   ),
                 ),
@@ -571,7 +745,12 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet> {
     if (!_recording) {
       return 'Transcription uses your device speech service when available.';
     }
-    if (_speech.isListening) return 'Live transcription is listening.';
+    if (_status != 'Recording...') return _status;
+    if (_speech.isListening &&
+        !_speechEnded &&
+        _silenceSinceLastSignal() < const Duration(seconds: 12)) {
+      return 'Live transcription is listening.';
+    }
     return 'Transcription is restarting; your recording and words are safe.';
   }
 

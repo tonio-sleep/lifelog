@@ -1,5 +1,3 @@
-import 'dart:ui' show FontFeature;
-
 import 'package:flutter/material.dart';
 
 import '../../app/theme/app_theme.dart';
@@ -520,8 +518,8 @@ class _MoodChip extends StatelessWidget {
         child: AnimatedContainer(
           duration: Motion.fast,
           curve: Motion.out,
-          width: 34,
-          height: 34,
+          // At least 44 logical pixels; grows with larger text sizes.
+          constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: selected ? color : color.withValues(alpha: 0.10),
@@ -571,6 +569,10 @@ IconAndColor sourceStyle(TimelineSource source, ColorScheme scheme) {
       Icons.photo_rounded,
       dark ? const Color(0xFFF0B866) : const Color(0xFFC77D1E),
     ),
+    TimelineSource.meal => IconAndColor(
+      Icons.restaurant_rounded,
+      scheme.secondary,
+    ),
   };
 }
 
@@ -608,31 +610,37 @@ class ChoicePills<T> extends StatelessWidget {
         runSpacing: Insets.sm,
         children: [
           for (final value in values)
-            Pressable(
-              borderRadius: BorderRadius.circular(Radii.pill),
-              haptic: true,
-              onTap: () => onChanged(value),
-              child: AnimatedContainer(
-                duration: Motion.fast,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: Insets.lg,
-                  vertical: 9,
-                ),
-                decoration: BoxDecoration(
-                  color: value == selected
-                      ? scheme.primary.withValues(alpha: 0.14)
-                      : palette.subtle,
-                  borderRadius: BorderRadius.circular(Radii.pill),
-                ),
-                child: Text(
-                  labelFor(value),
-                  style: context.text.labelMedium?.copyWith(
+            Semantics(
+              button: true,
+              selected: value == selected,
+              label: labelFor(value),
+              child: Pressable(
+                borderRadius: BorderRadius.circular(Radii.pill),
+                haptic: true,
+                onTap: () => onChanged(value),
+                child: AnimatedContainer(
+                  duration: Motion.fast,
+                  constraints: const BoxConstraints(minHeight: 44),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: Insets.lg,
+                    vertical: 9,
+                  ),
+                  decoration: BoxDecoration(
                     color: value == selected
-                        ? scheme.primary
-                        : palette.mutedText,
-                    fontWeight: value == selected
-                        ? FontWeight.w600
-                        : FontWeight.w500,
+                        ? scheme.primary.withValues(alpha: 0.14)
+                        : palette.subtle,
+                    borderRadius: BorderRadius.circular(Radii.pill),
+                  ),
+                  child: Text(
+                    labelFor(value),
+                    style: context.text.labelMedium?.copyWith(
+                      color: value == selected
+                          ? scheme.primary
+                          : palette.mutedText,
+                      fontWeight: value == selected
+                          ? FontWeight.w600
+                          : FontWeight.w500,
+                    ),
                   ),
                 ),
               ),

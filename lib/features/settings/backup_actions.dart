@@ -37,39 +37,53 @@ Future<void> exportBackup(BuildContext context, WidgetRef ref) async {
   );
   if (bytes == null) return;
 
-  final suggestedName = 'lifelog-backup-${dayKey(DateTime.now())}.lifelog';
   String? savedPath;
+  if (!context.mounted) return;
 
   if (!kIsWeb && (Platform.isIOS || Platform.isAndroid)) {
     // Save to app Documents so it is visible in the Files app / device storage.
-    final docs = await getApplicationDocumentsDirectory();
-    final dir = Directory(p.join(docs.path, 'Backups'));
-    await dir.create(recursive: true);
-    savedPath = p.join(dir.path, suggestedName);
-    if (!context.mounted) return;
-    final written = await guard(
+    final dir = await guard<Directory>(
       context,
-      File(savedPath).writeAsBytes(bytes, flush: true),
+      _visibleBackupsDirectory(),
+      errorPrefix: 'Could not prepare the backup folder',
+    );
+    if (dir == null) return;
+    if (!context.mounted) return;
+    savedPath = await guard<String>(
+      context,
+      _writeNewBackupFile(
+        dir,
+        'lifelog-backup-${dayKey(DateTime.now())}',
+        bytes,
+      ),
       errorPrefix: 'Could not write the backup file',
     );
-    if (written == null) return;
+    if (savedPath == null) return;
   } else {
     final location = await getSaveLocation(
-      suggestedName: suggestedName,
+      suggestedName: 'lifelog-backup-${dayKey(DateTime.now())}.lifelog',
       acceptedTypeGroups: _backupTypes,
     );
     if (location == null) return;
     if (!context.mounted) return;
-    savedPath = location.path;
-    final written = await guard(
+    savedPath = await guard<String>(
       context,
-      File(savedPath).writeAsBytes(bytes, flush: true),
+      _writeExactBackupFile(File(location.path), bytes),
       errorPrefix: 'Could not write the backup file',
     );
-    if (written == null) return;
+    if (savedPath == null) return;
   }
+  if (!context.mounted) return;
 
-  await ref.read(settingsProvider.notifier).markBackup(DateTime.now());
+  final marked = await guard<int>(
+    context,
+    ref
+        .read(settingsProvider.notifier)
+        .markBackup(DateTime.now())
+        .then((_) => 1),
+    errorPrefix: 'Could not record the backup time',
+  );
+  if (marked == null) return;
   if (!context.mounted) return;
 
   if (!kIsWeb && (Platform.isIOS || Platform.isAndroid)) {
@@ -123,11 +137,15 @@ Future<void> linkBackupFolder(BuildContext context, WidgetRef ref) async {
   }
   if (path == null) return;
   if (!context.mounted) return;
-  await guard(
+  final linked = await guard<int>(
     context,
-    ref.read(settingsProvider.notifier).setBackupFolderPath(path),
+    ref
+        .read(settingsProvider.notifier)
+        .setBackupFolderPath(path)
+        .then((_) => 1),
     errorPrefix: 'Could not link folder',
   );
+  if (linked == null) return;
   if (context.mounted) {
     showSnack(context, 'Linked backup folder: $path');
   }
@@ -149,6 +167,7 @@ Future<void> saveBackupToLinkedFolder(BuildContext context, WidgetRef ref) async
     }
     return;
   }
+  if (!context.mounted) return;
 
   final services = ref.read(appServicesProvider);
   final passphrase = await _askBackupPassphrase(context);
@@ -168,15 +187,28 @@ Future<void> saveBackupToLinkedFolder(BuildContext context, WidgetRef ref) async
 
   final now = DateTime.now();
   final stamp = '${dayKey(now)}-${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
-  final filePath = p.join(folder, 'lifelog-backup-$stamp.lifelog');
-  final written = await guard(
+  if (!context.mounted) return;
+  final filePath = await guard<String>(
     context,
-    File(filePath).writeAsBytes(bytes, flush: true),
+    _writeNewBackupFile(
+      dir,
+      'lifelog-backup-$stamp',
+      bytes,
+    ),
     errorPrefix: 'Could not write the backup file',
   );
-  if (written == null) return;
+  if (filePath == null) return;
+  if (!context.mounted) return;
 
-  await ref.read(settingsProvider.notifier).markBackup(DateTime.now());
+  final marked = await guard<int>(
+    context,
+    ref
+        .read(settingsProvider.notifier)
+        .markBackup(DateTime.now())
+        .then((_) => 1),
+    errorPrefix: 'Could not record the backup time',
+  );
+  if (marked == null) return;
   if (context.mounted) {
     showSnack(context, 'Backup saved to linked folder.');
   }
@@ -184,16 +216,45 @@ Future<void> saveBackupToLinkedFolder(BuildContext context, WidgetRef ref) async
 
 /// Returns the app's visible Documents folder path (shown in iOS Files app).
 Future<String> visibleExportsFolderPath() async {
-  if (!kIsWeb && (Platform.isIOS || Platform.isAndroid)) {
-    final docs = await getApplicationDocumentsDirectory();
-    final dir = Directory(p.join(docs.path, 'Backups'));
-    await dir.create(recursive: true);
-    return dir.path;
-  }
-  final docs = await getApplicationDocumentsDirectory();
-  final dir = Directory(p.join(docs.path, 'Lifelog', 'Backups'));
-  await dir.create(recursive: true);
+  final dir = await _visibleBackupsDirectory();
   return dir.path;
+}
+
+Future<Directory> _visibleBackupsDirectory() async {
+  final docs = await getApplicationDocumentsDirectory();
+  final subPath = !kIsWeb && (Platform.isIOS || Platform.isAndroid)
+      ? 'Backups'
+      : p.join('Lifelog', 'Backups');
+  final dir = Directory(p.join(docs.path, subPath));
+  await dir.create(recursive: true);
+  return dir;
+}
+
+/// Writes a backup to a new unique path through a temporary file so a crash can
+/// never leave a valid-looking but truncated `.lifelog` file behind.
+Future<String> _writeNewBackupFile(
+  Directory dir,
+  String baseName,
+  Uint8List bytes,
+) async {
+  await dir.create(recursive: true);
+  final suffix = DateTime.now().microsecondsSinceEpoch;
+  final target = File(p.join(dir.path, '$baseName-$suffix.lifelog'));
+  return _writeExactBackupFile(target, bytes);
+}
+
+Future<String> _writeExactBackupFile(File target, Uint8List bytes) async {
+  final temp = File('${target.path}.tmp');
+  await temp.writeAsBytes(bytes, flush: true);
+  try {
+    await temp.rename(target.path);
+  } catch (_) {
+    if (await temp.exists()) {
+      await temp.delete();
+    }
+    rethrow;
+  }
+  return target.path;
 }
 
 /// Reads an encrypted backup, shows exactly what it contains, then replaces the
@@ -206,8 +267,14 @@ Future<void> restoreBackup(BuildContext context, WidgetRef ref) async {
 
   final passphrase = await _askPassphraseToOpen(context, fileName: file.name);
   if (passphrase == null) return;
+  if (!context.mounted) return;
 
-  final bytes = await file.readAsBytes();
+  final bytes = await guard<Uint8List>(
+    context,
+    file.readAsBytes(),
+    errorPrefix: 'Could not read the backup file',
+  );
+  if (bytes == null) return;
   if (!context.mounted) return;
   final contents = await guard(
     context,

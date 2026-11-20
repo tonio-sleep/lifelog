@@ -1,6 +1,7 @@
 import '../core/util/dates.dart';
 import 'models/archive.dart';
 import 'models/journal.dart';
+import 'models/meals.dart';
 import 'models/media.dart';
 import 'models/music.dart';
 import 'models/places.dart';
@@ -17,6 +18,7 @@ class DaySummary {
     required this.visits,
     required this.scrobbles,
     required this.trackerRecords,
+    required this.meals,
     required this.events,
   });
 
@@ -26,6 +28,7 @@ class DaySummary {
   final List<Visit> visits;
   final List<MusicScrobble> scrobbles;
   final List<TrackerRecord> trackerRecords;
+  final List<MealRecord> meals;
   final List<TimelineEvent> events;
 
   int get totalRecords =>
@@ -34,6 +37,7 @@ class DaySummary {
       visits.length +
       scrobbles.length +
       trackerRecords.length +
+      meals.length +
       events.length;
 
   bool get isEmpty => totalRecords == 0;
@@ -48,6 +52,7 @@ class DaySummary {
       visits: archive.visitsOn(day),
       scrobbles: archive.scrobblesOn(day),
       trackerRecords: archive.trackerRecordsOn(day),
+      meals: archive.mealsOn(day),
       events: archive.eventsOn(day),
     );
   }
@@ -94,6 +99,9 @@ class OnThisDayMemory {
         '${s.trackerRecords.length} tracker '
         '${plural(s.trackerRecords.length, 'record')}',
       );
+    }
+    if (s.meals.isNotEmpty) {
+      parts.add('${s.meals.length} ${plural(s.meals.length, 'meal')}');
     }
     if (s.events.isNotEmpty) {
       parts.add('${s.events.length} ${plural(s.events.length, 'event')}');

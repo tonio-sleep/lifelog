@@ -10,6 +10,25 @@ import 'package:lifelog/integrations/cloudflare/backup_upload_progress.dart';
 import 'package:lifelog/integrations/cloudflare/cloudflare_sync_service.dart';
 
 void main() {
+  test('worker URLs require HTTPS except explicit loopback', () {
+    expect(
+      () => CloudflareSyncService.normalizeBaseUrl('http://example.com/worker'),
+      throwsA(isA<CloudflareSyncException>()),
+    );
+    expect(
+      CloudflareSyncService.normalizeBaseUrl('worker.example.com'),
+      'https://worker.example.com',
+    );
+    expect(
+      CloudflareSyncService.normalizeBaseUrl('http://127.0.0.1:8787'),
+      'http://127.0.0.1:8787',
+    );
+    expect(
+      CloudflareSyncService.workerUrlWarning('http://example.com'),
+      isNotNull,
+    );
+  });
+
   test('backup packing reports each stage with bounded counts', () async {
     final stages = <(BackupPackStage, int, int)>[];
     final archive = Archive(
@@ -107,9 +126,10 @@ void main() {
       'application/octet-stream',
     );
     expect(sentBody, bytes);
-    expect(progress, isNotEmpty);
-    expect(progress.first.$1, 65536);
-    expect(progress.last.$1, bytes.length);
-    expect(progress.every((event) => event.$2 == bytes.length), isTrue);
+    // Queued chunks are not reported as sent: the only progress event is the
+    // confirmation after the Worker accepted the full body.
+    expect(progress, hasLength(1));
+    expect(progress.single.$1, bytes.length);
+    expect(progress.single.$2, bytes.length);
   });
 }

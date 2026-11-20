@@ -39,7 +39,11 @@ class AccountSyncCard extends ConsumerWidget {
       SyncPhase.expired => ('Session expired', StatusTone.attention),
     };
     if (upload.active) {
-      label = 'Uploading…';
+      // Packing/encrypting is not an upload. Do not claim bytes are on the
+      // server until the Worker has answered.
+      label = upload.stage == BackupUploadStage.uploading
+          ? 'Uploading…'
+          : 'Preparing backup…';
       tone = StatusTone.accent;
     }
 
@@ -167,7 +171,9 @@ class AccountSyncCard extends ConsumerWidget {
 
   String _expiresLabel(SyncStatus status) {
     final days = status.daysLeft;
-    if (days == null || days <= 1) return 'Expires today';
+    if (days == null) return 'Expiry unknown';
+    if (days == 0) return 'Expires today';
+    if (days == 1) return 'Expires in 1 day';
     return 'Expires in $days days';
   }
 }
@@ -266,8 +272,7 @@ class _SignedInBody extends ConsumerWidget {
         : '${relativeDayLabel(dayStart(last))}, ${formatTime(last)}';
     final upload = ref.watch(backupUploadProvider);
     final passphraseRemembered =
-        ref.watch(settingsProvider).cloudflarePassphraseCipher?.isNotEmpty ??
-            false;
+        ref.watch(settingsProvider).hasRememberedCloudflarePassphrase;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -279,7 +284,7 @@ class _SignedInBody extends ConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Last synced backup',
+                    'Last cloud sync (push or pull)',
                     style: text.labelMedium?.copyWith(color: palette.mutedText),
                   ),
                   const SizedBox(height: 2),
@@ -289,9 +294,16 @@ class _SignedInBody extends ConsumerWidget {
             ),
           ],
         ),
+        if (status.expiresAt == null) ...[
+          const SizedBox(height: Insets.xs),
+          Text(
+            'Session expiry is not reported by the sync server.',
+            style: text.bodySmall?.copyWith(color: palette.dimText),
+          ),
+        ],
         const SizedBox(height: Insets.xs),
         Text(
-          'Push uploads this device as one encrypted backup. Pull replaces this device with the cloud backup.',
+          'Push uploads this device as one encrypted backup. Replace from cloud backup downloads it and replaces all data on this device.',
           style: text.bodySmall?.copyWith(color: palette.mutedText),
         ),
         const SizedBox(height: Insets.sm),
@@ -320,7 +332,7 @@ class _SignedInBody extends ConsumerWidget {
         Row(
           children: [
             Expanded(
-              flex: 3,
+              flex: 2,
               child: FilledButton.icon(
                 onPressed: upload.active
                     ? null
@@ -331,13 +343,25 @@ class _SignedInBody extends ConsumerWidget {
             ),
             const SizedBox(width: Insets.sm),
             Expanded(
-              flex: 2,
+              flex: 3,
               child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: context.scheme.error,
+                  side: BorderSide(
+                    color: context.scheme.error.withValues(alpha: 0.5),
+                  ),
+                ),
                 onPressed: upload.active
                     ? null
                     : () => pullFromCloudflare(context, ref),
                 icon: const Icon(Icons.cloud_download_outlined, size: 18),
-                label: const Text('Pull'),
+                label: const Flexible(
+                  child: Text(
+                    'Replace from cloud backup',
+                    maxLines: 2,
+                    textAlign: TextAlign.center,
+                  ),
+                ),
               ),
             ),
           ],
@@ -354,15 +378,21 @@ class _RemoteStatusLine extends ConsumerWidget {
     final palette = context.palette;
     final text = context.text;
     final value = remote.value;
-    final label = switch (remote) {
-      AsyncLoading() => 'Checking cloud...',
-      AsyncError() => 'Could not check cloud status.',
-      _ when value == null || !value.exists => 'No cloud backup yet',
-      _ => 'Cloud backup: ${_formatBytes(value.size ?? 0)}'
-          '${value.modifiedAt != null || value.uploadedAt != null
-              ? ' · ${formatDayLong(value.modifiedAt ?? value.uploadedAt!)}'
-              : ''}',
-    };
+    late final String label;
+    if (remote is AsyncLoading) {
+      label = 'Checking cloud...';
+    } else if (remote is AsyncError) {
+      label = 'Could not check cloud status.';
+    } else if (value == null || !value.exists) {
+      label = 'No cloud backup yet';
+    } else {
+      final parts = <String>[];
+      if (value.size != null) parts.add(_formatBytes(value.size!));
+      final when = value.modifiedAt ?? value.uploadedAt;
+      if (when != null) parts.add(formatDayLong(when));
+      if (parts.isEmpty) parts.add('size unknown');
+      label = 'Cloud backup: ${parts.join(' · ')}';
+    }
     return Row(
       children: [
         Icon(Icons.cloud_outlined, size: 14, color: palette.dimText),
@@ -407,10 +437,10 @@ class _UploadProgressBlock extends StatelessWidget {
     final fraction = uploading
         ? progress.byteFraction
         : (progress.active ? progress.itemFraction : 1.0);
-    final detail = uploading
+    final detail = uploading && progress.bytesTotal > 0
         ? '${_formatBytes(progress.bytesSent)} of '
             '${_formatBytes(progress.bytesTotal)}'
-        : progress.total > 0
+        : progress.active && progress.total > 0
             ? '${progress.current} of ${progress.total} items'
             : '';
 
@@ -480,11 +510,12 @@ class _UploadProgressBlock extends StatelessWidget {
                   label: 'Items packed',
                   value: '${progress.current} / ${progress.total}',
                 ),
-                _DetailRow(
-                  label: 'Bytes sent',
-                  value: '${_formatBytes(progress.bytesSent)} / '
-                      '${_formatBytes(progress.bytesTotal)}',
-                ),
+                if (progress.bytesTotal > 0)
+                  _DetailRow(
+                    label: 'Bytes confirmed by server',
+                    value: '${_formatBytes(progress.bytesSent)} / '
+                        '${_formatBytes(progress.bytesTotal)}',
+                  ),
                 if (progress.startedAt != null)
                   _DetailRow(
                     label: 'Started',

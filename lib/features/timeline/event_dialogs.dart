@@ -30,12 +30,12 @@ Future<TimelineEvent?> showTimelineEventEditor(
   );
   if (saved == null) return null;
   if (!context.mounted) return saved;
-  await guard(
+  final savedOk = await guard<int>(
     context,
-    ref.read(archiveProvider.notifier).saveEvent(saved),
+    ref.read(archiveProvider.notifier).saveEvent(saved).then((_) => 1),
     errorPrefix: 'Could not save event',
   );
-  return saved;
+  return savedOk == null ? null : saved;
 }
 
 class _TimelineEventDialog extends ConsumerStatefulWidget {

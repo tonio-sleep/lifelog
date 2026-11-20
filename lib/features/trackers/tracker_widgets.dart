@@ -249,7 +249,7 @@ class HabitOrb extends ConsumerWidget {
   }
 }
 
-/// A habit as one line on the Habits screen: orb, name, streak, last 7 days.
+/// A habit as one line on the Habits screen: orb, name, real log count, last 7 days.
 class HabitRow extends ConsumerWidget {
   const HabitRow({super.key, required this.tracker, required this.day});
 
@@ -262,9 +262,14 @@ class HabitRow extends ConsumerWidget {
     final history = HabitHistory(tracker, archive.trackerRecords);
     final accent = trackerColor(tracker.colorValue);
     final palette = context.palette;
-    final streak = history.currentStreak(DateTime.now());
     final value = habitValueLabel(tracker, archive.trackerRecords, day);
     final week = history.lastDays(day, 7);
+    final now = DateTime.now();
+    var loggedInLast30 = 0;
+    for (var i = 0; i < 30; i++) {
+      final dayInWindow = DateTime(now.year, now.month, now.day - i);
+      if (history.loggedOn(dayInWindow)) loggedInLast30++;
+    }
 
     return QuietCard(
       padding: const EdgeInsets.fromLTRB(Insets.md, Insets.md, Insets.lg, Insets.md),
@@ -288,33 +293,16 @@ class HabitRow extends ConsumerWidget {
                   style: context.text.titleSmall,
                 ),
                 const SizedBox(height: 2),
-                if (streak >= 2)
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.local_fire_department_rounded,
-                        size: 14,
-                        color: context.scheme.secondary,
-                      ),
-                      const SizedBox(width: 3),
-                      Text(
-                        '$streak day streak',
-                        style: context.text.labelSmall?.copyWith(
-                          color: context.scheme.secondary,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  )
-                else
-                  Text(
-                    value ?? 'Not logged',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: context.text.labelSmall?.copyWith(
-                      color: value == null ? palette.dimText : palette.mutedText,
-                    ),
+                Text(
+                  value == null
+                      ? 'Logged on $loggedInLast30 of the last 30 days'
+                      : '$value · logged on $loggedInLast30 of the last 30 days',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: context.text.labelSmall?.copyWith(
+                    color: value == null ? palette.dimText : palette.mutedText,
                   ),
+                ),
               ],
             ),
           ),

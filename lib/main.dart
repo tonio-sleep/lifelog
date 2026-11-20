@@ -1,4 +1,8 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/app_services.dart';
@@ -9,7 +13,28 @@ import 'app/widgets/common.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const BootstrapApp());
+
+  // Catch framework, platform and async errors so a transient failure cannot
+  // leave the user with a silent blank screen. Errors are only logged locally;
+  // nothing is uploaded or written into the encrypted archive.
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    _reportError(details.exception, details.stack);
+  };
+  PlatformDispatcher.instance.onError = (error, stack) {
+    _reportError(error, stack);
+    return true;
+  };
+
+  runZonedGuarded(
+    () => runApp(const BootstrapApp()),
+    _reportError,
+  );
+}
+
+void _reportError(Object error, StackTrace? stack) {
+  debugPrint('Lifelog error: $error');
+  if (stack != null) debugPrint(stack.toString());
 }
 
 /// Boots storage and cryptography before any provider or screen exists. The
@@ -143,7 +168,8 @@ class _StartupFailure extends StatelessWidget {
                   Text(
                     'The local data folder could not be prepared, the key '
                     'could not be loaded, or the archive file could not be '
-                    'decrypted. No data has been changed.',
+                    'decrypted. Your existing files have been left in place; '
+                    'retry before deleting or replacing anything.',
                     style: Theme.of(
                       context,
                     ).textTheme.bodySmall?.copyWith(color: palette.mutedText),
@@ -171,6 +197,18 @@ class _StartupFailure extends StatelessWidget {
                         onPressed: onRetry,
                         icon: const Icon(Icons.refresh_rounded, size: 17),
                         label: const Text('Try again'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          Clipboard.setData(ClipboardData(text: '$error'));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Error details copied.'),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.copy_all_outlined, size: 17),
+                        label: const Text('Copy details'),
                       ),
                     ],
                   ),

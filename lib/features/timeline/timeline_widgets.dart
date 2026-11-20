@@ -7,9 +7,12 @@ import '../../app/widgets/common.dart';
 import '../../app/widgets/components.dart';
 import '../../core/util/dates.dart';
 import '../../domain/models/media.dart';
+import '../../domain/models/meals.dart';
 import '../../domain/models/timeline.dart';
 import '../../domain/timeline_builder.dart';
 import '../journal/journal_editor_screen.dart';
+import '../meals/meal_dialogs.dart';
+import '../meals/meal_widgets.dart';
 import '../music/music_screen.dart';
 import '../photos/photo_widgets.dart';
 import '../places/place_dialogs.dart';
@@ -94,8 +97,16 @@ class _TimelineRow extends ConsumerWidget {
     final scheme = context.scheme;
     final text = context.text;
     final archive = ref.watch(archiveProvider);
-    final style = sourceStyle(item.source, scheme);
+    final isMeal = item.source == TimelineSource.meal;
+    final style = isMeal
+        ? IconAndColor(
+            mealIcon(MealKind.fromJson(item.metadata['kind'])),
+            mealAccent(MealKind.fromJson(item.metadata['kind']), scheme, palette),
+          )
+        : sourceStyle(item.source, scheme);
     final hasSubtitle = item.subtitle.trim().isNotEmpty;
+    final timeKnown = item.metadata['timeKnown'] != 'false';
+    final timeText = isMeal && !timeKnown ? 'time not recorded' : formatTime(item.at);
 
     TimelineEvent? manualEvent;
     if (item.source == TimelineSource.manual && item.sourceId != null) {
@@ -139,11 +150,12 @@ class _TimelineRow extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           SizedBox(
-            width: 52,
+            width: timeKnown || !isMeal ? 52 : 68,
             child: Padding(
               padding: EdgeInsets.only(top: compact ? 11 : 13),
               child: Text(
-                formatTime(item.at),
+                timeText,
+                maxLines: 2,
                 textAlign: TextAlign.right,
                 style: text.labelSmall?.copyWith(
                   color: palette.mutedText,
@@ -288,6 +300,18 @@ class _TimelineRow extends ConsumerWidget {
         await Navigator.of(context).push(
           MaterialPageRoute<void>(builder: (_) => MusicScreen(day: item.at)),
         );
+      case TimelineSource.meal:
+        final mealId = item.sourceId ?? item.metadata['mealId'];
+        if (mealId == null) return;
+        MealRecord? meal;
+        for (final candidate in ref.read(archiveProvider).meals) {
+          if (candidate.id == mealId) {
+            meal = candidate;
+            break;
+          }
+        }
+        if (meal == null) return;
+        await showMealEditor(context, ref, meal.at, existing: meal);
       case TimelineSource.manual:
         await showTimelineEventEditor(
           context,

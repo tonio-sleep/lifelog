@@ -191,13 +191,12 @@ class _HabitList extends ConsumerWidget {
     };
     final done = trackers.where((t) => histories[t.id]!.loggedOn(day)).length;
 
-    TrackerDefinition? streakLeader;
-    var streakBest = 1;
-    for (final t in trackers) {
-      final s = histories[t.id]!.currentStreak(DateTime.now());
-      if (s > streakBest) {
-        streakBest = s;
-        streakLeader = t;
+    final today = DateTime.now();
+    var daysLogged = 0;
+    for (var i = 0; i < 30; i++) {
+      final dayInWindow = DateTime(today.year, today.month, today.day - i);
+      if (trackers.any((t) => histories[t.id]!.loggedOn(dayInWindow))) {
+        daysLogged++;
       }
     }
 
@@ -234,32 +233,10 @@ class _HabitList extends ConsumerWidget {
                       style: text.headlineSmall,
                     ),
                     const SizedBox(height: 2),
-                    if (streakLeader != null)
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.local_fire_department_rounded,
-                            size: 15,
-                            color: context.scheme.secondary,
-                          ),
-                          const SizedBox(width: 4),
-                          Expanded(
-                            child: Text(
-                              '${streakLeader.name}, $streakBest days',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: text.bodySmall?.copyWith(
-                                color: palette.mutedText,
-                              ),
-                            ),
-                          ),
-                        ],
-                      )
-                    else
-                      Text(
-                        'Tap to log quickly. Hold for details like time or duration.',
-                        style: text.bodySmall?.copyWith(color: palette.mutedText),
-                      ),
+                    Text(
+                      'Logged on $daysLogged of the last 30 days',
+                      style: text.bodySmall?.copyWith(color: palette.mutedText),
+                    ),
                   ],
                 ),
               ),

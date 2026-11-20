@@ -12,6 +12,20 @@ void main() {
     expect(session.expiresInSeconds, 2592000);
   });
 
+  test('accepts numeric strings and ignores malformed expiry values', () {
+    final session = CloudflareSession.fromJson({
+      'token': 'abc',
+      'username': 'me',
+      'expiresIn': '2592000',
+    });
+    expect(session.expiresInSeconds, 2592000);
+    expect(
+      CloudflareSession.fromJson({'token': 'a', 'username': 'b', 'expiresIn': 'soon'})
+          .expiresInSeconds,
+      isNull,
+    );
+  });
+
   test('still reads legacy sessions stored with expiresInSeconds', () {
     final session = CloudflareSession.fromJson({
       'token': 'abc',

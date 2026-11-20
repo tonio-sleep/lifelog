@@ -78,7 +78,7 @@ class LocationTrackingController with WidgetsBindingObserver {
       await _startBackground();
     } else {
       // Clear any events queued before the user disabled background tracking.
-      unawaited(_channel.takePending());
+      unawaited(_channel.clearPending());
     }
   }
 
@@ -92,16 +92,21 @@ class LocationTrackingController with WidgetsBindingObserver {
     }
   }
 
-  Future<void> setBackgroundEnabled(bool enabled) async {
+  /// Returns the effective native status so the UI can show Needs Always /
+  /// Restricted / Off instead of blindly showing On.
+  Future<BackgroundLocationStatus> setBackgroundEnabled(bool enabled) async {
     await ref
         .read(settingsProvider.notifier)
         .setBackgroundLocationEnabled(enabled);
     if (enabled) {
-      await _startBackground();
-    } else {
-      await _stopBackground();
+      return _startBackground();
     }
+    return _stopBackground();
   }
+
+  /// Current effective status, including in-app toggles and iOS authorization.
+  Future<BackgroundLocationStatus> backgroundStatus() =>
+      _channel.status(enabled: ref.read(settingsProvider).backgroundLocationEnabled);
 
   /// Capture a sample now (if possible) and refresh today's auto visits.
   Future<bool> recordNow({bool requestPermission = true}) async {
@@ -109,17 +114,31 @@ class LocationTrackingController with WidgetsBindingObserver {
   }
 
   /// Flush events collected by iOS while the app was suspended or terminated.
+  ///
+  /// [takePending] is a non-destructive peek. Only ids whose samples were
+  /// successfully written to the archive are acked; failures stay queued for
+  /// the next flush. Returns the number of saved events, not the number read.
   Future<int> flushBackgroundEvents() async {
     final events = await _channel.takePending();
+    final persistedIds = <String>[];
     final days = <DateTime>{};
     for (final event in events) {
-      final touched = await _storeBackgroundEvent(event);
-      days.addAll(touched);
+      try {
+        final touched = await _storeBackgroundEvent(event);
+        days.addAll(touched);
+        if (event.id.isNotEmpty) persistedIds.add(event.id);
+      } catch (_) {
+        // Keep this event native-side so the next flush can retry it.
+      }
+    }
+    final savedIds = ackableBackgroundEventIds(events, persistedIds);
+    if (savedIds.isNotEmpty) {
+      await _channel.ackPending(savedIds);
     }
     for (final day in days) {
       await _refreshVisitsForDay(day);
     }
-    return events.length;
+    return savedIds.length;
   }
 
   Future<void> _startOrRefresh({required bool requestPermission}) async {
@@ -195,11 +214,13 @@ class LocationTrackingController with WidgetsBindingObserver {
     await _refreshVisitsForDay(now);
   }
 
-  Future<void> _startBackground() async {
-    if (_backgroundStarted) return;
-    if (!ref.read(settingsProvider).backgroundLocationEnabled) return;
+  Future<BackgroundLocationStatus> _startBackground() async {
+    if (!ref.read(settingsProvider).backgroundLocationEnabled) {
+      return _channel.status(enabled: false);
+    }
+    final status = await _channel.setEnabled(true);
+    if (_backgroundStarted) return status;
     _backgroundStarted = true;
-    await _channel.setEnabled(true);
     _backgroundSub ??= _channel.events.listen(
       (event) => unawaited(_handleBackgroundEvent(event)),
       onError: (_) {},
@@ -208,19 +229,29 @@ class LocationTrackingController with WidgetsBindingObserver {
       unawaited(flushBackgroundEvents());
     });
     await flushBackgroundEvents();
+    return status;
   }
 
-  Future<void> _stopBackground() async {
+  Future<BackgroundLocationStatus> _stopBackground() async {
     _backgroundStarted = false;
-    await _channel.setEnabled(false);
+    final status = await _channel.setEnabled(false);
+    // The native side also clears on setEnabled(false); this makes the intent
+    // explicit and covers older native builds.
+    await _channel.clearPending();
     await _backgroundSub?.cancel();
     _backgroundSub = null;
     _flushTimer?.cancel();
     _flushTimer = null;
+    return status;
   }
 
   Future<void> _handleBackgroundEvent(BackgroundVisitEvent event) async {
     final days = await _storeBackgroundEvent(event);
+    // Same ack path as the periodic flush: native queue entries are removed
+    // only after the samples are in the encrypted archive.
+    if (event.id.isNotEmpty) {
+      await _channel.ackPending([event.id]);
+    }
     for (final day in days) {
       await _refreshVisitsForDay(day);
     }

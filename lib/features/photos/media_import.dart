@@ -156,6 +156,13 @@ Future<MediaImportSummary> importPickedMedia(
     var dialogOpen = true;
     var skipAll = false;
     var cancelAll = false;
+    var saveInFlight = false;
+
+    void closeDialogIfIdle() {
+      if (!dialogOpen || saveInFlight) return;
+      dialogOpen = false;
+      navigator.pop();
+    }
 
     final dialogFuture = showDialog<void>(
       context: context,
@@ -246,13 +253,20 @@ Future<MediaImportSummary> importPickedMedia(
                           onPressed: () {
                             skipAll = true;
                             markAllActiveSkipped();
+                            closeDialogIfIdle();
                           },
                           child: const Text('Skip all'),
                         ),
                       ),
                       Expanded(
                         child: TextButton(
-                          onPressed: () => cancelAll = true,
+                          onPressed: () {
+                            cancelAll = true;
+                            markAllActiveSkipped();
+                            // Nothing is being written: stop the UI now rather
+                            // than waiting for the next loop iteration.
+                            closeDialogIfIdle();
+                          },
                           child: const Text('Cancel'),
                         ),
                       ),
@@ -289,6 +303,7 @@ Future<MediaImportSummary> importPickedMedia(
         }
 
         setItem(i, _ItemState.saving, 'Encrypting and saving');
+        saveInFlight = true;
         try {
           await ref.read(archiveProvider.notifier).importMedia(
                 bytes: bytes,
@@ -298,9 +313,20 @@ Future<MediaImportSummary> importPickedMedia(
                 journalEntryId: journalEntryId,
                 createdAt: createdAt,
               );
-          setItem(i, _ItemState.added, 'Added');
+          // Cancel/skip can arrive while the encrypted write is in flight.
+          // The bytes really were stored, so keep the honest "added" count but
+          // explain why the loop stopped.
+          final interrupted = cancelAll || skipAll || !dialogOpen;
+          final detail = interrupted
+              ? 'Added before ${cancelAll ? 'cancel' : 'skip'}'
+              : 'Added';
+          setItem(i, _ItemState.added, detail);
         } catch (e) {
           setItem(i, _ItemState.failed, 'Could not save: $e');
+        } finally {
+          saveInFlight = false;
+          // If a cancel arrived mid-write, close as soon as it is safe.
+          if (cancelAll || skipAll) closeDialogIfIdle();
         }
       }
     } finally {

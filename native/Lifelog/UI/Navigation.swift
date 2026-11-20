@@ -55,6 +55,7 @@ enum AppSheet: Identifiable {
     case editTracker(String)
     case addMedia(Date)
     case addTrack
+    case lastfmConnect
     case newPlace
     case editPlace(String)
 
@@ -72,6 +73,7 @@ enum AppSheet: Identifiable {
         case .editTracker(let id): return "editTracker-\(id)"
         case .addMedia(let date): return "addMedia-\(date.timeIntervalSince1970)"
         case .addTrack: return "addTrack"
+        case .lastfmConnect: return "lastfmConnect"
         case .newPlace: return "newPlace"
         case .editPlace(let id): return "editPlace-\(id)"
         }

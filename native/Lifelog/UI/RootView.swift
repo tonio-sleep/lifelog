@@ -153,14 +153,18 @@ struct RootView: View {
 
 private struct TabShell: View {
     @EnvironmentObject private var navigator: Navigator
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TabView(selection: $navigator.selection) {
-            ForEach(Destination.allCases) { destination in
-                DestinationStack(destination: destination)
-                    .tabItem { Label(destination.title, systemImage: destination.symbol) }
-                    .tag(destination)
-            }
+        ZStack {
+            DestinationStack(destination: navigator.selection)
+                .id(navigator.selection)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(.opacity)
+        }
+        .animation(reduceMotion ? nil : Animation.easeInOut(duration: 0.16), value: navigator.selection)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            LifelogTabBar()
         }
     }
 }
@@ -308,6 +312,8 @@ private struct SheetRouter: View {
             MediaAddSheet(day: date)
         case .addTrack:
             ManualTrackSheet()
+        case .lastfmConnect:
+            LastfmConnectView()
         case .newPlace:
             PlaceEditorSheet(place: Place())
         case .editPlace(let id):

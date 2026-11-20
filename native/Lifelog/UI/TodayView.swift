@@ -30,45 +30,44 @@ struct TodaySnapshot {
     var sleepHours: Double?
     var trackers: [TrackerTile] = []
     var visits: [VisitLine] = []
-    var trackCount = 0
-    var artistCount = 0
-    var topArtist: String?
-    var topTracks: [TopTrack] = []
-    var artworkURL: String?
+    var scrobbles: [MusicScrobble] = []
+    var photos: [MediaItem] = []
     var trackerRecordCount = 0
     var placeCount = 0
     var eventCount = 0
 
-    static func make(_ archive: Archive, now: Date) -> TodaySnapshot {
+    static func make(_ archive: Archive, day: Date, now: Date) -> TodaySnapshot {
         var snap = TodaySnapshot()
         snap.loaded = true
-        let summary = DaySummary.of(archive, now)
+        let summary = DaySummary.of(archive, day)
         snap.totalRecords = summary.totalRecords
         snap.entryCount = summary.entries.filter { !$0.isMetricsOnly }.count
         snap.trackerRecordCount = summary.trackerRecords.count
         snap.eventCount = summary.events.count
         snap.placeCount = Set(summary.visits.map(\.label)).count
-        snap.mood = dominantMood(archive, now)
+        snap.mood = dominantMood(archive, day)
 
-        if let metrics = archive.dayMetricsEntryFor(now) {
+        if let metrics = archive.dayMetricsEntryFor(day) {
             snap.steps = metrics.steps
             snap.sleepHours = metrics.sleepHours
         }
 
-        snap.rows = Array(DayRow.rows(archive, now).reversed())
+        snap.rows = Array(DayRow.rows(archive, day).reversed())
+        snap.scrobbles = summary.scrobbles
+        snap.photos = summary.photos
 
         let records = archive.trackerRecords
-        snap.trackers = archive.activeTrackers.prefix(8).map { tracker in
+        snap.trackers = archive.activeTrackers.prefix(10).map { tracker in
             let history = HabitHistory(tracker, records)
-            let today = TrackerMath.recordsOn(records, trackerId: tracker.id, day: now)
+            let today = TrackerMath.recordsOn(records, trackerId: tracker.id, day: day)
             return TrackerTile(
                 id: tracker.id,
                 name: tracker.name,
                 symbol: tracker.icon.isEmpty ? "circle" : tracker.icon,
                 color: tracker.colorValue,
                 type: tracker.type,
-                label: TrackerMath.dailyLabel(tracker, records, now),
-                done: history.doneOn(now),
+                label: TrackerMath.dailyLabel(tracker, records, day),
+                done: history.doneOn(day),
                 lastRecordId: today.last?.id
             )
         }
@@ -81,14 +80,23 @@ struct TodaySnapshot {
                 suggested: visit.confidence == .suggested
             )
         }
-
-        let music = summary.music
-        snap.trackCount = summary.scrobbles.count
-        snap.artistCount = music.uniqueArtists
-        snap.topArtist = music.topArtistName
-        snap.topTracks = Array(music.topTracks.prefix(3))
-        snap.artworkURL = summary.scrobbles.compactMap(\.artworkUrl).first { !$0.isEmpty }
         return snap
+    }
+
+    /// Counts real records by local day. Built once per archive revision, never
+    /// while scrolling. The calendar turns these into quiet dots.
+    static func activity(_ archive: Archive) -> [String: Int] {
+        var counts: [String: Int] = [:]
+        func add(_ date: Date) {
+            counts[Dates.dayKey(date), default: 0] += 1
+        }
+        for entry in archive.entries where !entry.isMetricsOnly { add(entry.createdAt) }
+        for item in archive.media { add(item.createdAt) }
+        for record in archive.trackerRecords { add(record.recordedAt) }
+        for event in archive.events where !event.hidden { add(event.occurredAt) }
+        for visit in archive.visits { add(visit.startAt) }
+        for track in archive.scrobbles { add(track.playedAt) }
+        return counts
     }
 }
 
@@ -97,19 +105,25 @@ struct TodaySnapshot {
 struct TodayView: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var navigator: Navigator
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var selectedDay = Dates.dayStart(Date())
     @State private var snapshot = TodaySnapshot()
+    @State private var activity: [String: Int] = [:]
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Space.xxl) {
+            VStack(alignment: .leading, spacing: Space.xl) {
                 header
                 if enabled("status") { facts }
-                if enabled("quickAdd") || enabled("highlight") { TodayComposer() }
+                if enabled("quickAdd") || enabled("highlight") { TodayComposer(day: selectedDay) }
+                calendarCard
+                if enabled("music") {
+                    LastPlayedCard(scrobbles: snapshot.scrobbles, day: selectedDay)
+                }
                 if enabled("timeline") { threadSection }
                 if enabled("trackers") { practicesSection }
-                if enabled("places") { placesSection }
-                if enabled("music") { listeningSection }
-                if enabled("recap") { recapSection }
+                momentsSection
+                if enabled("places") { placesLine }
                 footer
             }
             .padding(.horizontal, Space.page)
@@ -118,12 +132,19 @@ struct TodayView: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .opacity(snapshot.loaded ? 1 : 0)
-        .animation(.easeOut(duration: 0.2), value: snapshot.loaded)
+        .animation(reduceMotion ? nil : Animation.easeOut(duration: 0.2), value: snapshot.loaded)
         .refreshable { await refreshSources() }
         .task(id: env.revision) {
             let archive = env.archive
+            let result = await offMain { TodaySnapshot.activity(archive) }
+            guard !Task.isCancelled else { return }
+            activity = result
+        }
+        .task(id: "\(env.revision)-\(Dates.dayKey(selectedDay))") {
+            let archive = env.archive
+            let day = selectedDay
             let now = Date()
-            let result = await offMain { TodaySnapshot.make(archive, now: now) }
+            let result = await offMain { TodaySnapshot.make(archive, day: day, now: now) }
             guard !Task.isCancelled else { return }
             snapshot = result
         }
@@ -137,29 +158,60 @@ struct TodayView: View {
                 env.present(added == 0 ? "Listening is up to date." : "Added \(added) \(Dates.plural(added, "track")).")
             }
         }
-        if env.healthConnected {
-            await env.syncHealth()
-        }
+        if env.healthConnected { await env.syncHealth() }
     }
 
     // MARK: Header
 
     private var header: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
-            PageHeader(
-                eyebrow: Dates.formatDayLong(Date()),
-                title: greeting,
-                subtitle: snapshot.totalRecords == 0
-                    ? "A blank page is still a good place to begin."
-                    : "\(snapshot.totalRecords) \(Dates.plural(snapshot.totalRecords, "record")) so far today."
-            )
-            Button {
-                navigator.push(.journal(Date()))
-            } label: {
-                Label("Open today's page", systemImage: "book")
+            HStack(alignment: .top, spacing: Space.md) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(eyebrow)
+                        .font(Typeface.micro)
+                        .textCase(.uppercase)
+                        .tracking(1.1)
+                        .foregroundStyle(Palette.inkTertiary)
+                    Text(title)
+                        .font(Typeface.display)
+                        .foregroundStyle(Palette.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                LifelogMark(size: 38)
             }
-            .buttonStyle(QuietButtonStyle())
+
+            HStack(spacing: Space.sm) {
+                Text(subtitle)
+                    .font(Typeface.label)
+                    .foregroundStyle(Palette.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                if !Dates.sameDay(selectedDay, Date()) {
+                    Button("Today") {
+                        withAnimation(reduceMotion ? nil : Animation.snappy(duration: 0.22)) {
+                            selectedDay = Dates.dayStart(Date())
+                        }
+                    }
+                    .buttonStyle(QuietButtonStyle())
+                }
+            }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    private var eyebrow: String {
+        Dates.sameDay(selectedDay, Date()) ? Dates.formatDayLong(Date()) : "Looking back"
+    }
+
+    private var title: String {
+        Dates.sameDay(selectedDay, Date()) ? greeting : Dates.formatDayHeader(selectedDay)
+    }
+
+    private var subtitle: String {
+        if snapshot.totalRecords == 0 { return "Nothing recorded for this day yet." }
+        return "\(snapshot.totalRecords) \(Dates.plural(snapshot.totalRecords, "record")) in your archive."
     }
 
     private var greeting: String {
@@ -176,53 +228,63 @@ struct TodayView: View {
     @ViewBuilder
     private var facts: some View {
         let hasAny = snapshot.mood != nil || snapshot.sleepHours != nil || snapshot.steps != nil
-        if hasAny || snapshot.entryCount > 0 {
-            VStack(alignment: .leading, spacing: Space.md) {
-                Hairline()
-                HStack(alignment: .top, spacing: Space.lg) {
-                    Figure(value: "\(snapshot.entryCount)", label: Dates.plural(snapshot.entryCount, "Entry", "Entries"))
-                    if let mood = snapshot.mood {
-                        Figure(value: "\(mood)/10", label: "Mood")
-                    }
-                    if let sleep = snapshot.sleepHours {
-                        Figure(value: Dates.formatCompactNumber(sleep) + " h", label: "Sleep")
-                    }
-                    if let steps = snapshot.steps {
-                        Figure(value: steps.formatted(), label: "Steps")
-                    }
+        if hasAny {
+            HStack(alignment: .top, spacing: Space.lg) {
+                if let mood = snapshot.mood {
+                    Figure(value: "\(mood)/10", label: "Mood")
                 }
-                Hairline()
+                if let sleep = snapshot.sleepHours {
+                    Figure(value: Dates.formatCompactNumber(sleep) + " h", label: "Sleep")
+                }
+                if let steps = snapshot.steps {
+                    Figure(value: steps.formatted(), label: "Steps")
+                }
             }
+            .padding(.vertical, Space.xs)
         }
     }
 
-    // MARK: Thread
+    // MARK: Calendar
 
-    private var threadSection: some View {
+    private var calendarCard: some View {
         VStack(alignment: .leading, spacing: Space.md) {
             SectionLabel(
-                title: "Today's thread",
-                actionTitle: "Add event"
-            ) { navigator.present(.newEvent(Date())) }
+                title: "Calendar",
+                detail: activity.isEmpty ? nil : "\(activity.count) \(Dates.plural(activity.count, "day")) recorded"
+            )
+            DayCalendar(selected: selectedDay, activity: activity) { day in
+                Taptic.tap()
+                withAnimation(reduceMotion ? nil : Animation.snappy(duration: 0.22)) {
+                    selectedDay = day
+                }
+            }
+        }
+        .surface(padding: Space.md, radius: 20)
+    }
+
+    // MARK: Activity
+
+    private var threadSection: some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            SectionLabel(
+                title: "Recent activity",
+                actionTitle: snapshot.rows.isEmpty ? nil : "All"
+            ) { navigator.push(.timeline(selectedDay)) }
 
             if snapshot.rows.isEmpty {
                 EmptyNote(
-                    title: "Nothing recorded yet",
+                    title: "A quiet day so far",
                     message: "Write a note, log a practice, or add a moment. Only what you record appears here."
                 )
             } else {
                 VStack(spacing: 0) {
-                    ForEach(Array(snapshot.rows.prefix(5))) { row in
+                    ForEach(Array(snapshot.rows.prefix(6))) { row in
                         Button { navigator.open(row) } label: {
                             DayRowView(row: row)
                         }
                         .buttonStyle(RowButtonStyle())
-                        if row.id != snapshot.rows.prefix(5).last?.id { Hairline() }
+                        if row.id != snapshot.rows.prefix(6).last?.id { Hairline() }
                     }
-                }
-                if snapshot.rows.count > 5 {
-                    Button("See all \(snapshot.rows.count)") { navigator.push(.timeline(Date())) }
-                        .buttonStyle(QuietButtonStyle())
                 }
             }
         }
@@ -231,7 +293,7 @@ struct TodayView: View {
     // MARK: Practices
 
     private var practicesSection: some View {
-        VStack(alignment: .leading, spacing: Space.md) {
+        VStack(alignment: .leading, spacing: Space.sm) {
             SectionLabel(title: "Practices", actionTitle: "All") { navigator.push(.trackers) }
             if snapshot.trackers.isEmpty {
                 EmptyNote(
@@ -240,10 +302,40 @@ struct TodayView: View {
                     actionTitle: "Create one"
                 ) { navigator.present(.newTracker) }
             } else {
-                VStack(spacing: 0) {
-                    ForEach(snapshot.trackers) { tile in
-                        PracticeRow(tile: tile)
-                        if tile.id != snapshot.trackers.last?.id { Hairline() }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: Space.sm) {
+                        ForEach(snapshot.trackers) { tile in
+                            PracticeTile(tile: tile, day: selectedDay)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+    }
+
+    // MARK: Moments
+
+    @ViewBuilder
+    private var momentsSection: some View {
+        if !snapshot.photos.isEmpty {
+            VStack(alignment: .leading, spacing: Space.sm) {
+                SectionLabel(title: "Moments", detail: "\(snapshot.photos.count)")
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: Space.sm) {
+                        ForEach(snapshot.photos.prefix(8)) { item in
+                            Button { navigator.push(.mediaItem(item.id)) } label: {
+                                EncryptedMediaImage(item: item, maxPixel: 240)
+                                    .frame(width: 88, height: 88)
+                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                            .strokeBorder(Palette.line, lineWidth: 0.5)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(item.displayCaption)
+                        }
                     }
                 }
             }
@@ -253,103 +345,29 @@ struct TodayView: View {
     // MARK: Places
 
     @ViewBuilder
-    private var placesSection: some View {
-        VStack(alignment: .leading, spacing: Space.md) {
-            SectionLabel(title: "Where you were", actionTitle: "Map") { navigator.push(.map(Date())) }
-            if snapshot.visits.isEmpty {
-                EmptyNote(
-                    title: "No places today",
-                    message: env.settings.locationTrackingEnabled
-                        ? "Stops appear after you spend time somewhere."
-                        : "Location visits are off. You can turn them on in Settings whenever you like."
-                )
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(snapshot.visits.prefix(4)) { visit in
-                        HStack(spacing: Space.md) {
-                            SourceGlyph(source: .location, suggested: visit.suggested)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(visit.label).font(Typeface.bodyStrong).foregroundStyle(Palette.ink)
-                                Text(visit.timeRange).font(Typeface.caption).foregroundStyle(Palette.inkSecondary)
-                            }
-                            Spacer(minLength: 0)
-                        }
-                        .padding(.vertical, Space.sm)
-                        .accessibilityElement(children: .combine)
-                        if visit.id != snapshot.visits.prefix(4).last?.id { Hairline() }
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: Listening
-
-    @ViewBuilder
-    private var listeningSection: some View {
-        VStack(alignment: .leading, spacing: Space.md) {
-            SectionLabel(title: "Listening")
-            if snapshot.trackCount == 0 {
-                EmptyNote(
-                    title: "No tracks today",
-                    message: env.settings.lastfmConnected
-                        ? "Pull down to sync Last.fm, or add a track you heard."
-                        : "Connect Last.fm in Settings, or add a track you heard.",
-                    actionTitle: "Add a track"
-                ) { navigator.present(.addTrack) }
-            } else {
-                HStack(alignment: .top, spacing: Space.md) {
-                    if env.settings.showArtwork {
-                        RemoteArtwork(urlString: snapshot.artworkURL)
-                            .frame(width: 64, height: 64)
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    }
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("\(snapshot.trackCount) \(Dates.plural(snapshot.trackCount, "track")) · \(snapshot.artistCount) \(Dates.plural(snapshot.artistCount, "artist"))")
+    private var placesLine: some View {
+        if !snapshot.visits.isEmpty {
+            Button { navigator.push(.map(selectedDay)) } label: {
+                HStack(spacing: Space.md) {
+                    SourceGlyph(source: .location)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Where you were")
                             .font(Typeface.bodyStrong)
                             .foregroundStyle(Palette.ink)
-                        if let artist = snapshot.topArtist {
-                            Text("Most played: \(artist)")
-                                .font(Typeface.caption)
-                                .foregroundStyle(Palette.inkSecondary)
-                        }
-                        ForEach(snapshot.topTracks, id: \.name) { track in
-                            Text("\(track.name) · \(track.plays)")
-                                .font(Typeface.caption)
-                                .foregroundStyle(Palette.inkSecondary)
-                                .lineLimit(1)
-                        }
+                        Text("\(snapshot.placeCount) \(Dates.plural(snapshot.placeCount, "place")) on this day")
+                            .font(Typeface.caption)
+                            .foregroundStyle(Palette.inkSecondary)
                     }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(Typeface.caption)
+                        .foregroundStyle(Palette.inkTertiary)
                 }
-                .accessibilityElement(children: .combine)
+                .padding(.vertical, Space.sm)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(RowButtonStyle())
         }
-    }
-
-    // MARK: Recap
-
-    @ViewBuilder
-    private var recapSection: some View {
-        if snapshot.totalRecords > 0 {
-            VStack(alignment: .leading, spacing: Space.sm) {
-                SectionLabel(title: "Day so far")
-                Text(recapText)
-                    .font(Typeface.reading)
-                    .foregroundStyle(Palette.inkSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    private var recapText: String {
-        var parts: [String] = []
-        if snapshot.entryCount > 0 { parts.append("\(snapshot.entryCount) \(Dates.plural(snapshot.entryCount, "journal entry", "journal entries"))") }
-        if snapshot.trackerRecordCount > 0 { parts.append("\(snapshot.trackerRecordCount) practice \(Dates.plural(snapshot.trackerRecordCount, "update"))") }
-        if snapshot.placeCount > 0 { parts.append("\(snapshot.placeCount) \(Dates.plural(snapshot.placeCount, "place")) visited") }
-        if snapshot.eventCount > 0 { parts.append("\(snapshot.eventCount) \(Dates.plural(snapshot.eventCount, "moment")) noted") }
-        if snapshot.trackCount > 0 { parts.append("\(snapshot.trackCount) \(Dates.plural(snapshot.trackCount, "track")) heard") }
-        if parts.isEmpty { return "Records are stored for today." }
-        return "You recorded " + parts.joined(separator: ", ") + "."
     }
 
     private var footer: some View {
@@ -360,44 +378,52 @@ struct TodayView: View {
     }
 }
 
-// MARK: - Practice row
+// MARK: - Practice tile
 
-private struct PracticeRow: View {
+private struct PracticeTile: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var navigator: Navigator
     let tile: TrackerTile
+    let day: Date
 
     var body: some View {
-        HStack(spacing: Space.md) {
-            Image(systemName: tile.symbol)
-                .font(.system(.body))
-                .foregroundStyle(Color(hex: tile.color))
-                .frame(width: 32)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(tile.name).font(Typeface.bodyStrong).foregroundStyle(Palette.ink)
-                Text(tile.label ?? "Not logged yet")
-                    .font(Typeface.caption)
-                    .foregroundStyle(tile.done ? Palette.moss : Palette.inkSecondary)
+        Button(action: primary) {
+            VStack(spacing: Space.sm) {
+                ZStack {
+                    Circle().fill(Color(hex: tile.color).opacity(0.16))
+                    Image(systemName: tile.symbol)
+                        .font(.system(.body).weight(.semibold))
+                        .foregroundStyle(Color(hex: tile.color))
+                }
+                .frame(width: 42, height: 42)
+
+                Text(tile.name)
+                    .font(Typeface.micro)
+                    .foregroundStyle(Palette.ink)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+
+                Text(status)
+                    .font(Typeface.micro)
+                    .foregroundStyle(tile.done ? Palette.moss : Palette.inkTertiary)
+                    .lineLimit(1)
             }
-            Spacer(minLength: Space.sm)
-            Button(action: primary) {
-                Image(systemName: primarySymbol)
-                    .font(.system(.title3))
-                    .foregroundStyle(Palette.accent)
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(primaryLabel)
+            .frame(width: 88, height: 116)
+            .background(Palette.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(Palette.line, lineWidth: 0.5)
+            )
         }
-        .padding(.vertical, 2)
+        .buttonStyle(.plain)
+        .accessibilityLabel(primaryLabel)
         .contextMenu {
             Button { navigator.present(.logTracker(tile.id)) } label: {
                 Label("Log with details", systemImage: "square.and.pencil")
             }
             if let last = tile.lastRecordId {
                 Button(role: .destructive) { env.deleteTrackerRecord(last) } label: {
-                    Label("Undo last entry today", systemImage: "arrow.uturn.backward")
+                    Label("Undo last entry", systemImage: "arrow.uturn.backward")
                 }
             }
             Button { navigator.push(.tracker(tile.id)) } label: {
@@ -406,12 +432,12 @@ private struct PracticeRow: View {
         }
     }
 
-    private var quickLoggable: Bool { tile.type == .boolean || tile.type == .count || tile.type == .event }
-
-    private var primarySymbol: String {
-        if tile.type == .boolean && tile.done { return "checkmark.circle.fill" }
-        return quickLoggable ? "plus.circle" : "square.and.pencil"
+    private var status: String {
+        if tile.done { return "Done" }
+        return tile.label ?? "Not logged"
     }
+
+    private var quickLoggable: Bool { tile.type == .boolean || tile.type == .count || tile.type == .event }
 
     private var primaryLabel: String {
         switch tile.type {
@@ -427,7 +453,8 @@ private struct PracticeRow: View {
             return
         }
         if tile.type == .boolean && tile.done { return }
-        env.saveTrackerRecord(TrackerRecord(trackerId: tile.id, recordedAt: Date(), value: 1))
+        Taptic.tap()
+        env.saveTrackerRecord(TrackerRecord(trackerId: tile.id, recordedAt: Dates.momentForDay(day), value: 1))
     }
 }
 
@@ -436,6 +463,7 @@ private struct PracticeRow: View {
 private struct TodayComposer: View {
     @EnvironmentObject private var env: AppEnvironment
     @EnvironmentObject private var navigator: Navigator
+    let day: Date
     @State private var text = ""
     @FocusState private var focused: Bool
 
@@ -449,18 +477,19 @@ private struct TodayComposer: View {
                 .lineLimit(2...6)
                 .focused($focused)
                 .accessibilityLabel("Quick note")
+
             HStack(spacing: Space.xs) {
                 iconButton("mic", label: "Voice note") {
-                    navigator.present(.newEntry(Date(), startWithVoice: true))
+                    navigator.present(.newEntry(day, startWithVoice: true))
                 }
                 iconButton("photo", label: "Add photo or video") {
-                    navigator.present(.addMedia(Date()))
+                    navigator.present(.addMedia(day))
                 }
                 iconButton("square.and.pencil", label: "Open full editor") {
-                    navigator.present(.newEntry(Date(), startWithVoice: false))
+                    navigator.present(.newEntry(day, startWithVoice: false))
                 }
                 Spacer()
-                Button("Save note", action: save)
+                Button("Save", action: save)
                     .buttonStyle(QuietButtonStyle())
                     .disabled(trimmed.isEmpty)
             }
@@ -481,9 +510,9 @@ private struct TodayComposer: View {
 
     private func save() {
         guard !trimmed.isEmpty else { return }
-        env.saveEntry(JournalEntry(createdAt: Date(), body: trimmed))
+        env.saveEntry(JournalEntry(createdAt: Dates.momentForDay(day), body: trimmed))
         text = ""
         focused = false
-        env.present("Saved to today.")
+        env.present("Saved to this day.")
     }
 }

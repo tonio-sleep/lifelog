@@ -499,8 +499,7 @@ private struct PinSettingsView: View {
 
 private struct LastfmSettingsView: View {
     @EnvironmentObject private var env: AppEnvironment
-    @State private var username = ""
-    @State private var apiKey = ""
+    @EnvironmentObject private var navigator: Navigator
     @State private var syncing = false
     @State private var confirmRemove = false
     @State private var message: String?
@@ -524,17 +523,9 @@ private struct LastfmSettingsView: View {
                 }
             } else {
                 Section {
-                    TextField("Last.fm username", text: $username)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    SecureField("API key", text: $apiKey)
-                    Button("Connect") {
-                        env.connectLastfm(username: username, apiKey: apiKey)
-                        apiKey = ""
-                    }
-                    .disabled(username.trimmingCharacters(in: .whitespaces).isEmpty || apiKey.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button("Connect with Last.fm") { navigator.present(.lastfmConnect) }
                 } footer: {
-                    Text("Create a free API key at last.fm/api. It is stored encrypted on this device, and tracks are fetched directly from Last.fm.")
+                    Text("Last.fm needs a free API key to read scrobbles. The guided setup opens Last.fm for you, then saves your username and key encrypted on this device. No password or shared secret is required.")
                 }
             }
         }

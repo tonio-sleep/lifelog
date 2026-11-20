@@ -777,19 +777,63 @@ Future<T?> showLifelogSheet<T>(
     useSafeArea: true,
     constraints: const BoxConstraints(maxWidth: 560),
     builder: (sheetContext) {
-      return Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.viewInsetsOf(sheetContext).bottom,
-        ),
-        child: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(
-              Insets.page,
-              0,
-              Insets.page,
-              Insets.xl,
-            ),
-            child: builder(sheetContext),
+      final keyboardHeight = MediaQuery.viewInsetsOf(sheetContext).bottom;
+      final keyboardOpen = keyboardHeight > 0;
+      final palette = sheetContext.palette;
+      return GestureDetector(
+        // Tapping anywhere that is not a field lowers the keyboard without
+        // dismissing the sheet, like a native iOS keyboard.
+        behavior: HitTestBehavior.translucent,
+        onTap: () => FocusScope.of(sheetContext).unfocus(),
+        child: Padding(
+          padding: EdgeInsets.only(bottom: keyboardHeight),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      Insets.page,
+                      0,
+                      Insets.page,
+                      Insets.xl,
+                    ),
+                    child: builder(sheetContext),
+                  ),
+                ),
+              ),
+              // Multiline fields show a newline key instead of "Done" on iOS,
+              // so give every sheet an explicit accessory bar with Done.
+              if (keyboardOpen)
+                Container(
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: palette.glass,
+                    border: Border(
+                      top: BorderSide(color: palette.border, width: 0.5),
+                    ),
+                  ),
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: Padding(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: Insets.lg),
+                      child: TextButton(
+                        onPressed: () =>
+                            FocusScope.of(sheetContext).unfocus(),
+                        child: Text(
+                          'Done',
+                          style: sheetContext.text.labelLarge?.copyWith(
+                            color: sheetContext.scheme.primary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       );

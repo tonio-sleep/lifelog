@@ -655,6 +655,7 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
     final palette = context.palette;
     final text = context.text;
     final scheme = context.scheme;
+    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
 
     return PopScope(
       canPop: _allowPop,
@@ -731,9 +732,14 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                 ),
               ),
               Expanded(
-                child: Align(
-                  alignment: Alignment.topCenter,
-                  child: ConstrainedBox(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onTap: keyboardOpen
+                      ? () => FocusScope.of(context).unfocus()
+                      : null,
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 720),
                     child: ListView(
                       padding: const EdgeInsets.fromLTRB(
@@ -979,6 +985,10 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                           child: GestureDetector(
                             behavior: HitTestBehavior.translucent,
                             onTap: () {
+                              if (keyboardOpen) {
+                                FocusScope.of(context).unfocus();
+                                return;
+                              }
                               if (_kind == JournalEntryKind.vocab &&
                                   _vocabTermFocuses.isNotEmpty) {
                                 _vocabTermFocuses.first.requestFocus();
@@ -990,6 +1000,7 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                         ),
                       ],
                     ),
+                  ),
                   ),
                 ),
               ),
@@ -1066,6 +1077,17 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                       ),
                     ),
                   const Spacer(),
+                  if (keyboardOpen)
+                    TextButton(
+                      onPressed: () => FocusScope.of(context).unfocus(),
+                      child: Text(
+                        'Done',
+                        style: text.labelLarge?.copyWith(
+                          color: scheme.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
                   ValueListenableBuilder<TextEditingValue>(
                     valueListenable: _body,
                     builder: (context, value, _) {

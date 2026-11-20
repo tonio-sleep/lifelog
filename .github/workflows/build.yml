@@ -18,6 +18,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # device_info_plus 13.3.x calls NSProcessInfo selectors introduced in the
+      # iOS 26.1 SDK, so the runner's default Xcode 16.4 cannot compile it.
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26.1.1"
+
       # Pin the SDK so CI matches the version this project is developed with.
       # `stable` drifts between runner images and changes iOS build behaviour.
       - name: Set up Flutter

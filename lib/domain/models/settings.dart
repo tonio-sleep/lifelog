@@ -174,6 +174,7 @@ class AppSettings {
     this.cloudflareWorkerUrl = defaultCloudflareWorkerUrl,
     this.cloudflareUsername,
     this.cloudflareSessionCipher,
+    this.cloudflarePassphraseCipher,
     this.cloudflareConnectedAt,
     this.cloudflareLastSyncAt,
     this.cloudflareSetupDone = false,
@@ -219,6 +220,11 @@ class AppSettings {
   final String? cloudflareWorkerUrl;
   final String? cloudflareUsername;
   final String? cloudflareSessionCipher; // encrypted JSON: token and account metadata
+
+  /// Backup passphrase, encrypted with the local archive key so it is only
+  /// unlocked on this device. Lets sync/restore reuse it after the first entry.
+  final String? cloudflarePassphraseCipher;
+
   final DateTime? cloudflareConnectedAt;
   final DateTime? cloudflareLastSyncAt;
 
@@ -273,6 +279,8 @@ class AppSettings {
     bool clearCloudflareUsername = false,
     String? cloudflareSessionCipher,
     bool clearCloudflareSession = false,
+    String? cloudflarePassphraseCipher,
+    bool clearCloudflarePassphrase = false,
     DateTime? cloudflareConnectedAt,
     DateTime? cloudflareLastSyncAt,
     bool? cloudflareSetupDone,
@@ -320,6 +328,9 @@ class AppSettings {
       cloudflareSessionCipher: clearCloud
           ? null
           : (cloudflareSessionCipher ?? this.cloudflareSessionCipher),
+      cloudflarePassphraseCipher: clearCloudflarePassphrase
+          ? null
+          : (cloudflarePassphraseCipher ?? this.cloudflarePassphraseCipher),
       cloudflareConnectedAt:
           clearCloud ? null : (cloudflareConnectedAt ?? this.cloudflareConnectedAt),
       cloudflareLastSyncAt:
@@ -352,6 +363,7 @@ class AppSettings {
         'cloudflareWorkerUrl': cloudflareWorkerUrl,
         'cloudflareUsername': cloudflareUsername,
         'cloudflareSessionCipher': cloudflareSessionCipher,
+        'cloudflarePassphraseCipher': cloudflarePassphraseCipher,
         'cloudflareConnectedAt': cloudflareConnectedAt?.toIso8601String(),
         'cloudflareLastSyncAt': cloudflareLastSyncAt?.toIso8601String(),
         'cloudflareSetupDone': cloudflareSetupDone,
@@ -403,6 +415,8 @@ class AppSettings {
       })(),
       cloudflareUsername: json['cloudflareUsername'] as String?,
       cloudflareSessionCipher: json['cloudflareSessionCipher'] as String?,
+      cloudflarePassphraseCipher:
+          json['cloudflarePassphraseCipher'] as String?,
       cloudflareConnectedAt:
           DateTime.tryParse(json['cloudflareConnectedAt'] as String? ?? ''),
       cloudflareLastSyncAt:

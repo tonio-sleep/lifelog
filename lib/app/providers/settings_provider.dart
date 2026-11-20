@@ -163,6 +163,7 @@ class SettingsController extends Notifier<AppSettings> {
   // --- Cloudflare sync ---
 
   static const _cloudflareSessionAad = 'lifelog-cloudflare-session-v1';
+  static const _cloudflarePassphraseAad = 'lifelog-cloudflare-passphrase-v1';
 
   Future<void> setCloudflareWorkerUrl(String url) => update(
         (current) => current.copyWith(
@@ -204,6 +205,35 @@ class SettingsController extends Notifier<AppSettings> {
       return null;
     }
   }
+
+  /// Returns the backup passphrase remembered on this device, if any.
+  Future<String?> cloudflareBackupPassphrase() async {
+    final cipher = state.cloudflarePassphraseCipher;
+    if (cipher == null || cipher.trim().isEmpty) return null;
+    try {
+      return await ref
+          .read(appServicesProvider)
+          .crypto
+          .decryptString(cipher, aad: _cloudflarePassphraseAad);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> rememberCloudflareBackupPassphrase(String passphrase) async {
+    final cipher = await ref
+        .read(appServicesProvider)
+        .crypto
+        .encryptString(passphrase, aad: _cloudflarePassphraseAad);
+    await update(
+      (current) => current.copyWith(cloudflarePassphraseCipher: cipher),
+    );
+  }
+
+  Future<void> forgetCloudflareBackupPassphrase() => update(
+        (current) =>
+            current.copyWith(clearCloudflarePassphrase: true),
+      );
 
   Future<void> recordCloudflareSync(DateTime at) => update(
         (current) => current.copyWith(cloudflareLastSyncAt: at),

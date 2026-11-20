@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/providers/settings_provider.dart';
 import '../../app/theme/app_theme.dart';
 import '../../app/widgets/common.dart';
 import '../../app/widgets/surfaces.dart';
@@ -8,7 +9,7 @@ import '../../core/util/dates.dart';
 import '../../integrations/cloudflare/sync_status.dart';
 import 'cloudflare_sync_actions.dart';
 
-enum _AccountAction { account, signOut }
+enum _AccountAction { account, forgetPassphrase, signOut }
 
 /// The optional cloud account, in one place.
 ///
@@ -98,6 +99,8 @@ class AccountSyncCard extends ConsumerWidget {
                             context,
                             ref,
                           ),
+                          _AccountAction.forgetPassphrase =>
+                            forgetCloudflareBackupPassphrase(context, ref),
                           _AccountAction.signOut => signOutCloudflareSync(
                             context,
                             ref,
@@ -107,6 +110,10 @@ class AccountSyncCard extends ConsumerWidget {
                           const PopupMenuItem(
                             value: _AccountAction.account,
                             child: Text('Account details'),
+                          ),
+                          const PopupMenuItem(
+                            value: _AccountAction.forgetPassphrase,
+                            child: Text('Forget saved passphrase'),
                           ),
                           PopupMenuItem(
                             value: _AccountAction.signOut,
@@ -246,6 +253,9 @@ class _SignedInBody extends ConsumerWidget {
     final lastLabel = last == null
         ? 'No cloud backup yet'
         : '${relativeDayLabel(dayStart(last))}, ${formatTime(last)}';
+    final passphraseRemembered =
+        ref.watch(settingsProvider).cloudflarePassphraseCipher?.isNotEmpty ??
+            false;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -272,6 +282,22 @@ class _SignedInBody extends ConsumerWidget {
           'Includes entries, notes, vocab, photos/videos, habits, places, music, and timeline.',
           style: text.bodySmall?.copyWith(color: palette.mutedText),
         ),
+        if (passphraseRemembered) ...[
+          const SizedBox(height: Insets.xs),
+          Row(
+            children: [
+              Icon(Icons.lock_outline_rounded,
+                  size: 14, color: context.scheme.primary),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'Backup passphrase remembered on this device.',
+                  style: text.labelSmall?.copyWith(color: palette.mutedText),
+                ),
+              ),
+            ],
+          ),
+        ],
         const SizedBox(height: Insets.lg),
         Row(
           children: [

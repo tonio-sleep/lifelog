@@ -98,6 +98,18 @@ Future<void> connectCloudflareSync(
   );
   if (!context.mounted) return;
 
+  // A remembered passphrase belongs to the previous account's backup. Never
+  // reuse it automatically after switching accounts.
+  final previousUsername = settings.cloudflareUsername?.trim().toLowerCase();
+  if (previousUsername != null &&
+      previousUsername.isNotEmpty &&
+      previousUsername != username) {
+    await ref
+        .read(settingsProvider.notifier)
+        .forgetCloudflareBackupPassphrase();
+  }
+  if (!context.mounted) return;
+
   showSnack(
     context,
     result.createAccount
@@ -176,18 +188,56 @@ Future<void> signOutCloudflareSync(BuildContext context, WidgetRef ref) async {
 Future<void> disconnectCloudflareSync(BuildContext context, WidgetRef ref) =>
     signOutCloudflareSync(context, ref);
 
+Future<void> forgetCloudflareBackupPassphrase(
+  BuildContext context,
+  WidgetRef ref,
+) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Forget saved passphrase?'),
+      content: const Text(
+        'This device will stop unlocking your cloud backup automatically. The encrypted backup on your Worker is unchanged, and you will need the passphrase again next time.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Forget'),
+        ),
+      ],
+    ),
+  );
+  if (ok != true || !context.mounted) return;
+  await ref
+      .read(settingsProvider.notifier)
+      .forgetCloudflareBackupPassphrase();
+  if (context.mounted) {
+    showSnack(context, 'Saved backup passphrase removed from this device.');
+  }
+}
+
 Future<void> backupToCloudflare(BuildContext context, WidgetRef ref) async {
   final auth = await _requireCloudflareSession(context, ref, promptSignIn: true);
   if (auth == null || !context.mounted) return;
 
-  final passphrase = await _askSyncPassphrase(
-    context,
-    title: 'Backup passphrase',
-    subtitle:
-        'Choose a strong passphrase to encrypt your cloud backup. This is separate from your Cloudflare account password and is never sent to the server. You will need it to restore.',
-    confirm: true,
-  );
-  if (passphrase == null || !context.mounted) return;
+  final settings = ref.read(settingsProvider.notifier);
+  var passphrase = await settings.cloudflareBackupPassphrase();
+  if (!context.mounted) return;
+  final passphraseWasRemembered = passphrase != null;
+  if (passphrase == null) {
+    passphrase = await _askSyncPassphrase(
+      context,
+      title: 'Backup passphrase',
+      subtitle:
+          'Choose a strong passphrase to encrypt your cloud backup. This is separate from your Cloudflare account password and is never sent to the server. You will need it to restore on a new device.',
+      confirm: true,
+    );
+    if (passphrase == null || !context.mounted) return;
+  }
 
   final services = ref.read(appServicesProvider);
   final data = await guard<Uint8List>(
@@ -223,11 +273,16 @@ Future<void> backupToCloudflare(BuildContext context, WidgetRef ref) async {
   }
 
   if (!uploaded) return;
-  await ref.read(settingsProvider.notifier).recordCloudflareSync(DateTime.now());
+  if (!passphraseWasRemembered) {
+    await settings.rememberCloudflareBackupPassphrase(passphrase);
+  }
+  await settings.recordCloudflareSync(DateTime.now());
   if (context.mounted) {
     showSnack(
       context,
-      'Encrypted backup synced to Cloudflare. Keep your backup passphrase safe.',
+      passphraseWasRemembered
+          ? 'Encrypted backup synced to Cloudflare.'
+          : 'Encrypted backup synced. Passphrase remembered on this device — write it down for new devices.',
     );
   }
 }
@@ -265,6 +320,10 @@ Future<void> restoreFromCloudflare(BuildContext context, WidgetRef ref) async {
   }
   if (!context.mounted) return;
 
+  final settings = ref.read(settingsProvider.notifier);
+  var passphrase = await settings.cloudflareBackupPassphrase();
+  if (!context.mounted) return;
+  final passphraseWasRemembered = passphrase != null;
   final when = meta.modifiedAt ?? meta.uploadedAt;
   final confirmed = await showDialog<bool>(
     context: context,
@@ -272,8 +331,8 @@ Future<void> restoreFromCloudflare(BuildContext context, WidgetRef ref) async {
       title: const Text('Restore from Cloudflare?'),
       content: Text(
         when != null
-            ? 'This will replace the data on this device with the encrypted cloud backup from ${formatDayLong(when)} ${formatTime(when)}. Your backup passphrase is required.'
-            : 'This will replace the data on this device with the encrypted cloud backup. Your backup passphrase is required.',
+            ? 'This will replace the data on this device with the encrypted cloud backup from ${formatDayLong(when)} ${formatTime(when)}. ${passphraseWasRemembered ? 'Your saved passphrase will be used automatically.' : 'Your backup passphrase is required.'}'
+            : 'This will replace the data on this device with the encrypted cloud backup. ${passphraseWasRemembered ? 'Your saved passphrase will be used automatically.' : 'Your backup passphrase is required.'}',
       ),
       actions: [
         TextButton(
@@ -289,14 +348,16 @@ Future<void> restoreFromCloudflare(BuildContext context, WidgetRef ref) async {
   );
   if (confirmed != true || !context.mounted) return;
 
-  final passphrase = await _askSyncPassphrase(
-    context,
-    title: 'Enter backup passphrase',
-    subtitle:
-        'Enter the passphrase used to encrypt this cloud backup. This is different from your Cloudflare account password.',
-    confirm: false,
-  );
-  if (passphrase == null || !context.mounted) return;
+  if (passphrase == null) {
+    passphrase = await _askSyncPassphrase(
+      context,
+      title: 'Enter backup passphrase',
+      subtitle:
+          'Enter the passphrase used to encrypt this cloud backup. This is different from your Cloudflare account password. It will be remembered on this device.',
+      confirm: false,
+    );
+    if (passphrase == null || !context.mounted) return;
+  }
 
   Uint8List? bytes;
   try {
@@ -317,23 +378,44 @@ Future<void> restoreFromCloudflare(BuildContext context, WidgetRef ref) async {
     return;
   }
 
-  final contents = await guard(
-    context,
-    services.backup.readBackup(bytes: bytes, passphrase: passphrase),
-    errorPrefix: 'Could not restore backup',
-  );
-  if (contents == null || !context.mounted) return;
-
-  await guard(
-    context,
-    ref.read(archiveProvider.notifier).restoreArchive(
-          contents.archive,
-          mediaFiles: contents.mediaFiles,
-        ),
-    errorPrefix: 'Could not save restored data',
-  );
-  if (context.mounted) {
-    showSnack(context, 'Backup restored from Cloudflare.');
+  var unlockPassphrase = passphrase;
+  var canRetryWithPrompt = passphraseWasRemembered;
+  while (true) {
+    try {
+      final contents = await services.backup.readBackup(
+        bytes: bytes,
+        passphrase: unlockPassphrase,
+      );
+      await guard(
+        context,
+        ref.read(archiveProvider.notifier).restoreArchive(
+              contents.archive,
+              mediaFiles: contents.mediaFiles,
+            ),
+        errorPrefix: 'Could not save restored data',
+      );
+      if (context.mounted) {
+        showSnack(context, 'Backup restored from Cloudflare.');
+      }
+      return;
+    } catch (e) {
+      if (!canRetryWithPrompt) {
+        if (context.mounted) showSnack(context, 'Could not restore backup: $e');
+        return;
+      }
+      canRetryWithPrompt = false;
+      await settings.forgetCloudflareBackupPassphrase();
+      if (!context.mounted) return;
+      final retry = await _askSyncPassphrase(
+        context,
+        title: 'Enter backup passphrase',
+        subtitle:
+            'The saved passphrase did not unlock this backup. Enter the correct passphrase. This is different from your Cloudflare account password.',
+        confirm: false,
+      );
+      if (retry == null || !context.mounted) return;
+      unlockPassphrase = retry;
+    }
   }
 }
 

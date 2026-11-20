@@ -839,20 +839,29 @@ class MediaDetailsResult {
 Future<MediaDetailsResult?> askMediaDetails(
   BuildContext context, {
   required String fileName,
+  int? index,
+  int? total,
 }) async {
   final captionController = TextEditingController();
   final tagsController = TextEditingController();
+  final subtitle = index != null && total != null
+      ? '$fileName  •  $index of $total'
+      : fileName;
+  // Media import uses the root navigator for both its progress dialog and its
+  // details sheet. Keeping them on the same navigator guarantees the sheet is
+  // visible and its Add/Skip result is delivered.
   final result = await showLifelogSheet<MediaDetailsResult>(
     context,
     isDismissible: false,
     enableDrag: false,
+    useRootNavigator: true,
     builder: (sheetContext) => Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         SheetTitle(
           title: 'Add to your archive',
-          subtitle: fileName,
+          subtitle: subtitle,
         ),
         TextField(
           controller: captionController,

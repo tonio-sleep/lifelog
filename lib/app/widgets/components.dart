@@ -772,6 +772,7 @@ Future<T?> showLifelogSheet<T>(
   required WidgetBuilder builder,
   bool isDismissible = true,
   bool enableDrag = true,
+  bool useRootNavigator = false,
 }) {
   return showModalBottomSheet<T>(
     context: context,
@@ -779,6 +780,7 @@ Future<T?> showLifelogSheet<T>(
     useSafeArea: true,
     isDismissible: isDismissible,
     enableDrag: enableDrag,
+    useRootNavigator: useRootNavigator,
     constraints: const BoxConstraints(maxWidth: 560),
     builder: (sheetContext) {
       final keyboardHeight = MediaQuery.viewInsetsOf(sheetContext).bottom;

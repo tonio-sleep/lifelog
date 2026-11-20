@@ -7,6 +7,7 @@ import '../../app/widgets/common.dart';
 import '../../app/widgets/surfaces.dart';
 import '../../core/util/dates.dart';
 import '../../integrations/cloudflare/backup_upload_progress.dart';
+import '../../integrations/cloudflare/cloud_remote_state.dart';
 import '../../integrations/cloudflare/sync_status.dart';
 import 'cloudflare_sync_actions.dart';
 
@@ -290,9 +291,11 @@ class _SignedInBody extends ConsumerWidget {
         ),
         const SizedBox(height: Insets.xs),
         Text(
-          'Includes entries, notes, vocab, photos/videos, habits, places, music, and timeline.',
+          'Push uploads this device as one encrypted backup. Pull replaces this device with the cloud backup.',
           style: text.bodySmall?.copyWith(color: palette.mutedText),
         ),
+        const SizedBox(height: Insets.sm),
+        _RemoteStatusLine(),
         if (upload.stage != BackupUploadStage.idle) ...[
           const SizedBox(height: Insets.md),
           _UploadProgressBlock(progress: upload),
@@ -323,18 +326,62 @@ class _SignedInBody extends ConsumerWidget {
                     ? null
                     : () => backupToCloudflare(context, ref),
                 icon: const Icon(Icons.cloud_upload_outlined, size: 18),
-                label: const Text('Sync now'),
+                label: const Text('Push'),
               ),
             ),
             const SizedBox(width: Insets.sm),
             Expanded(
               flex: 2,
-              child: OutlinedButton(
-                onPressed: () => restoreFromCloudflare(context, ref),
-                child: const Text('Restore'),
+              child: OutlinedButton.icon(
+                onPressed: upload.active
+                    ? null
+                    : () => pullFromCloudflare(context, ref),
+                icon: const Icon(Icons.cloud_download_outlined, size: 18),
+                label: const Text('Pull'),
               ),
             ),
           ],
+        ),
+      ],
+    );
+  }
+}
+
+class _RemoteStatusLine extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final remote = ref.watch(cloudRemoteMetaProvider);
+    final palette = context.palette;
+    final text = context.text;
+    final value = remote.value;
+    final label = switch (remote) {
+      AsyncLoading() => 'Checking cloud...',
+      AsyncError() => 'Could not check cloud status.',
+      _ when value == null || !value.exists => 'No cloud backup yet',
+      _ => 'Cloud backup: ${_formatBytes(value.size ?? 0)}'
+          '${value.modifiedAt != null || value.uploadedAt != null
+              ? ' · ${formatDayLong(value.modifiedAt ?? value.uploadedAt!)}'
+              : ''}',
+    };
+    return Row(
+      children: [
+        Icon(Icons.cloud_outlined, size: 14, color: palette.dimText),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: text.labelSmall?.copyWith(color: palette.mutedText),
+          ),
+        ),
+        IconButton(
+          visualDensity: VisualDensity.compact,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          tooltip: 'Check cloud status',
+          icon: const Icon(Icons.refresh_rounded, size: 16),
+          onPressed: () => ref.invalidate(cloudRemoteMetaProvider),
         ),
       ],
     );

@@ -5,6 +5,13 @@ import 'package:http/http.dart' as http;
 
 typedef UploadByteProgress = void Function(int sent, int total);
 
+/// The Worker sends `expiresIn`; older builds of this app stored
+/// `expiresInSeconds`. Accept both so existing sessions keep their expiry.
+int? _sessionExpirySeconds(Map<String, dynamic> json) {
+  final value = json['expiresIn'] ?? json['expiresInSeconds'];
+  return (value as num?)?.toInt();
+}
+
 class CloudflareSyncException implements Exception {
   CloudflareSyncException(this.message, [this.cause]);
   final String message;
@@ -51,7 +58,7 @@ class CloudflareSession {
     return CloudflareSession(
       token: json['token'] as String? ?? '',
       username: json['username'] as String? ?? '',
-      expiresInSeconds: (json['expiresInSeconds'] as num?)?.toInt(),
+      expiresInSeconds: _sessionExpirySeconds(json),
       obtainedAt: DateTime.tryParse(json['obtainedAt'] as String? ?? ''),
     );
   }
@@ -115,7 +122,7 @@ class CloudflareSyncService {
     return CloudflareSession(
       token: token,
       username: user,
-      expiresInSeconds: (data['expiresInSeconds'] as num?)?.toInt(),
+      expiresInSeconds: _sessionExpirySeconds(data),
       obtainedAt: DateTime.now(),
     );
   }
@@ -142,7 +149,7 @@ class CloudflareSyncService {
     return CloudflareSession(
       token: token,
       username: user,
-      expiresInSeconds: (data['expiresInSeconds'] as num?)?.toInt(),
+      expiresInSeconds: _sessionExpirySeconds(data),
       obtainedAt: DateTime.now(),
     );
   }

@@ -42,10 +42,51 @@ class DailyHealthSummary {
 ///   A successful authorization request or a readable query is the best signal.
 /// - Sleep can be reported as multiple/overlapping samples and stages; we merge
 ///   overlapping intervals to estimate total sleep more accurately.
+enum HealthAccessState { unavailable, unknown, requested, readable }
+
 class HealthStepsService {
   final Health _health = Health();
 
   bool get isSupported => !kIsWeb && (Platform.isIOS || Platform.isAndroid);
+
+  /// Whether the platform's health store exists on this device. HealthKit is
+  /// not available on iPad, and Health Connect may not be installed on Android.
+  Future<bool> isAvailable() async {
+    if (!isSupported) return false;
+    if (Platform.isAndroid) {
+      try {
+        return await _health.isHealthConnectAvailable();
+      } catch (_) {
+        return false;
+      }
+    }
+    try {
+      await configureIfNeeded();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Requests read authorization and reports what can actually be observed.
+  /// Apple does not expose read authorization status, so a successful prompt
+  /// is only "requested"; a readable probe is the only "readable" signal.
+  Future<HealthAccessState> requestAccess() async {
+    if (!await isAvailable()) return HealthAccessState.unavailable;
+    try {
+      await configureIfNeeded();
+      await _health.requestAuthorization(
+        _allTypes,
+        permissions: _readPermissionsFor(_allTypes),
+      );
+    } catch (_) {
+      return HealthAccessState.unknown;
+    }
+    final status = await hasPermission();
+    if (status == true) return HealthAccessState.readable;
+    final probe = await getDailySummary(DateTime.now());
+    return probe.hasData ? HealthAccessState.readable : HealthAccessState.requested;
+  }
 
   static const _stepTypes = <HealthDataType>[HealthDataType.STEPS];
 

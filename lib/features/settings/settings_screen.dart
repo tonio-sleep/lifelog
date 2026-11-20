@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../../app/providers/providers.dart';
 import '../../app/providers/session_provider.dart';
@@ -10,6 +11,7 @@ import '../../app/widgets/common.dart';
 import '../../app/widgets/components.dart';
 import '../../core/util/dates.dart';
 import '../../domain/models/journal.dart';
+import '../../integrations/health/health_steps_service.dart';
 import '../../integrations/location/location_tracking_controller.dart';
 import '../../domain/models/settings.dart';
 import '../music/lastfm_screen.dart';
@@ -485,21 +487,25 @@ class SettingsScreen extends ConsumerWidget {
       showSnack(context, 'Health access is available on supported devices (iPhone/Apple Health or Android/Health Connect).');
       return;
     }
-    final granted = await guard<bool>(
+    final access = await guard<HealthAccessState>(
       context,
-      services.healthSteps.requestPermission(),
+      services.healthSteps.requestAccess(),
       errorPrefix: 'Could not request Health access',
     );
-    final has = await services.healthSteps.hasPermission();
     if (!context.mounted) return;
-    if (granted == true || has == true) {
-      showSnack(
-        context,
-        'Health access requested. If sleep or steps do not sync, allow Steps and Sleep for Lifelog in the Health app or device Settings.',
-      );
-      return;
+    switch (access) {
+      case HealthAccessState.readable:
+        showSnack(context, 'Health access is working. Steps and sleep can be synced.');
+      case HealthAccessState.requested:
+        showSnack(
+          context,
+          'Permission requested. Apple does not confirm read access — if steps or sleep do not sync, allow Steps and Sleep for Lifelog in the Health app.',
+        );
+      case HealthAccessState.unavailable:
+      case HealthAccessState.unknown:
+      case null:
+        await _showHealthAccessHelp(context);
     }
-    await _showHealthAccessHelp(context);
   }
 
   Future<void> _showHealthAccessHelp(BuildContext context) {
@@ -548,7 +554,7 @@ class SettingsScreen extends ConsumerWidget {
                 child: FilledButton(
                   onPressed: () async {
                     Navigator.of(sheetContext).pop();
-                    await Geolocator.openAppSettings();
+                    await openAppSettings();
                   },
                   child: const Text('Open Settings'),
                 ),
@@ -626,16 +632,13 @@ class SettingsScreen extends ConsumerWidget {
       );
       return;
     }
-    final granted = await guard<bool>(
+    final access = await guard<HealthAccessState>(
       context,
-      services.healthSteps.requestPermission(),
+      services.healthSteps.requestAccess(),
       errorPrefix: 'Could not access Health data',
     );
-    final hasPermission = await services.healthSteps.hasPermission();
-    if (granted != true && hasPermission != true) {
-      if (context.mounted) {
-        await _showHealthAccessHelp(context);
-      }
+    if (access == HealthAccessState.unavailable && context.mounted) {
+      await _showHealthAccessHelp(context);
       return;
     }
     final today = DateTime.now();

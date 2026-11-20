@@ -12,6 +12,7 @@ import '../../app/widgets/components.dart';
 import '../../core/util/dates.dart';
 import '../../domain/models/journal.dart';
 import '../../domain/models/places.dart';
+import '../photos/media_import.dart';
 import '../photos/photo_widgets.dart';
 import '../places/place_dialogs.dart';
 import '../today/quick_add.dart';
@@ -340,6 +341,7 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
     final result = await showVoiceNoteSheet(context);
     if (result == null || !mounted) return;
     setState(() => _importing = true);
+    var imported = false;
     try {
       if (!await _ensureSaved()) return;
       final bytes = await File(result.audioPath).readAsBytes();
@@ -372,6 +374,9 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
           _body.text = '$current$addition';
           _body.selection = TextSelection.collapsed(offset: _body.text.length);
         }
+        // A voice note is easy to close accidentally. Persist the transcript
+        // immediately instead of waiting for the regular typing debounce.
+        unawaited(_saveDraft());
       }
 
       if (!mounted) return;
@@ -381,13 +386,16 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
             ? 'Voice note audio saved to this entry.'
             : 'Voice note saved with transcript.',
       );
+      imported = true;
     } catch (error) {
       if (mounted) showSnack(context, 'Could not save voice note: $error');
     } finally {
-      try {
-        final f = File(result.audioPath);
-        if (await f.exists()) await f.delete();
-      } catch (_) {}
+      if (imported) {
+        try {
+          final f = File(result.audioPath);
+          if (await f.exists()) await f.delete();
+        } catch (_) {}
+      }
       if (mounted) setState(() => _importing = false);
     }
   }
@@ -396,31 +404,20 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
     setState(() => _importing = true);
     try {
       final files = await pickMediaFromPhotosOrFiles(context);
-      if (files.isEmpty) return;
+      if (files.isEmpty || !mounted) return;
       if (!await _ensureSaved()) return;
-      for (final file in files) {
-        final bytes = await file.readAsBytes();
-        if (!mounted) return;
-        final details = await askMediaDetails(
-          context,
-          fileName: file.name,
-        );
-        if (details == null) continue;
-        if (!mounted) return;
-        await ref.read(archiveProvider.notifier).importMedia(
-              bytes: Uint8List.fromList(bytes),
-              fileName: file.name,
-              caption: details.caption,
-              tags: details.tags,
-              journalEntryId: _id,
-              createdAt: _createdAt,
-            );
-      }
       if (!mounted) return;
-      showSnack(
+      // Photos attached today belong to the entry's day in the timeline, not
+      // to the moment the entry was first created months ago.
+      final attachAt = momentForDay(dayStart(_createdAt));
+      final summary = await importPickedMedia(
         context,
-        files.length == 1 ? 'Added to the entry.' : '${files.length} items added.',
+        ref,
+        files,
+        journalEntryId: _id,
+        createdAt: attachAt,
       );
+      if (summary.added > 0 && mounted) unawaited(_saveDraft());
     } catch (error) {
       if (mounted) showSnack(context, 'Could not import media: $error');
     } finally {
@@ -628,7 +625,7 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
 
   Future<void> _close() async {
     await _saveDraft();
-    if (!mounted) return;
+    if (!mounted || _state == _SaveState.error) return;
     _allowPop = true;
     Navigator.of(context).pop();
   }
@@ -668,7 +665,7 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
           return;
         }
         await _saveDraft();
-        if (!mounted) return;
+        if (!mounted || _state == _SaveState.error) return;
         _allowPop = true;
         if (!context.mounted) return;
         Navigator.of(context).pop(result);

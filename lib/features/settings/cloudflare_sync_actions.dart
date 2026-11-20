@@ -9,9 +9,11 @@ import '../../app/providers/settings_provider.dart';
 import '../../app/theme/app_theme.dart';
 import '../../app/widgets/common.dart';
 import '../../app/widgets/components.dart';
+import '../../core/backup/backup_service.dart';
 import '../../core/util/dates.dart';
 import '../../domain/models/settings.dart';
 import '../../integrations/cloudflare/backup_upload_progress.dart';
+import '../../integrations/cloudflare/cloud_remote_state.dart';
 import '../../integrations/cloudflare/cloudflare_sync_service.dart';
 import '../../integrations/cloudflare/sync_status.dart';
 
@@ -225,6 +227,40 @@ Future<void> backupToCloudflare(BuildContext context, WidgetRef ref) async {
   final auth = await _requireCloudflareSession(context, ref, promptSignIn: true);
   if (auth == null || !context.mounted) return;
 
+  // A push overwrites the single remote blob. Never let an empty local archive
+  // quietly erase a real cloud backup.
+  if (ref.read(archiveProvider).isEmpty) {
+    CloudflareBackupMeta? remote;
+    try {
+      remote = await ref.read(appServicesProvider).cloudflareSync.getBackupMeta(
+            baseUrl: auth.workerUrl,
+            token: auth.token,
+          );
+    } catch (_) {}
+    if (remote?.exists == true && context.mounted) {
+      final overwrite = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Push over cloud backup?'),
+          content: const Text(
+            'This device has no local entries, but a cloud backup exists. Pushing now would replace it with an empty backup. Pull first if you want that data back.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Push anyway'),
+            ),
+          ],
+        ),
+      );
+      if (overwrite != true || !context.mounted) return;
+    }
+  }
+
   final settings = ref.read(settingsProvider.notifier);
   var passphrase = await settings.cloudflareBackupPassphrase();
   if (!context.mounted) return;
@@ -290,6 +326,7 @@ Future<void> backupToCloudflare(BuildContext context, WidgetRef ref) async {
     await settings.rememberCloudflareBackupPassphrase(passphrase);
   }
   await settings.recordCloudflareSync(DateTime.now());
+  ref.invalidate(cloudRemoteMetaProvider);
   progress.finish();
   if (context.mounted) {
     showSnack(
@@ -300,6 +337,14 @@ Future<void> backupToCloudflare(BuildContext context, WidgetRef ref) async {
     );
   }
 }
+
+/// Git-style name for a full download-and-replace.
+Future<void> pullFromCloudflare(BuildContext context, WidgetRef ref) =>
+    restoreFromCloudflare(context, ref);
+
+/// Git-style name for uploading this device's encrypted snapshot.
+Future<void> pushToCloudflare(BuildContext context, WidgetRef ref) =>
+    backupToCloudflare(context, ref);
 
 Future<void> restoreFromCloudflare(BuildContext context, WidgetRef ref) async {
   final auth = await _requireCloudflareSession(context, ref, promptSignIn: true);
@@ -393,43 +438,51 @@ Future<void> restoreFromCloudflare(BuildContext context, WidgetRef ref) async {
   }
 
   var unlockPassphrase = passphrase;
-  var canRetryWithPrompt = passphraseWasRemembered;
+  var canRetryWithPrompt = true;
   while (true) {
+    late BackupContents contents;
     try {
-      final contents = await services.backup.readBackup(
+      contents = await services.backup.readBackup(
         bytes: bytes,
         passphrase: unlockPassphrase,
       );
-      await guard(
-        context,
-        ref.read(archiveProvider.notifier).restoreArchive(
-              contents.archive,
-              mediaFiles: contents.mediaFiles,
-            ),
-        errorPrefix: 'Could not save restored data',
-      );
-      if (context.mounted) {
-        showSnack(context, 'Backup restored from Cloudflare.');
-      }
-      return;
     } catch (e) {
-      if (!canRetryWithPrompt) {
-        if (context.mounted) showSnack(context, 'Could not restore backup: $e');
+      // Decrypt/format/KDF failures land here. Ask once for a different
+      // passphrase, but never report success unless the restore also worked.
+      if (!canRetryWithPrompt || !context.mounted) {
+        if (context.mounted) showSnack(context, 'Could not unlock backup: $e');
         return;
       }
       canRetryWithPrompt = false;
-      await settings.forgetCloudflareBackupPassphrase();
-      if (!context.mounted) return;
       final retry = await _askSyncPassphrase(
         context,
         title: 'Enter backup passphrase',
         subtitle:
-            'The saved passphrase did not unlock this backup. Enter the correct passphrase. This is different from your Cloudflare account password.',
+            'The passphrase did not unlock this backup. Enter the correct passphrase, or check that this is the right cloud account. This is different from your Cloudflare account password.',
         confirm: false,
       );
       if (retry == null || !context.mounted) return;
       unlockPassphrase = retry;
+      continue;
     }
+
+    try {
+      await ref.read(archiveProvider.notifier).restoreArchive(
+            contents.archive,
+            mediaFiles: contents.mediaFiles,
+          );
+    } catch (e) {
+      if (context.mounted) showSnack(context, 'Could not save restored data: $e');
+      return;
+    }
+    if (!passphraseWasRemembered) {
+      await settings.rememberCloudflareBackupPassphrase(unlockPassphrase);
+    }
+    ref.invalidate(cloudRemoteMetaProvider);
+    if (context.mounted) {
+      showSnack(context, 'Backup restored from Cloudflare.');
+    }
+    return;
   }
 }
 
@@ -472,10 +525,7 @@ Future<_CloudflareAuthContext?> _requireCloudflareSession(
   final sessionJson =
       await ref.read(settingsProvider.notifier).cloudflareSessionJson();
   if (workerUrl.isEmpty || sessionJson == null) {
-    if (context.mounted) {
-      await ref.read(settingsProvider.notifier).disconnectCloudflareSync();
-      if (context.mounted) await _handleAuthFailure(context, ref);
-    }
+    if (context.mounted) await _handleAuthFailure(context, ref);
     return null;
   }
   try {
@@ -484,10 +534,7 @@ Future<_CloudflareAuthContext?> _requireCloudflareSession(
     if (token.isEmpty) throw const FormatException('missing token');
     return _CloudflareAuthContext(workerUrl: workerUrl, token: token);
   } catch (_) {
-    if (context.mounted) {
-      await ref.read(settingsProvider.notifier).disconnectCloudflareSync();
-      if (context.mounted) await _handleAuthFailure(context, ref);
-    }
+    if (context.mounted) await _handleAuthFailure(context, ref);
     return null;
   }
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/providers/day_provider.dart';
 import '../../app/providers/providers.dart';
 import '../../app/theme/app_theme.dart';
 import '../../app/widgets/common.dart';
@@ -33,6 +34,7 @@ class _PhotosScreenState extends ConsumerState<PhotosScreen> {
   @override
   Widget build(BuildContext context) {
     final archive = ref.watch(archiveProvider);
+    final selectedDay = ref.watch(selectedDayProvider);
     final palette = context.palette;
 
     final all = [...archive.media]
@@ -65,8 +67,7 @@ class _PhotosScreenState extends ConsumerState<PhotosScreen> {
           icon: Icons.add_photo_alternate_outlined,
           tooltip: 'Add media',
           filled: true,
-          onPressed: () =>
-              importMediaForDay(context, ref, dayStart(DateTime.now())),
+          onPressed: () => importMediaForDay(context, ref, dayStart(selectedDay)),
         ),
       ],
       children: [
@@ -92,7 +93,7 @@ class _PhotosScreenState extends ConsumerState<PhotosScreen> {
             message: 'Photos and videos you add are encrypted before they are stored.',
             actionLabel: 'Add media',
             onAction: () =>
-                importMediaForDay(context, ref, dayStart(DateTime.now())),
+                importMediaForDay(context, ref, dayStart(selectedDay)),
           )
         else if (filtered.isEmpty)
           const EmptyState(

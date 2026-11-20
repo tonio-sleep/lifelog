@@ -1,5 +1,4 @@
 ﻿import 'dart:io' show Platform;
-import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -18,7 +17,7 @@ import '../../domain/models/trackers.dart';
 import '../journal/journal_widgets.dart';
 import '../meals/meal_dialogs.dart';
 import '../music/music_dialogs.dart';
-import '../photos/photo_widgets.dart';
+import '../photos/media_import.dart';
 import '../places/place_dialogs.dart';
 import '../timeline/event_dialogs.dart';
 import '../trackers/tracker_dialogs.dart';
@@ -618,146 +617,16 @@ Future<void> importMediaForDay(
   try {
     final files = await pickMediaFromPhotosOrFiles(context);
     if (files.isEmpty || !context.mounted) return;
-    await _importFilesWithProgress(
+    await importPickedMedia(
       context,
       ref,
-      day,
       files,
       journalEntryId: journalEntryId,
+      createdAt: momentForDay(day),
     );
   } catch (error) {
     if (context.mounted) showSnack(context, 'Could not import media: $error');
   }
-}
-
-Future<void> _importFilesWithProgress(
-  BuildContext context,
-  WidgetRef ref,
-  DateTime day,
-  List<XFile> files, {
-  String? journalEntryId,
-}) async {
-  final progress = ValueNotifier<_ImportProgress>(
-    _ImportProgress(total: files.length, current: 0, label: 'Preparing...'),
-  );
-  var dialogOpen = true;
-  // Show a non-dismissible progress dialog while importing.
-  // ignore: unawaited_futures
-  showDialog<void>(
-    context: context,
-    barrierDismissible: false,
-    builder: (ctx) => PopScope(
-      canPop: false,
-      child: AlertDialog(
-        content: ValueListenableBuilder<_ImportProgress>(
-          valueListenable: progress,
-          builder: (context, p, _) {
-            final fraction = p.total <= 0 ? null : (p.current / p.total).clamp(0.0, 1.0);
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Adding media',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: Insets.md),
-                LinearProgressIndicator(value: fraction),
-                const SizedBox(height: Insets.md),
-                Text(
-                  '${p.current} of ${p.total}',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontFeatures: tabularFigures,
-                      ),
-                ),
-                if (p.label.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    p.label,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                  ),
-                ],
-              ],
-            );
-          },
-        ),
-      ),
-    ),
-  ).whenComplete(() => dialogOpen = false);
-
-  var added = 0;
-  try {
-    for (var i = 0; i < files.length; i++) {
-      final file = files[i];
-      progress.value = _ImportProgress(
-        total: files.length,
-        current: i,
-        label: 'Reading ${file.name}',
-      );
-      final bytes = await file.readAsBytes();
-      if (!context.mounted) break;
-
-      progress.value = _ImportProgress(
-        total: files.length,
-        current: i,
-        label: 'Details for ${file.name}',
-      );
-      final details = await askMediaDetails(context, fileName: file.name);
-      if (details == null) {
-        progress.value = _ImportProgress(
-          total: files.length,
-          current: i + 1,
-          label: 'Skipped ${file.name}',
-        );
-        continue;
-      }
-      if (!context.mounted) break;
-
-      progress.value = _ImportProgress(
-        total: files.length,
-        current: i,
-        label: 'Saving ${file.name}',
-      );
-      await ref.read(archiveProvider.notifier).importMedia(
-            bytes: Uint8List.fromList(bytes),
-            fileName: file.name,
-            caption: details.caption,
-            tags: details.tags,
-            journalEntryId: journalEntryId,
-            createdAt: momentForDay(day),
-          );
-      added++;
-      progress.value = _ImportProgress(
-        total: files.length,
-        current: i + 1,
-        label: 'Added ${file.name}',
-      );
-    }
-  } finally {
-    if (dialogOpen && context.mounted) {
-      Navigator.of(context, rootNavigator: true).pop();
-    }
-    progress.dispose();
-  }
-
-  if (context.mounted && added > 0) {
-    showSnack(context, added == 1 ? 'Added to the day.' : '$added items added.');
-  }
-}
-
-class _ImportProgress {
-  const _ImportProgress({
-    required this.total,
-    required this.current,
-    required this.label,
-  });
-  final int total;
-  final int current;
-  final String label;
 }
 
 

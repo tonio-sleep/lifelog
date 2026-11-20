@@ -88,6 +88,8 @@ class _CloudflareRequiredAuthScreenState
 
     final services = ref.read(appServicesProvider);
     final baseUrl = CloudflareSyncService.normalizeBaseUrl(url);
+    final previousUsername =
+        ref.read(settingsProvider).cloudflareUsername?.trim().toLowerCase();
     try {
       CloudflareSession session;
       if (_createAccount) {
@@ -115,6 +117,14 @@ class _CloudflareRequiredAuthScreenState
             username: session.username,
             sessionJson: jsonEncode(session.toJson()),
           );
+      // A remembered passphrase unlocks one specific account's backup.
+      if (previousUsername != null &&
+          previousUsername.isNotEmpty &&
+          previousUsername != username) {
+        await ref
+            .read(settingsProvider.notifier)
+            .forgetCloudflareBackupPassphrase();
+      }
 
       if (!mounted) return;
       showSnack(

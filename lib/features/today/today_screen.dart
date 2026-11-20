@@ -188,6 +188,20 @@ class _DayBody extends ConsumerWidget {
             createNew: true,
           ),
         ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => DayDetailScreen(day: day),
+              ),
+            ),
+            icon: const Icon(Icons.auto_stories_outlined, size: 16),
+            label: Text(
+              isToday ? 'See today’s full story' : 'See this day’s full story',
+            ),
+          ),
+        ),
         if (latest != null) ...[
           const SizedBox(height: Insets.md),
           NowPlayingCard(scrobble: latest, onTap: () => onNavigate?.call('music')),
@@ -226,6 +240,7 @@ class _DayBody extends ConsumerWidget {
             TimelineSource.tracker,
             TimelineSource.location,
             TimelineSource.manual,
+            TimelineSource.photo,
           },
           emptyMessage: isToday
               ? 'Nothing here yet. A small check-in, a habit, a photo, or a few words is a great way to start.'

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/providers/day_provider.dart';
 import '../../app/providers/providers.dart';
 import '../../app/theme/app_theme.dart';
 import '../../app/widgets/common.dart';
@@ -17,6 +18,7 @@ import '../music/music_screen.dart';
 import '../photos/photo_widgets.dart';
 import '../timeline/event_dialogs.dart';
 import '../timeline/timeline_widgets.dart';
+import '../today/collapsible_day_section.dart';
 import '../today/quick_add.dart';
 import '../today/today_widgets.dart';
 import '../trackers/tracker_dialogs.dart';
@@ -39,10 +41,17 @@ class _DayDetailScreenState extends ConsumerState<DayDetailScreen> {
   void initState() {
     super.initState();
     _day = dayStart(widget.day);
+    // Keep quick-add's shared day in sync with the page being viewed.
+    ref.read(selectedDayProvider.notifier).select(_day);
+  }
+
+  void _updateDay(DateTime value) {
+    setState(() => _day = value);
+    ref.read(selectedDayProvider.notifier).select(value);
   }
 
   void _shift(int delta) =>
-      setState(() => _day = DateTime(_day.year, _day.month, _day.day + delta));
+      _updateDay(DateTime(_day.year, _day.month, _day.day + delta));
 
   @override
   Widget build(BuildContext context) {
@@ -81,7 +90,7 @@ class _DayDetailScreenState extends ConsumerState<DayDetailScreen> {
       children: [
         DayNavigator(
           day: _day,
-          onChanged: (value) => setState(() => _day = value),
+          onChanged: _updateDay,
         ),
         const SizedBox(height: Insets.lg),
         DaySwitcher(
@@ -108,13 +117,48 @@ bool _isMetricsOnly(JournalEntry entry) {
       entry.meals.trim().isNotEmpty;
 }
 
-class _DayStory extends ConsumerWidget {
+class _DayStory extends ConsumerStatefulWidget {
   const _DayStory({required this.day});
 
   final DateTime day;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_DayStory> createState() => _DayStoryState();
+}
+
+class _DayStoryState extends ConsumerState<_DayStory> {
+  final Set<String> _expanded = {'feeling', 'entries', 'photos'};
+
+  void _toggle(String id) => setState(() {
+        if (_expanded.contains(id)) {
+          _expanded.remove(id);
+        } else {
+          _expanded.add(id);
+        }
+      });
+
+  void _setAll(bool value) => setState(() {
+        if (value) {
+          _expanded.addAll(_sectionIds);
+        } else {
+          _expanded.clear();
+        }
+      });
+
+  static const _sectionIds = {
+    'entries',
+    'photos',
+    'meals',
+    'habits',
+    'health',
+    'places',
+    'music',
+    'memories',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final day = widget.day;
     final archive = ref.watch(archiveProvider);
     final summary = DaySummary.of(archive, day);
     final palette = context.palette;
@@ -129,6 +173,9 @@ class _DayStory extends ConsumerWidget {
         .where((t) => TrackerMath.loggedOn(archive.trackerRecords, t.id, day))
         .toList();
     final memories = onThisDay(archive, day);
+    final meals = archive.mealsOn(day);
+    final hasHealth =
+        metrics != null && (metrics.sleepHours != null || metrics.steps != null);
 
     if (summary.isEmpty && entries.isEmpty) {
       return EmptyState(
@@ -146,158 +193,270 @@ class _DayStory extends ConsumerWidget {
       );
     }
 
+    Widget section({
+      required String id,
+      required String title,
+      required IconData icon,
+      required Color color,
+      required int count,
+      required List<Widget> children,
+      Widget? action,
+    }) {
+      return CollapsibleDaySection(
+        title: title,
+        icon: icon,
+        color: color,
+        count: count,
+        expanded: _expanded.contains(id),
+        onToggle: () => _toggle(id),
+        action: action,
+        subtitle: count == 0 ? 'Nothing recorded' : null,
+        children: children.isEmpty
+            ? [
+                Text(
+                  'Nothing recorded yet.',
+                  style: context.text.bodySmall?.copyWith(
+                    color: palette.mutedText,
+                  ),
+                ),
+              ]
+            : children,
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: Insets.xs),
+          child: Row(
+            children: [
+              Text(
+                'Day summary',
+                style: context.text.labelMedium?.copyWith(
+                  color: palette.mutedText,
+                ),
+              ),
+              const Spacer(),
+              TextButton(
+                onPressed: () => _setAll(true),
+                child: const Text('Expand all'),
+              ),
+              TextButton(
+                onPressed: () => _setAll(false),
+                child: const Text('Collapse all'),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: Insets.xs),
         _DayFeelingCard(
           day: day,
           checkins: checkins,
           mood: mood,
-          metrics: metrics,
+          metrics: null,
         ),
-        if (writing.isNotEmpty) ...[
-          const SectionHeader(title: 'Entries'),
-          for (final entry in writing)
-            JournalEntryCard(
-              key: ValueKey(entry.id),
-              entry: entry,
-              showDate: false,
-              heroScope: 'day',
-            ),
-        ],
-        if (summary.photos.isNotEmpty) ...[
-          const SectionHeader(title: 'Photos and videos'),
-          StoryStrip(items: summary.photos, scope: 'day-all', height: 150),
-        ],
-        if (archive.mealsOn(day).isNotEmpty) ...[
-          const SectionHeader(title: 'Meals'),
-          MealsDayCard(day: day),
-        ],
-        if (trackers.isNotEmpty) ...[
-          const SectionHeader(title: 'Habits'),
-          Wrap(
-            spacing: Insets.sm,
-            runSpacing: Insets.sm,
-            children: [
-              for (final tracker in trackers)
-                Pressable(
-                  borderRadius: BorderRadius.circular(Radii.pill),
-                  onTap: () =>
-                      showTrackerLogDialog(context, ref, tracker, day: day),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: Insets.md,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: trackerColor(tracker.colorValue)
-                          .withValues(alpha: 0.13),
-                      borderRadius: BorderRadius.circular(Radii.pill),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          trackerIcon(tracker.icon),
-                          size: 15,
-                          color: trackerColor(tracker.colorValue),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          [
-                            tracker.name,
-                            habitValueLabel(
-                              tracker,
-                              archive.trackerRecords,
-                              day,
-                            ),
-                          ].whereType<String>().join(', '),
-                          style: context.text.labelMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+        const SizedBox(height: Insets.sm),
+        section(
+          id: 'entries',
+          title: 'Entries',
+          icon: Icons.description_outlined,
+          color: palette.journal,
+          count: writing.length,
+          children: [
+            for (final entry in writing)
+              Padding(
+                padding: const EdgeInsets.only(bottom: Insets.sm),
+                child: JournalEntryCard(
+                  key: ValueKey(entry.id),
+                  entry: entry,
+                  showDate: false,
+                  heroScope: 'day',
                 ),
-            ],
-          ),
-        ],
-        if (metrics != null &&
-            (metrics.sleepHours != null || metrics.steps != null)) ...[
-          const SectionHeader(title: 'Health'),
-          QuietCard(
-            child: Wrap(
+              ),
+          ],
+        ),
+        const SizedBox(height: Insets.sm),
+        section(
+          id: 'photos',
+          title: 'Photos and videos',
+          icon: Icons.photo_library_outlined,
+          color: palette.photo,
+          count: summary.photos.length,
+          children: [
+            StoryStrip(items: summary.photos, scope: 'day-all', height: 150),
+          ],
+        ),
+        const SizedBox(height: Insets.sm),
+        section(
+          id: 'meals',
+          title: 'Meals and drinks',
+          icon: Icons.restaurant_outlined,
+          color: palette.tracker,
+          count: meals.length,
+          children: [MealsDayCard(day: day)],
+        ),
+        const SizedBox(height: Insets.sm),
+        section(
+          id: 'habits',
+          title: 'Habits',
+          icon: Icons.bolt_outlined,
+          color: palette.tracker,
+          count: trackers.length,
+          children: [
+            Wrap(
               spacing: Insets.sm,
-              runSpacing: Insets.xs,
+              runSpacing: Insets.sm,
               children: [
-                if (metrics.sleepHours != null)
-                  SourceChip(
-                    label: '${_fmtNum(metrics.sleepHours!)}h sleep',
-                    color: palette.place,
-                    dense: true,
-                  ),
-                if (metrics.steps != null)
-                  SourceChip(
-                    label: '${metrics.steps} steps',
-                    color: palette.music,
-                    dense: true,
-                  ),
-              ],
-            ),
-          ),
-        ],
-        if (summary.visits.isNotEmpty || summary.events.isNotEmpty) ...[
-          const SectionHeader(title: 'Places and events'),
-          TimelineDayList(
-            day: day,
-            compact: true,
-            showEmptyAction: false,
-            sources: const {TimelineSource.location, TimelineSource.manual},
-          ),
-        ],
-        if (summary.scrobbles.isNotEmpty) ...[
-          const SectionHeader(title: 'Music'),
-          DayListeningCard(
-            summary: summary.music,
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(builder: (_) => MusicScreen(day: day)),
-            ),
-          ),
-        ],
-        if (memories.isNotEmpty) ...[
-          const SectionHeader(title: 'In other years'),
-          for (final memory in memories.take(3))
-            Padding(
-              padding: const EdgeInsets.only(bottom: Insets.sm),
-              child: QuietCard(
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => DayDetailScreen(day: memory.day),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                for (final tracker in trackers)
+                  Pressable(
+                    borderRadius: BorderRadius.circular(Radii.pill),
+                    onTap: () =>
+                        showTrackerLogDialog(context, ref, tracker, day: day),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: Insets.md,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: trackerColor(tracker.colorValue)
+                            .withValues(alpha: 0.13),
+                        borderRadius: BorderRadius.circular(Radii.pill),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(memory.relativeLabel, style: context.text.titleSmall),
+                          Icon(
+                            trackerIcon(tracker.icon),
+                            size: 15,
+                            color: trackerColor(tracker.colorValue),
+                          ),
+                          const SizedBox(width: 6),
                           Text(
-                            memory.description,
-                            style: context.text.bodySmall?.copyWith(
-                              color: palette.mutedText,
+                            [
+                              tracker.name,
+                              habitValueLabel(
+                                tracker,
+                                archive.trackerRecords,
+                                day,
+                              ),
+                            ].whereType<String>().join(', '),
+                            style: context.text.labelMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                         ],
                       ),
                     ),
-                    Icon(Icons.chevron_right_rounded, color: palette.dimText),
-                  ],
-                ),
+                  ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: Insets.sm),
+        section(
+          id: 'health',
+          title: 'Health & body',
+          icon: Icons.favorite_outline_rounded,
+          color: palette.place,
+          count: hasHealth ? 1 : 0,
+          children: [
+            if (metrics != null)
+              Wrap(
+                spacing: Insets.sm,
+                runSpacing: Insets.xs,
+                children: [
+                  if (metrics.sleepHours != null)
+                    SourceChip(
+                      label: '${_fmtNum(metrics.sleepHours!)}h sleep',
+                      color: palette.place,
+                      dense: true,
+                    ),
+                  if (metrics.steps != null)
+                    SourceChip(
+                      label: '${metrics.steps} steps',
+                      color: palette.music,
+                      dense: true,
+                    ),
+                ],
+              ),
+          ],
+        ),
+        const SizedBox(height: Insets.sm),
+        section(
+          id: 'places',
+          title: 'Places and events',
+          icon: Icons.place_outlined,
+          color: palette.place,
+          count: summary.visits.length + summary.events.length,
+          children: [
+            TimelineDayList(
+              day: day,
+              compact: true,
+              showEmptyAction: false,
+              sources: const {TimelineSource.location, TimelineSource.manual},
+            ),
+          ],
+        ),
+        const SizedBox(height: Insets.sm),
+        section(
+          id: 'music',
+          title: 'Music',
+          icon: Icons.music_note_outlined,
+          color: palette.music,
+          count: summary.scrobbles.length,
+          children: [
+            DayListeningCard(
+              summary: summary.music,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => MusicScreen(day: day)),
               ),
             ),
-        ],
+          ],
+        ),
+        const SizedBox(height: Insets.sm),
+        section(
+          id: 'memories',
+          title: 'In other years',
+          icon: Icons.history_rounded,
+          color: palette.journal,
+          count: memories.length,
+          children: [
+            for (final memory in memories.take(3))
+              Padding(
+                padding: const EdgeInsets.only(bottom: Insets.sm),
+                child: QuietCard(
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => DayDetailScreen(day: memory.day),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              memory.relativeLabel,
+                              style: context.text.titleSmall,
+                            ),
+                            Text(
+                              memory.description,
+                              style: context.text.bodySmall?.copyWith(
+                                color: palette.mutedText,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.chevron_right_rounded, color: palette.dimText),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
       ],
     );
   }

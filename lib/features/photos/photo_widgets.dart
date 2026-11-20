@@ -820,15 +820,32 @@ class _ViewerPageState extends State<_ViewerPage> {
   }
 }
 
-/// Adds a caption and tags before importing a picked file.
-Future<({String caption, List<String> tags})?> askMediaDetails(
+enum MediaDetailsAction { add, skip, skipAll, cancel }
+
+class MediaDetailsResult {
+  const MediaDetailsResult({
+    required this.action,
+    this.caption = '',
+    this.tags = const [],
+  });
+
+  final MediaDetailsAction action;
+  final String caption;
+  final List<String> tags;
+}
+
+/// Adds a caption and tags before importing a picked file. The explicit
+/// Skip all / Cancel choices let a multi-file import be stopped cleanly.
+Future<MediaDetailsResult?> askMediaDetails(
   BuildContext context, {
   required String fileName,
 }) async {
   final captionController = TextEditingController();
   final tagsController = TextEditingController();
-  final result = await showLifelogSheet<({String caption, List<String> tags})>(
+  final result = await showLifelogSheet<MediaDetailsResult>(
     context,
+    isDismissible: false,
+    enableDrag: false,
     builder: (sheetContext) => Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -874,21 +891,43 @@ Future<({String caption, List<String> tags})?> askMediaDetails(
           children: [
             Expanded(
               child: OutlinedButton(
-                onPressed: () => Navigator.of(sheetContext).pop(),
+                onPressed: () =>
+                    Navigator.of(sheetContext).pop(const MediaDetailsResult(action: MediaDetailsAction.skip)),
                 child: const Text('Skip'),
               ),
             ),
-            const SizedBox(width: Insets.md),
+            const SizedBox(width: Insets.sm),
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(sheetContext).pop(
+                  const MediaDetailsResult(action: MediaDetailsAction.skipAll),
+                ),
+                child: const Text('Skip all'),
+              ),
+            ),
+            const SizedBox(width: Insets.sm),
             Expanded(
               child: FilledButton(
-                onPressed: () => Navigator.of(sheetContext).pop((
-                  caption: captionController.text.trim(),
-                  tags: normaliseTags(tagsController.text.split(',')),
-                )),
+                onPressed: () => Navigator.of(sheetContext).pop(
+                  MediaDetailsResult(
+                    action: MediaDetailsAction.add,
+                    caption: captionController.text.trim(),
+                    tags: normaliseTags(tagsController.text.split(',')),
+                  ),
+                ),
                 child: const Text('Add'),
               ),
             ),
           ],
+        ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            onPressed: () => Navigator.of(sheetContext).pop(
+              const MediaDetailsResult(action: MediaDetailsAction.cancel),
+            ),
+            child: const Text('Cancel import'),
+          ),
         ),
       ],
     ),

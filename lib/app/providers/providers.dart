@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import '../../core/backup/backup_service.dart';
 import '../../core/util/dates.dart';
 import '../../domain/meals_migration.dart';
+import '../../integrations/cloudflare/backup_upload_progress.dart';
 import '../../integrations/cloudflare/cloud_sync_engine.dart';
 import '../../integrations/cloudflare/cloudflare_sync_service.dart';
 import '../../domain/models/archive.dart';
@@ -65,6 +66,8 @@ class CloudAutoSyncController extends Notifier<CloudAutoSyncState> {
       archive: () async => ref.read(archiveProvider),
       recordSync: (at) =>
           ref.read(settingsProvider.notifier).recordCloudflareSync(at),
+      onProgress: (event) =>
+          ref.read(backupUploadProvider.notifier).report(event),
     );
     _engine = engine;
     ref.onDispose(() {
@@ -157,7 +160,10 @@ class CloudAutoSyncController extends Notifier<CloudAutoSyncState> {
       _failures++;
       state = CloudAutoSyncState(
         phase: CloudAutoSyncPhase.failed,
-        error: '$error',
+        error: friendlyCloudflareSyncError(
+          error,
+          operation: CloudSyncOperation.backupUpload,
+        ),
         lastAttempt: DateTime.now(),
       );
       final backoff = Duration(seconds: (2 * _failures).clamp(2, 30));

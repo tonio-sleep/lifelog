@@ -4,11 +4,25 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
-/// Reports bytes confirmed by the server. It is only called after a 2xx
-/// response, so a caller can present the value as actually uploaded.
-typedef UploadByteProgress = void Function(int sent, int total);
+/// Reports bytes the Worker has positively confirmed, never bytes merely queued
+/// into a local socket. It is called with 0 when a resumable upload starts.
+typedef UploadByteProgress = void Function(int confirmed, int total);
 
-const Duration _syncTimeout = Duration(seconds: 30);
+/// Distinguishes timeout wording so a failed sign-in is never described as a
+/// failed upload, and vice versa.
+enum CloudSyncOperation {
+  connection,
+  account,
+  metadata,
+  download,
+  backupUpload,
+  mediaUpload,
+}
+
+const Duration _controlTimeout = Duration(seconds: 30);
+const Duration _partTimeout = Duration(seconds: 90);
+const Duration _legacyUploadTimeout = Duration(seconds: 180);
+const int _maxAcceptedPartSize = 100 * 1024 * 1024;
 
 /// Compiled into every build with `--dart-define=LIFELOG_API_KEY=...`.
 /// An empty value makes the client fail closed instead of sending a request
@@ -37,10 +51,32 @@ bool _isLoopbackHost(String host) {
       normalized == '::1';
 }
 
-String friendlyCloudflareSyncError(Object error) {
-  if (error is TimeoutException) {
-    return 'The sync server took too long to respond. Check your connection and try again.';
-  }
+String _timeoutMessage(CloudSyncOperation operation) => switch (operation) {
+      CloudSyncOperation.connection =>
+        'The sync server did not respond while checking the connection. '
+            'Nothing was uploaded. Check your connection and try again.',
+      CloudSyncOperation.account =>
+        'The sync server did not respond while signing in. No data on this '
+            'device was changed. Check your connection and try again.',
+      CloudSyncOperation.metadata =>
+        'The sync server did not respond while checking cloud status. '
+            'Nothing was uploaded or changed. Try again.',
+      CloudSyncOperation.download =>
+        'The sync server did not respond while downloading. Nothing on this '
+            'device was replaced. Check your connection and try again.',
+      CloudSyncOperation.backupUpload =>
+        'The sync server did not respond while confirming an encrypted backup '
+            'part. Confirmed parts are saved; retry will use them.',
+      CloudSyncOperation.mediaUpload =>
+        'The sync server did not respond while confirming an encrypted media '
+            'part. Confirmed parts are saved; retry will use them.',
+    };
+
+String friendlyCloudflareSyncError(
+  Object error, {
+  CloudSyncOperation operation = CloudSyncOperation.connection,
+}) {
+  if (error is TimeoutException) return _timeoutMessage(operation);
   if (error is CloudflareSyncException) return error.message;
   return '$error';
 }
@@ -89,11 +125,11 @@ class CloudflareSession {
   final DateTime? obtainedAt;
 
   Map<String, dynamic> toJson() => {
-    'token': token,
-    'username': username,
-    'expiresInSeconds': expiresInSeconds,
-    'obtainedAt': (obtainedAt ?? DateTime.now()).toIso8601String(),
-  };
+        'token': token,
+        'username': username,
+        'expiresInSeconds': expiresInSeconds,
+        'obtainedAt': (obtainedAt ?? DateTime.now()).toIso8601String(),
+      };
 
   factory CloudflareSession.fromJson(Map<String, dynamic> json) {
     return CloudflareSession(
@@ -103,6 +139,18 @@ class CloudflareSession {
       obtainedAt: DateTime.tryParse(json['obtainedAt'] as String? ?? ''),
     );
   }
+}
+
+class _StartedUpload {
+  const _StartedUpload({
+    required this.uploadId,
+    required this.partSize,
+    required this.partCount,
+  });
+
+  final String uploadId;
+  final int partSize;
+  final int partCount;
 }
 
 /// Client for the Lifelog Cloudflare Worker sync API.
@@ -163,12 +211,8 @@ class CloudflareSyncService {
   Future<void> checkHealth(String baseUrl) async {
     final resp = await _http
         .get(_uri(baseUrl, '/api/health'), headers: _headers())
-        .timeout(_syncTimeout);
-    if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      throw CloudflareSyncException(
-        _friendlyHttpError(resp, fallback: 'Could not reach the sync server.'),
-      );
-    }
+        .timeout(_controlTimeout);
+    _throwForResponse(resp, fallback: 'Could not reach the sync server.');
   }
 
   Future<CloudflareSession> register({
@@ -182,14 +226,14 @@ class CloudflareSyncService {
           headers: _headers(extra: const {'Content-Type': 'application/json'}),
           body: jsonEncode({'username': username.trim(), 'password': password}),
         )
-        .timeout(_syncTimeout);
+        .timeout(_controlTimeout);
     final data = _decodeJson(resp);
-    if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      throw CloudflareSyncException(
-        _messageFrom(data) ??
-            _friendlyHttpError(resp, fallback: 'Could not create account.'),
-      );
-    }
+    _throwForResponse(
+      resp,
+      data: data,
+      fallback: 'Could not create account.',
+      keepNotFound: true,
+    );
     final token = data['token'] as String?;
     final user = (data['username'] as String?)?.trim();
     if (token == null || token.isEmpty || user == null || user.isEmpty) {
@@ -214,14 +258,14 @@ class CloudflareSyncService {
           headers: _headers(extra: const {'Content-Type': 'application/json'}),
           body: jsonEncode({'username': username.trim(), 'password': password}),
         )
-        .timeout(_syncTimeout);
+        .timeout(_controlTimeout);
     final data = _decodeJson(resp);
-    if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      throw CloudflareSyncException(
-        _messageFrom(data) ??
-            _friendlyHttpError(resp, fallback: 'Could not sign in.'),
-      );
-    }
+    _throwForResponse(
+      resp,
+      data: data,
+      fallback: 'Could not sign in.',
+      keepNotFound: true,
+    );
     final token = data['token'] as String?;
     final user = (data['username'] as String?)?.trim();
     if (token == null || token.isEmpty || user == null || user.isEmpty) {
@@ -241,17 +285,14 @@ class CloudflareSyncService {
   }) async {
     final resp = await _http
         .get(_uri(baseUrl, '/api/backup/meta'), headers: _authHeaders(token))
-        .timeout(_syncTimeout);
+        .timeout(_controlTimeout);
     final data = _decodeJson(resp);
-    if (resp.statusCode == 401) {
-      throw CloudflareSyncException('Session expired. Please sign in again.');
-    }
-    if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      throw CloudflareSyncException(
-        _messageFrom(data) ??
-            _friendlyHttpError(resp, fallback: 'Could not check cloud backup.'),
-      );
-    }
+    _throwForResponse(
+      resp,
+      data: data,
+      fallback: 'Could not check cloud backup.',
+      keepNotFound: true,
+    );
     final rawExists = data['exists'];
     if (rawExists is! bool) {
       // Missing/unknown metadata must never be read as "no remote backup".
@@ -274,50 +315,17 @@ class CloudflareSyncService {
     required String token,
     required Uint8List bytes,
     UploadByteProgress? onByteProgress,
-  }) async {
-    final request = http.StreamedRequest('PUT', _uri(baseUrl, '/api/backup'));
-    request.headers.addAll(
-      _authHeaders(
-        token,
-        extra: const {'Content-Type': 'application/octet-stream'},
-      ),
+  }) {
+    return _uploadBytes(
+      baseUrl: baseUrl,
+      token: token,
+      bytes: bytes,
+      target: 'backup',
+      uri: _uri(baseUrl, '/api/backup'),
+      fallback: 'Could not upload backup.',
+      operation: CloudSyncOperation.backupUpload,
+      onByteProgress: onByteProgress,
     );
-
-    // Start the send first so the HTTP client attaches to the request body
-    // stream before bytes are written. Closing the sink earlier can leave a
-    // synchronous StreamController with no listener and hang the PUT.
-    final response = _http.send(request);
-
-    // Stream the exact same bytes as the old single PUT; Workers read the
-    // body with arrayBuffer(), so chunked transfer stays wire-compatible.
-    // Writing to the sink only queues bytes locally: never report them as sent
-    // before the Worker answers.
-    try {
-      const chunkSize = 64 * 1024;
-      for (var offset = 0; offset < bytes.length; offset += chunkSize) {
-        final end = offset + chunkSize < bytes.length
-            ? offset + chunkSize
-            : bytes.length;
-        request.sink.add(Uint8List.sublistView(bytes, offset, end));
-      }
-    } finally {
-      await request.sink.close().timeout(_syncTimeout);
-    }
-
-    final streamed = await response.timeout(_syncTimeout);
-    final resp = await http.Response.fromStream(streamed).timeout(_syncTimeout);
-    if (resp.statusCode == 401) {
-      throw CloudflareSyncException('Session expired. Please sign in again.');
-    }
-    if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      final data = _decodeJson(resp);
-      throw CloudflareSyncException(
-        _messageFrom(data) ??
-            _friendlyHttpError(resp, fallback: 'Could not upload backup.'),
-      );
-    }
-    // The Worker accepted the whole body. Only now is byte progress truthful.
-    onByteProgress?.call(bytes.length, bytes.length);
   }
 
   Future<Uint8List> downloadBackup({
@@ -326,27 +334,22 @@ class CloudflareSyncService {
   }) async {
     final resp = await _http
         .get(_uri(baseUrl, '/api/backup'), headers: _authHeaders(token))
-        .timeout(_syncTimeout);
-    if (resp.statusCode == 401) {
-      throw CloudflareSyncException('Session expired. Please sign in again.');
-    }
+        .timeout(_controlTimeout);
+    _throwForResponse(
+      resp,
+      fallback: 'Could not download backup.',
+      keepNotFound: true,
+    );
     if (resp.statusCode == 404) {
       throw CloudflareSyncException('No cloud backup found.');
-    }
-    if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      final data = _decodeJson(resp);
-      throw CloudflareSyncException(
-        _messageFrom(data) ??
-            _friendlyHttpError(resp, fallback: 'Could not download backup.'),
-      );
     }
     return resp.bodyBytes;
   }
 
   Uri _mediaUri(String baseUrl, String id, CloudflareMediaKind kind) => _uri(
-    baseUrl,
-    '/api/media/${Uri.encodeComponent(id)}/${kind.pathSegment}',
-  );
+        baseUrl,
+        '/api/media/${Uri.encodeComponent(id)}/${kind.pathSegment}',
+      );
 
   Future<Uint8List> downloadMedia({
     required String baseUrl,
@@ -356,7 +359,7 @@ class CloudflareSyncService {
   }) async {
     final resp = await _http
         .get(_mediaUri(baseUrl, id, kind), headers: _authHeaders(token))
-        .timeout(_syncTimeout);
+        .timeout(_controlTimeout);
     if (resp.statusCode == 401 || resp.statusCode == 403) {
       final data = _decodeJson(resp);
       throw CloudflareSyncException(_messageFrom(data) ?? 'Access denied.');
@@ -364,13 +367,11 @@ class CloudflareSyncService {
     if (resp.statusCode == 404) {
       throw CloudflareSyncException('Media is not available in the cloud yet.');
     }
-    if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      final data = _decodeJson(resp);
-      throw CloudflareSyncException(
-        _messageFrom(data) ??
-            _friendlyHttpError(resp, fallback: 'Could not download media.'),
-      );
-    }
+    _throwForResponse(
+      resp,
+      fallback: 'Could not download media.',
+      keepNotFound: true,
+    );
     return resp.bodyBytes;
   }
 
@@ -384,16 +385,15 @@ class CloudflareSyncService {
   }) async {
     final request = http.Request('HEAD', _mediaUri(baseUrl, id, kind))
       ..headers.addAll(_authHeaders(token));
-    final streamed = await _http.send(request).timeout(_syncTimeout);
-    final resp = await http.Response.fromStream(streamed).timeout(_syncTimeout);
+    final streamed = await _http.send(request).timeout(_controlTimeout);
+    final resp = await http.Response.fromStream(streamed)
+        .timeout(_controlTimeout);
     if (resp.statusCode == 404) return null;
-    if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      final data = _decodeJson(resp);
-      throw CloudflareSyncException(
-        _messageFrom(data) ??
-            _friendlyHttpError(resp, fallback: 'Could not check cloud media.'),
-      );
-    }
+    _throwForResponse(
+      resp,
+      fallback: 'Could not check cloud media.',
+      keepNotFound: true,
+    );
     return int.tryParse(resp.headers['content-length'] ?? '');
   }
 
@@ -403,35 +403,20 @@ class CloudflareSyncService {
     required String id,
     required CloudflareMediaKind kind,
     required Uint8List bytes,
-  }) async {
-    final request = http.StreamedRequest('PUT', _mediaUri(baseUrl, id, kind));
-    request.headers.addAll(
-      _authHeaders(
-        token,
-        extra: const {'Content-Type': 'application/octet-stream'},
-      ),
+    UploadByteProgress? onByteProgress,
+  }) {
+    return _uploadBytes(
+      baseUrl: baseUrl,
+      token: token,
+      bytes: bytes,
+      target: 'media',
+      mediaId: id,
+      mediaKind: kind.pathSegment,
+      uri: _mediaUri(baseUrl, id, kind),
+      fallback: 'Could not upload media.',
+      operation: CloudSyncOperation.mediaUpload,
+      onByteProgress: onByteProgress,
     );
-    final response = _http.send(request);
-    try {
-      const chunkSize = 64 * 1024;
-      for (var offset = 0; offset < bytes.length; offset += chunkSize) {
-        final end = offset + chunkSize < bytes.length
-            ? offset + chunkSize
-            : bytes.length;
-        request.sink.add(Uint8List.sublistView(bytes, offset, end));
-      }
-    } finally {
-      await request.sink.close().timeout(_syncTimeout);
-    }
-    final streamed = await response.timeout(_syncTimeout);
-    final resp = await http.Response.fromStream(streamed).timeout(_syncTimeout);
-    if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      final data = _decodeJson(resp);
-      throw CloudflareSyncException(
-        _messageFrom(data) ??
-            _friendlyHttpError(resp, fallback: 'Could not upload media.'),
-      );
-    }
   }
 
   Future<void> deleteMedia({
@@ -442,15 +427,214 @@ class CloudflareSyncService {
   }) async {
     final request = http.Request('DELETE', _mediaUri(baseUrl, id, kind))
       ..headers.addAll(_authHeaders(token));
-    final streamed = await _http.send(request).timeout(_syncTimeout);
-    final resp = await http.Response.fromStream(streamed).timeout(_syncTimeout);
-    if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      final data = _decodeJson(resp);
-      throw CloudflareSyncException(
-        _messageFrom(data) ??
-            _friendlyHttpError(resp, fallback: 'Could not delete cloud media.'),
-      );
+    final streamed = await _http.send(request).timeout(_controlTimeout);
+    final resp = await http.Response.fromStream(streamed)
+        .timeout(_controlTimeout);
+    _throwForResponse(
+      resp,
+      fallback: 'Could not delete cloud media.',
+      keepNotFound: true,
+    );
+  }
+
+  /// Prefers the resumable Worker protocol. A Worker that does not implement it
+  /// answers 404/405 and the original single PUT is used unchanged.
+  Future<void> _uploadBytes({
+    required String baseUrl,
+    required String token,
+    required Uint8List bytes,
+    required String target,
+    required Uri uri,
+    required String fallback,
+    required CloudSyncOperation operation,
+    required UploadByteProgress? onByteProgress,
+    String? mediaId,
+    String? mediaKind,
+  }) async {
+    if (bytes.isEmpty) {
+      onByteProgress?.call(0, 0);
+      return;
     }
+
+    final started = await _beginUpload(
+      baseUrl: baseUrl,
+      token: token,
+      bytes: bytes,
+      target: target,
+      mediaId: mediaId,
+      mediaKind: mediaKind,
+      fallback: fallback,
+    );
+    if (started == null) {
+      await _uploadLegacy(
+        uri: uri,
+        token: token,
+        bytes: bytes,
+        fallback: fallback,
+        onByteProgress: onByteProgress,
+      );
+      return;
+    }
+
+    onByteProgress?.call(0, bytes.length);
+    try {
+      for (var part = 1; part <= started.partCount; part++) {
+        final start = (part - 1) * started.partSize;
+        final end = part == started.partCount
+            ? bytes.length
+            : (start + started.partSize).clamp(0, bytes.length);
+        final resp = await _http
+            .put(
+              _uri(
+                baseUrl,
+                '/api/uploads/${Uri.encodeComponent(started.uploadId)}/parts/$part',
+              ),
+              headers: _authHeaders(
+                token,
+                extra: const {'Content-Type': 'application/octet-stream'},
+              ),
+              body: Uint8List.sublistView(bytes, start, end),
+            )
+            .timeout(_partTimeout);
+        _throwForResponse(resp, fallback: 'Could not store upload part.');
+        final data = _decodeJson(resp);
+        final confirmed = (data['confirmedBytes'] as num?)?.toInt();
+        final total = (data['totalBytes'] as num?)?.toInt() ?? bytes.length;
+        // The Worker only reports bytes after R2 accepts the part. Trust its
+        // cumulative count, but never let a bad response overstate progress.
+        final safeConfirmed = confirmed == null
+            ? end
+            : confirmed.clamp(0, bytes.length);
+        onByteProgress?.call(safeConfirmed, total.clamp(0, bytes.length));
+      }
+
+      final complete = await _http
+          .post(
+            _uri(
+              baseUrl,
+              '/api/uploads/${Uri.encodeComponent(started.uploadId)}/complete',
+            ),
+            headers: _authHeaders(
+              token,
+              extra: const {'Content-Type': 'application/json'},
+            ),
+            body: '{}',
+          )
+          .timeout(_controlTimeout);
+      _throwForResponse(complete, fallback: 'Could not finish upload.');
+      onByteProgress?.call(bytes.length, bytes.length);
+    } catch (error) {
+      // Best effort: a failed upload should not leave an open R2 multipart
+      // session. Do not let cleanup hide the original error.
+      unawaited(
+        _abortUpload(baseUrl, token, started.uploadId).catchError((_) {}),
+      );
+      rethrow;
+    }
+  }
+
+  Future<_StartedUpload?> _beginUpload({
+    required String baseUrl,
+    required String token,
+    required Uint8List bytes,
+    required String target,
+    required String fallback,
+    String? mediaId,
+    String? mediaKind,
+  }) async {
+    final body = <String, dynamic>{
+      'target': target,
+      'size': bytes.length,
+      if (target == 'media') ...{
+        'id': mediaId,
+        'mediaKind': mediaKind,
+      },
+    };
+    final resp = await _http
+        .post(
+          _uri(baseUrl, '/api/uploads/begin'),
+          headers: _authHeaders(
+            token,
+            extra: const {'Content-Type': 'application/json'},
+          ),
+          body: jsonEncode(body),
+        )
+        .timeout(_controlTimeout);
+    final data = _decodeJson(resp);
+    if (resp.statusCode == 404 || resp.statusCode == 405) return null;
+    _throwForResponse(resp, data: data, fallback: fallback);
+
+    final uploadId = data['uploadId'] as String?;
+    final partSize = (data['partSize'] as num?)?.toInt();
+    final partCount = (data['partCount'] as num?)?.toInt();
+    if (uploadId == null ||
+        uploadId.isEmpty ||
+        partSize == null ||
+        partSize <= 0 ||
+        partSize > _maxAcceptedPartSize ||
+        partCount == null ||
+        partCount < 1) {
+      // A 2xx without a usable protocol description is treated as an older
+      // Worker; the legacy PUT below still carries exactly the same bytes.
+      return null;
+    }
+    return _StartedUpload(
+      uploadId: uploadId,
+      partSize: partSize,
+      partCount: partCount,
+    );
+  }
+
+  Future<void> _abortUpload(
+    String baseUrl,
+    String token,
+    String uploadId,
+  ) async {
+    final request = http.Request(
+      'DELETE',
+      _uri(baseUrl, '/api/uploads/${Uri.encodeComponent(uploadId)}'),
+    )..headers.addAll(_authHeaders(token));
+    final streamed = await _http.send(request).timeout(_controlTimeout);
+    await http.Response.fromStream(streamed).timeout(_controlTimeout);
+  }
+
+  Future<void> _uploadLegacy({
+    required Uri uri,
+    required String token,
+    required Uint8List bytes,
+    required String fallback,
+    required UploadByteProgress? onByteProgress,
+  }) async {
+    final request = http.StreamedRequest('PUT', uri);
+    request.headers.addAll(
+      _authHeaders(
+        token,
+        extra: const {'Content-Type': 'application/octet-stream'},
+      ),
+    );
+
+    // Start the send first so the HTTP client attaches to the request body
+    // stream before bytes are written. Closing the sink earlier can leave a
+    // synchronous StreamController with no listener and hang the PUT.
+    final response = _http.send(request);
+    try {
+      const chunkSize = 64 * 1024;
+      for (var offset = 0; offset < bytes.length; offset += chunkSize) {
+        final end = offset + chunkSize < bytes.length
+            ? offset + chunkSize
+            : bytes.length;
+        request.sink.add(Uint8List.sublistView(bytes, offset, end));
+      }
+    } finally {
+      await request.sink.close().timeout(_legacyUploadTimeout);
+    }
+
+    final streamed = await response.timeout(_legacyUploadTimeout);
+    final resp = await http.Response.fromStream(streamed)
+        .timeout(_legacyUploadTimeout);
+    _throwForResponse(resp, fallback: fallback);
+    // Only now has the Worker accepted the whole body.
+    onByteProgress?.call(bytes.length, bytes.length);
   }
 
   Map<String, dynamic> _decodeJson(http.Response resp) {
@@ -472,10 +656,24 @@ class CloudflareSyncService {
   String _friendlyHttpError(http.Response resp, {required String fallback}) {
     if (resp.statusCode == 401) return 'Session expired. Please sign in again.';
     if (resp.statusCode == 403) return 'Access denied.';
-    if (resp.statusCode == 404) return 'Not found.';
     if (resp.statusCode >= 500) {
       return 'Sync server error. Please try again later.';
     }
     return fallback;
+  }
+
+  void _throwForResponse(
+    http.Response resp, {
+    Map<String, dynamic>? data,
+    required String fallback,
+    bool keepNotFound = false,
+  }) {
+    if (resp.statusCode >= 200 && resp.statusCode < 300) return;
+    if (resp.statusCode == 404 && keepNotFound) return;
+    final decoded = data ?? _decodeJson(resp);
+    throw CloudflareSyncException(
+      _messageFrom(decoded) ??
+          _friendlyHttpError(resp, fallback: fallback),
+    );
   }
 }

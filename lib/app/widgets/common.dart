@@ -454,13 +454,6 @@ Color moodColor(int mood, ColorScheme scheme) {
   return color;
 }
 
-const _moodEmoji = <String>[
-  '😖', '😞', '😟', '😕', '😐', '🙂', '😊', '😄', '😁', '🤩',
-];
-const _energyEmoji = <String>['🪫', '😴', '😐', '⚡', '🔥'];
-/// Emoji face for a 1-10 mood score.
-String moodEmoji(int mood) => _moodEmoji[mood.clamp(1, 10) - 1];
-
 const _energyLabels = <String>['Very low', 'Low', 'Okay', 'Good', 'High'];
 
 /// Mood picker (1-10): a swipeable strip. Swipe or tap to choose; the centred
@@ -482,7 +475,6 @@ class MoodScorePicker extends StatelessWidget {
       onChanged: onChanged,
       min: 1,
       max: 10,
-      emojiFor: (v) => _moodEmoji[v.clamp(1, 10) - 1],
       labelFor: (v) => '$v/10 · ${MoodScore.label(v)}',
       semanticsFor: (v) => 'Mood $v out of 10, ${MoodScore.label(v)}',
       colorFor: (context, v) => moodColor(v, context.scheme),
@@ -510,7 +502,6 @@ class EnergyScalePicker extends StatelessWidget {
       onChanged: onChanged,
       min: 1,
       max: 5,
-      emojiFor: (v) => _energyEmoji[v.clamp(1, 5) - 1],
       labelFor: (v) => 'Energy $v/5 · ${_energyLabels[v.clamp(1, 5) - 1]}',
       semanticsFor: (v) =>
           'Energy $v out of 5, ${_energyLabels[v.clamp(1, 5) - 1]}',
@@ -531,7 +522,6 @@ class SwipeScalePicker extends StatefulWidget {
     required this.onChanged,
     required this.min,
     required this.max,
-    required this.emojiFor,
     required this.labelFor,
     required this.semanticsFor,
     required this.colorFor,
@@ -543,7 +533,6 @@ class SwipeScalePicker extends StatefulWidget {
   final ValueChanged<int?> onChanged;
   final int min;
   final int max;
-  final String Function(int value) emojiFor;
   final String Function(int value) labelFor;
   final String Function(int value) semanticsFor;
   final Color Function(BuildContext context, int value) colorFor;
@@ -669,13 +658,8 @@ class _SwipeScalePickerState extends State<SwipeScalePicker> {
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
                                   Text(
-                                    widget.emojiFor(number),
-                                    style: const TextStyle(fontSize: 30),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
                                     '$number',
-                                    style: text.labelLarge?.copyWith(
+                                    style: text.headlineSmall?.copyWith(
                                       color: color,
                                       fontWeight: FontWeight.w700,
                                       fontFeatures: tabularFigures,

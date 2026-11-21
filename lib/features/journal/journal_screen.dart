@@ -14,20 +14,6 @@ import 'journal_widgets.dart';
 
 enum _JournalFilter { active, drafts, archived }
 
-const _faces = <String>[
-  '😖',
-  '😞',
-  '😟',
-  '😕',
-  '😐',
-  '🙂',
-  '😊',
-  '😄',
-  '😁',
-  '🤩',
-];
-String _face(int mood) => _faces[mood.clamp(1, 10) - 1];
-
 int _words(String text) => RegExp(r'\S+').allMatches(text).length;
 
 bool _metricsOnly(JournalEntry e) {
@@ -527,7 +513,7 @@ class _DayCard extends StatelessWidget {
                                 [
                                   DateFormat('MMMM d').format(day),
                                   if (mood != null)
-                                    '${_face(mood)} ${MoodScore.label(mood)}',
+                                    MoodScore.label(mood),
                                 ].join(' · '),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
@@ -611,8 +597,7 @@ class _EntryRow extends StatelessWidget {
 
     final title = isCheckin
         ? [
-            if (entry.mood != null)
-              '${_face(entry.mood!)} ${MoodScore.label(entry.mood!)}'
+            if (entry.mood != null) MoodScore.label(entry.mood!)
             else
               'Check-in',
             if (entry.energy != null) 'Energy ${entry.energy}/5',

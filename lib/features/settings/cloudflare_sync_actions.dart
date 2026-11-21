@@ -18,13 +18,11 @@ import '../../integrations/cloudflare/cloud_remote_state.dart';
 import '../../integrations/cloudflare/cloudflare_sync_service.dart';
 import '../../integrations/cloudflare/sync_status.dart';
 
-const String _timeoutMessage =
-    'The sync server took too long to respond. Check your connection and try again.';
-
-String _syncError(Object error) {
-  if (error is TimeoutException) return _timeoutMessage;
-  return friendlyCloudflareSyncError(error);
-}
+String _syncError(
+  Object error, {
+  CloudSyncOperation operation = CloudSyncOperation.connection,
+}) =>
+    friendlyCloudflareSyncError(error, operation: operation);
 
 Future<void> _handleAuthFailure(BuildContext context, WidgetRef ref) async {
   if (!context.mounted) return;
@@ -92,11 +90,13 @@ Future<void> connectCloudflareSync(
       username: username,
       password: password,
     );
-  } on TimeoutException {
-    if (context.mounted) showSnack(context, _timeoutMessage);
-    return;
   } catch (error) {
-    if (context.mounted) showSnack(context, '$errorPrefix: ${_syncError(error)}');
+    if (context.mounted) {
+      showSnack(
+        context,
+        '$errorPrefix: ${_syncError(error, operation: CloudSyncOperation.account)}',
+      );
+    }
     return;
   }
   if (!context.mounted) return;
@@ -258,9 +258,12 @@ Future<void> backupToCloudflare(BuildContext context, WidgetRef ref) async {
             baseUrl: auth.workerUrl,
             token: auth.token,
           );
-    } on TimeoutException {
-      progress.fail('Cloud check timed out. Push cancelled: $_timeoutMessage');
-      if (context.mounted) showSnack(context, _timeoutMessage);
+    } on TimeoutException catch (error) {
+      final message = _syncError(error, operation: CloudSyncOperation.metadata);
+      progress.fail('Could not check cloud before push: $message');
+      if (context.mounted) {
+        showSnack(context, 'Could not check cloud: $message. Push cancelled.');
+      }
       return;
     } on CloudflareSyncException catch (e) {
       progress.fail('Could not check cloud backup before push: ${e.message}');
@@ -355,9 +358,13 @@ Future<void> backupToCloudflare(BuildContext context, WidgetRef ref) async {
       // Called only after a 2xx, so the progress value is truthful.
       onByteProgress: (sent, total) => progress.uploading(sent, total),
     );
-  } on TimeoutException {
-    progress.fail('Could not upload backup: $_timeoutMessage');
-    if (context.mounted) showSnack(context, _timeoutMessage);
+  } on TimeoutException catch (error) {
+    final message = _syncError(
+      error,
+      operation: CloudSyncOperation.backupUpload,
+    );
+    progress.fail('Could not upload backup: $message');
+    if (context.mounted) showSnack(context, message);
     return;
   } on CloudflareSyncException catch (e) {
     progress.fail('Could not upload backup: ${e.message}');
@@ -420,8 +427,13 @@ Future<void> restoreFromCloudflare(BuildContext context, WidgetRef ref) async {
       baseUrl: auth.workerUrl,
       token: auth.token,
     );
-  } on TimeoutException {
-    if (context.mounted) showSnack(context, _timeoutMessage);
+  } on TimeoutException catch (error) {
+    if (context.mounted) {
+      showSnack(
+        context,
+        _syncError(error, operation: CloudSyncOperation.metadata),
+      );
+    }
     return;
   } on CloudflareSyncException catch (e) {
     if (!context.mounted) return;
@@ -491,8 +503,13 @@ Future<void> restoreFromCloudflare(BuildContext context, WidgetRef ref) async {
       baseUrl: auth.workerUrl,
       token: auth.token,
     );
-  } on TimeoutException {
-    if (context.mounted) showSnack(context, _timeoutMessage);
+  } on TimeoutException catch (error) {
+    if (context.mounted) {
+      showSnack(
+        context,
+        _syncError(error, operation: CloudSyncOperation.download),
+      );
+    }
     return;
   } on CloudflareSyncException catch (e) {
     if (!context.mounted) return;

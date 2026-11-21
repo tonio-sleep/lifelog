@@ -200,6 +200,17 @@ class MediaStore {
     return file.readAsBytes();
   }
 
+  /// Byte length of the local ciphertext that sync would upload. Reading the
+  /// file length avoids loading every video into memory just to draw a bar.
+  Future<int?> encryptedSizeIfExists(String id, MediaFileKind kind) async {
+    final file = kind == MediaFileKind.original
+        ? _originalFile(id)
+        : _thumbFile(id);
+    if (!await file.exists()) return null;
+    final length = await file.length();
+    return length > 0 ? length : null;
+  }
+
   /// Copies the per-item ciphertext into [targetDirectory]. The copy remains
   /// encrypted and can only be opened with this archive's key.
   Future<int> exportEncryptedCopies(

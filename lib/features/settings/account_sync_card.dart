@@ -97,11 +97,7 @@ class AccountSyncCard extends ConsumerWidget {
                       ),
                     ),
                     const SizedBox(width: Insets.sm),
-                    StatusPill(
-                      label: label,
-                      tone: tone,
-                      pulse: upload.active,
-                    ),
+                    StatusPill(label: label, tone: tone),
                     if (status.signedIn)
                       PopupMenuButton<_AccountAction>(
                         tooltip: 'Account options',
@@ -434,12 +430,12 @@ class _UploadProgressBlock extends StatelessWidget {
     final palette = context.palette;
     final text = context.text;
     final uploading = progress.stage == BackupUploadStage.uploading;
-    final fraction = uploading
+    final fraction = uploading || progress.stage == BackupUploadStage.done
         ? progress.byteFraction
         : (progress.active ? progress.itemFraction : 1.0);
-    final detail = uploading && progress.bytesTotal > 0
+    final detail = progress.bytesTotal > 0
         ? '${_formatBytes(progress.bytesSent)} of '
-            '${_formatBytes(progress.bytesTotal)}'
+            '${_formatBytes(progress.bytesTotal)} confirmed'
         : progress.active && progress.total > 0
             ? '${progress.current} of ${progress.total} items'
             : '';
@@ -483,6 +479,15 @@ class _UploadProgressBlock extends StatelessWidget {
                 ),
             ],
           ),
+          if (progress.currentItem.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              progress.currentItem,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: text.labelSmall?.copyWith(color: palette.dimText),
+            ),
+          ],
           const SizedBox(height: Insets.sm),
           LinearProgressIndicator(
             value: progress.stage == BackupUploadStage.failed ? null : fraction,
@@ -492,6 +497,13 @@ class _UploadProgressBlock extends StatelessWidget {
                 ? context.scheme.error
                 : context.scheme.primary,
           ),
+          if (progress.rows.isNotEmpty) ...[
+            const SizedBox(height: Insets.md),
+            for (final row in progress.rows) ...[
+              _ByteProgressRow(row: row),
+              const SizedBox(height: Insets.sm),
+            ],
+          ],
           Theme(
             data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
             child: ExpansionTile(
@@ -528,6 +540,63 @@ class _UploadProgressBlock extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ByteProgressRow extends StatelessWidget {
+  const _ByteProgressRow({required this.row});
+
+  final CloudUploadRow row;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final text = context.text;
+    final items = row.itemsTotal > 0
+        ? '${row.itemsDone} of ${row.itemsTotal} items'
+        : '';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                row.kind.label,
+                style: text.labelSmall?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
+            if (items.isNotEmpty)
+              Text(
+                items,
+                style: text.labelSmall?.copyWith(color: palette.dimText),
+              ),
+            const SizedBox(width: Insets.sm),
+            Text(
+              '${_formatBytes(row.confirmedBytes)} / '
+              '${_formatBytes(row.totalBytes)}',
+              style: text.labelSmall?.copyWith(color: palette.mutedText),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        LinearProgressIndicator(
+          value: row.fraction,
+          minHeight: 3,
+          backgroundColor: palette.border,
+          color: row.complete ? palette.success : context.scheme.primary,
+        ),
+        if (row.detail.isNotEmpty) ...[
+          const SizedBox(height: 2),
+          Text(
+            row.detail,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: text.labelSmall?.copyWith(color: palette.dimText),
+          ),
+        ],
+      ],
     );
   }
 }

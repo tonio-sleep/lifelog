@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -23,17 +24,19 @@ void main() {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(server.close);
     final keys = <String?>[];
+    final paths = <String>[];
     final baseUrl = 'http://127.0.0.1:${server.port}';
 
     server.listen((request) async {
       keys.add(request.headers.value('x-lifelog-app-key'));
+      paths.add('${request.method} ${request.uri.path}');
       switch (request.uri.path) {
         case '/api/health':
           request.response
             ..statusCode = 200
             ..write('{"ok":true}');
         case '/api/auth/register':
-          await request.drain<void>();
+          await utf8.decoder.bind(request).join();
           request.response
             ..statusCode = 200
             ..write(
@@ -52,17 +55,38 @@ void main() {
             request.response
               ..statusCode = 200
               ..headers.contentLength = 3;
-          } else if (request.method == 'PUT') {
-            await request.drain<void>();
-            request.response
-              ..statusCode = 200
-              ..write('{"ok":true}');
           } else {
             await request.drain<void>();
             request.response
               ..statusCode = 200
               ..write('{"ok":true}');
           }
+        case '/api/uploads/begin':
+          await utf8.decoder.bind(request).join();
+          request.response
+            ..statusCode = 200
+            ..headers.contentType = ContentType.json
+            ..write(jsonEncode({
+              'ok': true,
+              'uploadId': 'upload-1',
+              'partSize': 8 * 1024 * 1024,
+              'partCount': 1,
+              'size': 3,
+            }));
+        case '/api/uploads/upload-1/parts/1':
+          await request.drain<void>();
+          request.response
+            ..statusCode = 200
+            ..headers.contentType = ContentType.json
+            ..write(
+              '{"ok":true,"confirmedBytes":3,"totalBytes":3,"complete":true}',
+            );
+        case '/api/uploads/upload-1/complete':
+          await utf8.decoder.bind(request).join();
+          request.response
+            ..statusCode = 200
+            ..headers.contentType = ContentType.json
+            ..write('{"ok":true,"size":3}');
         default:
           request.response.statusCode = 404;
       }
@@ -103,7 +127,18 @@ void main() {
       kind: CloudflareMediaKind.original,
     );
 
-    expect(keys, hasLength(7));
+    expect(paths, [
+      'GET /api/health',
+      'POST /api/auth/register',
+      'GET /api/backup/meta',
+      'GET /api/media/id/original',
+      'HEAD /api/media/id/thumb',
+      'POST /api/uploads/begin',
+      'PUT /api/uploads/upload-1/parts/1',
+      'POST /api/uploads/upload-1/complete',
+      'DELETE /api/media/id/original',
+    ]);
+    expect(keys, hasLength(9));
     expect(keys, everyElement(equals('test-app-key')));
   });
 }

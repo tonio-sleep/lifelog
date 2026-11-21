@@ -184,11 +184,13 @@ class _CloudflareRequiredAuthScreenState
           // ignore after successful sign-in
         }
       }
-    } on TimeoutException {
+    } on TimeoutException catch (error) {
       if (!mounted) return;
       setState(
-        () => _error =
-            'The sync server took too long to respond. Check your connection and try again.',
+        () => _error = friendlyCloudflareSyncError(
+          error,
+          operation: CloudSyncOperation.account,
+        ),
       );
     } on CloudflareSyncException catch (e) {
       if (!mounted) return;

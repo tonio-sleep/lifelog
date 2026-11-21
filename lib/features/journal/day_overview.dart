@@ -609,8 +609,7 @@ class JournalDayCard extends StatelessWidget {
                       Text(
                         [
                           DateFormat('MMMM d').format(day),
-                          if (mood != null)
-                            '${moodEmoji(mood)} ${MoodScore.label(mood)}',
+                          if (mood != null) MoodScore.label(mood),
                           if (stats.words > 0)
                             '${formatCompactNumber(stats.words)} words',
                         ].join(' · '),

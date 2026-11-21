@@ -5,6 +5,12 @@ const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 const APP_KEY_HEADER = "x-lifelog-app-key";
 const MEDIA_MAX_BYTES = 300 * 1024 * 1024;
 const THUMB_MAX_BYTES = 32 * 1024 * 1024;
+const BACKUP_MAX_BYTES = 512 * 1024 * 1024;
+// R2 multipart parts must be uniform and at least 5 MiB except for the last.
+// 8 MiB keeps each client request below Cloudflare's 100 MB body limit while
+// giving the app a server-confirmed progress event for every part.
+const UPLOAD_PART_SIZE = 8 * 1024 * 1024;
+const MAX_UPLOAD_PARTS = 10000;
 
 export default {
   async fetch(request, env, ctx) {
@@ -91,6 +97,33 @@ async function handle(request, env) {
     if (!auth.ok) return auth.response;
     return backupMeta(request, env, auth.user.username);
   }
+
+  // Resumable, server-confirmed uploads. Each part is a separate request so a
+  // large backup or video never has to be buffered by the Worker in one body.
+  if (path === "/api/uploads/begin" && method === "POST") {
+    const auth = await requireAuth(request, env);
+    if (!auth.ok) return auth.response;
+    return beginUpload(request, env, auth.user.username);
+  }
+  const uploadPartMatch = path.match(/^\/api\/uploads\/([A-Za-z0-9_-]+)\/parts\/(\d+)$/);
+  if (uploadPartMatch && method === "PUT") {
+    const auth = await requireAuth(request, env);
+    if (!auth.ok) return auth.response;
+    return uploadPart(request, env, auth.user.username, uploadPartMatch[1], uploadPartMatch[2]);
+  }
+  const uploadCompleteMatch = path.match(/^\/api\/uploads\/([A-Za-z0-9_-]+)\/complete$/);
+  if (uploadCompleteMatch && method === "POST") {
+    const auth = await requireAuth(request, env);
+    if (!auth.ok) return auth.response;
+    return completeUpload(request, env, auth.user.username, uploadCompleteMatch[1]);
+  }
+  const uploadAbortMatch = path.match(/^\/api\/uploads\/([A-Za-z0-9_-]+)$/);
+  if (uploadAbortMatch && method === "DELETE") {
+    const auth = await requireAuth(request, env);
+    if (!auth.ok) return auth.response;
+    return abortUpload(request, env, auth.user.username, uploadAbortMatch[1]);
+  }
+
   if (path === "/api/backup" && method === "PUT") {
     const auth = await requireAuth(request, env);
     if (!auth.ok) return auth.response;
@@ -279,11 +312,252 @@ async function backupMeta(request, env, username) {
   }, 200, request);
 }
 
+function uploadMetaKey(username, uploadId) {
+  return `uploads/${String(username || "user").replace(/[^a-z0-9._@-]/gi, "_")}/${uploadId}.json`;
+}
+
+function validUploadId(uploadId) {
+  return /^[A-Za-z0-9_-]{1,80}$/.test(String(uploadId || ""));
+}
+
+async function putUploadMeta(env, meta) {
+  await env.BACKUP_BUCKET.put(uploadMetaKey(meta.owner, meta.uploadId), JSON.stringify(meta), {
+    httpMetadata: { contentType: "application/json; charset=utf-8" },
+  });
+}
+
+async function loadUpload(request, env, username, uploadId) {
+  if (!validUploadId(uploadId)) {
+    return { ok: false, response: json({ error: "Invalid upload id" }, 400, request) };
+  }
+  let raw;
+  try {
+    const obj = await env.BACKUP_BUCKET.get(uploadMetaKey(username, uploadId));
+    raw = obj ? await obj.json() : null;
+  } catch (err) {
+    console.error("Upload state read failed", err?.stack || err);
+    return { ok: false, response: json({ error: "Could not read upload state" }, 500, request) };
+  }
+  if (!raw || raw.owner !== username || !raw.key || !raw.r2UploadId) {
+    return { ok: false, response: json({ error: "Upload not found" }, 404, request) };
+  }
+  return {
+    ok: true,
+    meta: raw,
+    resume: env.BACKUP_BUCKET.resumeMultipartUpload(raw.key, raw.r2UploadId),
+  };
+}
+
+async function beginUpload(request, env, username) {
+  if (!env?.BACKUP_BUCKET) {
+    return json({ error: "Server not configured: missing R2 bucket binding" }, 500, request);
+  }
+  const body = await readJson(request);
+  if (!body.ok) return json({ error: body.error }, 400, request);
+
+  const target = body.value?.target;
+  const size = Number(body.value?.size);
+  if (!Number.isSafeInteger(size) || size <= 0) {
+    return json({ error: "Invalid upload size" }, 400, request);
+  }
+
+  let key;
+  let limit;
+  const customMetadata = { kind: "lifelog-encrypted-upload" };
+  if (target === "backup") {
+    key = backupKey(username);
+    limit = BACKUP_MAX_BYTES;
+    customMetadata.kind = "lifelog-encrypted-backup";
+  } else if (target === "media") {
+    const id = String(body.value?.id || "");
+    const kind = String(body.value?.mediaKind || "");
+    if (!validMediaId(id) || !["original", "thumb"].includes(kind)) {
+      return json({ error: "Invalid media upload target" }, 400, request);
+    }
+    key = mediaKey(username, id, kind);
+    limit = kind === "thumb" ? THUMB_MAX_BYTES : MEDIA_MAX_BYTES;
+    customMetadata.kind = "lifelog-encrypted-media";
+    customMetadata.mediaKind = kind;
+  } else {
+    return json({ error: "Invalid upload target" }, 400, request);
+  }
+  if (size > limit) return json({ error: "Upload too large" }, 413, request);
+
+  const partCount = Math.ceil(size / UPLOAD_PART_SIZE);
+  if (partCount > MAX_UPLOAD_PARTS) {
+    return json({ error: "Upload has too many parts" }, 413, request);
+  }
+
+  const now = new Date().toISOString();
+  customMetadata.modifiedAt = now;
+  let multipart;
+  try {
+    multipart = await env.BACKUP_BUCKET.createMultipartUpload(key, {
+      httpMetadata: { contentType: "application/octet-stream" },
+      customMetadata,
+    });
+  } catch (err) {
+    console.error("R2 multipart create failed", err?.stack || err);
+    return json({ error: "Could not start upload" }, 500, request);
+  }
+
+  // The public id is app-generated and safe for URLs. R2's own uploadId can
+  // contain characters that are awkward in paths, so it stays server-side.
+  const uploadId = crypto.randomUUID();
+  const meta = {
+    uploadId,
+    r2UploadId: multipart.uploadId,
+    owner: username,
+    key,
+    target,
+    size,
+    partSize: UPLOAD_PART_SIZE,
+    partCount,
+    parts: [],
+    createdAt: now,
+    modifiedAt: now,
+  };
+  try {
+    await putUploadMeta(env, meta);
+  } catch (err) {
+    console.error("Upload state write failed", err?.stack || err);
+    try {
+      await multipart.abort();
+    } catch (_) {
+      // Best effort cleanup.
+    }
+    return json({ error: "Could not start upload" }, 500, request);
+  }
+
+  return json(
+    { ok: true, uploadId, partSize: UPLOAD_PART_SIZE, partCount, confirmedBytes: 0, size },
+    200,
+    request,
+  );
+}
+
+async function uploadPart(request, env, username, uploadId, rawPartNumber) {
+  const loaded = await loadUpload(request, env, username, uploadId);
+  if (!loaded.ok) return loaded.response;
+  const meta = loaded.meta;
+  const partNumber = Number(rawPartNumber);
+  if (!Number.isSafeInteger(partNumber) || partNumber < 1 || partNumber > meta.partCount) {
+    return json({ error: "Invalid part number" }, 400, request);
+  }
+
+  const expected =
+    partNumber === meta.partCount
+      ? meta.size - meta.partSize * (meta.partCount - 1)
+      : meta.partSize;
+  const declared = Number(request.headers.get("content-length") || "0");
+  if (declared && declared !== expected) {
+    return json({ error: "Unexpected part size" }, 400, request);
+  }
+
+  let body;
+  try {
+    body = await request.arrayBuffer();
+  } catch {
+    return json({ error: "Invalid upload part" }, 400, request);
+  }
+  if (!body || body.byteLength !== expected) {
+    return json({ error: "Unexpected part size" }, 400, request);
+  }
+
+  let uploaded;
+  try {
+    uploaded = await loaded.resume.uploadPart(partNumber, body);
+  } catch (err) {
+    console.error("R2 part upload failed", err?.stack || err);
+    return json({ error: "Could not store upload part" }, 500, request);
+  }
+
+  const parts = meta.parts.filter((part) => part.partNumber !== partNumber);
+  parts.push({ partNumber, size: expected, etag: uploaded.etag });
+  parts.sort((a, b) => a.partNumber - b.partNumber);
+  meta.parts = parts;
+  meta.modifiedAt = new Date().toISOString();
+  try {
+    await putUploadMeta(env, meta);
+  } catch (err) {
+    console.error("Upload state write failed", err?.stack || err);
+    return json({ error: "Could not record upload part" }, 500, request);
+  }
+
+  const confirmedBytes = parts.reduce((sum, part) => sum + part.size, 0);
+  return json(
+    {
+      ok: true,
+      partNumber,
+      size: expected,
+      confirmedBytes,
+      totalBytes: meta.size,
+      complete: confirmedBytes === meta.size,
+    },
+    200,
+    request,
+  );
+}
+
+async function completeUpload(request, env, username, uploadId) {
+  const loaded = await loadUpload(request, env, username, uploadId);
+  if (!loaded.ok) return loaded.response;
+  const meta = loaded.meta;
+  if (meta.parts.length !== meta.partCount) {
+    return json({ error: "Upload is incomplete" }, 409, request);
+  }
+  const total = meta.parts.reduce((sum, part) => sum + part.size, 0);
+  if (total !== meta.size) {
+    return json({ error: "Upload size does not match" }, 409, request);
+  }
+
+  let object;
+  try {
+    object = await loaded.resume.complete(
+      meta.parts.map((part) => ({ partNumber: part.partNumber, etag: part.etag })),
+    );
+  } catch (err) {
+    console.error("R2 multipart complete failed", err?.stack || err);
+    return json({ error: "Could not finish upload" }, 500, request);
+  }
+  try {
+    await env.BACKUP_BUCKET.delete(uploadMetaKey(username, uploadId));
+  } catch (_) {
+    // Upload is already committed; stale state is harmless and expires with cleanup.
+  }
+  return json(
+    {
+      ok: true,
+      size: object?.size ?? meta.size,
+      etag: object?.etag ?? null,
+      uploadedAt: new Date().toISOString(),
+    },
+    200,
+    request,
+  );
+}
+
+async function abortUpload(request, env, username, uploadId) {
+  const loaded = await loadUpload(request, env, username, uploadId);
+  if (!loaded.ok) return loaded.response;
+  try {
+    await loaded.resume.abort();
+  } catch (err) {
+    console.error("R2 multipart abort failed", err?.stack || err);
+  }
+  try {
+    await env.BACKUP_BUCKET.delete(uploadMetaKey(username, uploadId));
+  } catch (_) {
+    // Best effort cleanup.
+  }
+  return json({ ok: true }, 200, request);
+}
+
 async function uploadBackup(request, env, username) {
   if (!env?.BACKUP_BUCKET) {
     return json({ error: "Server not configured: missing R2 bucket binding" }, 500, request);
   }
-  const max = 512 * 1024 * 1024; // 512 MB safety cap for encrypted backup blobs
+  const max = BACKUP_MAX_BYTES;
   const len = Number(request.headers.get("content-length") || "0");
   if (len && len > max) return json({ error: "Backup too large" }, 413, request);
 

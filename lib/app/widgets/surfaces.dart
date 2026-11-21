@@ -94,15 +94,10 @@ class StatusPill extends StatelessWidget {
     super.key,
     required this.label,
     this.tone = StatusTone.neutral,
-    this.pulse = false,
   });
 
   final String label;
   final StatusTone tone;
-
-  /// Dot softly pulses while something is in flight. Ignored when the user
-  /// has asked for reduced motion.
-  final bool pulse;
 
   Color _color(BuildContext context) {
     final palette = context.palette;
@@ -130,7 +125,11 @@ class StatusPill extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _Dot(color: color, pulse: pulse && !context.reduceMotion),
+            Container(
+              width: 6,
+              height: 6,
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            ),
             const SizedBox(width: 6),
             Text(
               label,
@@ -141,57 +140,6 @@ class StatusPill extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _Dot extends StatefulWidget {
-  const _Dot({required this.color, required this.pulse});
-  final Color color;
-  final bool pulse;
-
-  @override
-  State<_Dot> createState() => _DotState();
-}
-
-class _DotState extends State<_Dot> with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1400),
-  );
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.pulse) _controller.repeat(reverse: true);
-  }
-
-  @override
-  void didUpdateWidget(covariant _Dot oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.pulse && !_controller.isAnimating) {
-      _controller.repeat(reverse: true);
-    } else if (!widget.pulse && _controller.isAnimating) {
-      _controller.stop();
-      _controller.value = 0;
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: Tween<double>(begin: 1, end: 0.35).animate(_controller),
-      child: Container(
-        width: 6,
-        height: 6,
-        decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
       ),
     );
   }

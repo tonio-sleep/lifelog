@@ -107,6 +107,15 @@ Archive _seededArchive() {
   );
 }
 
+/// Pumps a bounded number of frames instead of waiting for every ticker to
+/// settle. Some host platforms keep a decorative animation alive forever, and
+/// this smoke test cares about navigation and content, not animation completion.
+Future<void> _pumpFrames(WidgetTester tester, {int frames = 6}) async {
+  for (var i = 0; i < frames; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+}
+
 Future<void> _scrollToText(WidgetTester tester, String text) async {
   for (var attempt = 0; attempt < 14; attempt++) {
     if (find.text(text).evaluate().isNotEmpty ||
@@ -115,8 +124,12 @@ Future<void> _scrollToText(WidgetTester tester, String text) async {
     }
     final scrollable = find.byType(CustomScrollView);
     if (scrollable.evaluate().isEmpty) return;
-    await tester.drag(scrollable.first, const Offset(0, -360));
-    await tester.pumpAndSettle();
+    await tester.drag(
+      scrollable.first,
+      const Offset(0, -360),
+      warnIfMissed: false,
+    );
+    await _pumpFrames(tester);
   }
 }
 
@@ -139,7 +152,7 @@ Future<void> _pumpShell(WidgetTester tester, {required Archive archive}) async {
       ),
     ),
   );
-  await tester.pumpAndSettle();
+  await _pumpFrames(tester);
 }
 
 void main() {
@@ -149,7 +162,7 @@ void main() {
       await _pumpShell(tester, archive: _seededArchive());
 
       await tester.tap(find.text('Journal'));
-      await tester.pumpAndSettle();
+      await _pumpFrames(tester);
 
       expect(find.text('Seeded journal note'), findsOneWidget);
       expect(find.text('No entries yet'), findsNothing);
@@ -160,7 +173,7 @@ void main() {
             .ancestor(of: find.text('Today'), matching: find.byType(Pressable))
             .first,
       );
-      await tester.pumpAndSettle();
+      await _pumpFrames(tester);
 
       expect(find.text('Day at a glance'), findsOneWidget);
       expect(find.text('Top artist'), findsOneWidget);
@@ -174,15 +187,15 @@ void main() {
     await _pumpShell(tester, archive: _seededArchive());
 
     await tester.tap(find.text('Library'));
-    await tester.pumpAndSettle();
+    await _pumpFrames(tester);
     await tester.ensureVisible(find.text('Insights'));
-    await tester.pumpAndSettle();
+    await _pumpFrames(tester);
     await tester.tap(
       find
           .ancestor(of: find.text('Insights'), matching: find.byType(Pressable))
           .first,
     );
-    await tester.pumpAndSettle();
+    await _pumpFrames(tester);
 
     await _scrollToText(tester, 'Daily activity');
     expect(find.text('Daily activity'), findsOneWidget);
@@ -215,7 +228,7 @@ void main() {
       'Settings',
     ]) {
       await tester.tap(find.text(label));
-      await tester.pumpAndSettle();
+      await _pumpFrames(tester);
       expect(tester.takeException(), isNull, reason: '$label threw');
     }
   });

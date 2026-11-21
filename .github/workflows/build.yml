@@ -14,9 +14,21 @@ jobs:
   ios:
     name: iOS unsigned IPA
     runs-on: macos-15
+    env:
+      LIFELOG_API_KEY: ${{ secrets.LIFELOG_API_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # A missing key must fail the build instead of producing an app that
+      # cannot pass the Worker's app-key gate.
+      - name: Verify app key
+        if: github.event_name != 'pull_request'
+        run: |
+          if [ -z "$LIFELOG_API_KEY" ]; then
+            echo "::error::LIFELOG_API_KEY repository secret is not set"
+            exit 1
+          fi
 
       # device_info_plus 13.3.x calls NSProcessInfo selectors introduced in the
       # iOS 26.1 SDK, so the runner's default Xcode 16.4 cannot compile it.
@@ -39,16 +51,20 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
+      - name: Worker app-key tests
+        working-directory: cloudflare-sync
+        run: npm test
+
       - name: Analyze
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Test
-        run: flutter test
+        run: flutter test --dart-define=LIFELOG_API_KEY="$LIFELOG_API_KEY"
 
       - name: Build iOS (release, no codesign)
         run: |
           set -o pipefail
-          flutter build ios --release --no-codesign -v 2>&1 | tee ios-build.log
+          flutter build ios --release --no-codesign --dart-define=LIFELOG_API_KEY="$LIFELOG_API_KEY" -v 2>&1 | tee ios-build.log
 
       - name: Package unsigned IPA
         run: |

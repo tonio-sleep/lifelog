@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
@@ -22,6 +22,20 @@ class MediaTooLargeException implements Exception {
   String toString() => 'This file is too large to attach.';
 }
 
+enum MediaFileKind { original, thumb }
+
+/// Online source for encrypted media envelopes. Lifelog cloud storage keeps
+/// the ciphertext; the local vault is only a cache for offline/on-demand reads.
+abstract class MediaRemoteSource {
+  Future<Uint8List> readEncrypted(String id, MediaFileKind kind);
+  Future<void> writeEncrypted(
+    String id,
+    MediaFileKind kind,
+    Uint8List envelope,
+  );
+  Future<void> remove(String id, MediaFileKind kind);
+}
+
 class MediaStore {
   MediaStore({required this.directory, required this.crypto});
 
@@ -33,10 +47,52 @@ class MediaStore {
   final CryptoService crypto;
   final Map<String, Uint8List> _cache = {};
 
+  /// Installed by cloud sync when an account is connected. Never stores keys;
+  /// it only moves ciphertext already encrypted with this archive's key.
+  MediaRemoteSource? remoteSource;
+
   Future<void> _ensureDirectory() => directory.create(recursive: true);
 
   File _originalFile(String id) => File(p.join(directory.path, '$id.bin'));
   File _thumbFile(String id) => File(p.join(directory.path, '$id.thumb.bin'));
+
+  Future<Uint8List> _readEnvelope(String id, MediaFileKind kind) async {
+    final file = kind == MediaFileKind.original
+        ? _originalFile(id)
+        : _thumbFile(id);
+    if (await file.exists()) return file.readAsBytes();
+    final remote = remoteSource;
+    if (remote == null) throw MediaUnavailableException(id);
+    final envelope = await remote.readEncrypted(id, kind);
+    if (envelope.isEmpty) throw MediaUnavailableException(id);
+    await _ensureDirectory();
+    await file.writeAsBytes(envelope, flush: true);
+    return envelope;
+  }
+
+  Future<void> _uploadEnvelope(
+    String id,
+    MediaFileKind kind,
+    Uint8List envelope,
+  ) async {
+    final remote = remoteSource;
+    if (remote == null) return;
+    try {
+      await remote.writeEncrypted(id, kind, envelope);
+    } catch (_) {
+      // The encrypted local cache remains valid; sync retries this object.
+    }
+  }
+
+  Future<void> _removeRemote(String id, MediaFileKind kind) async {
+    final remote = remoteSource;
+    if (remote == null) return;
+    try {
+      await remote.remove(id, kind);
+    } catch (_) {
+      // Best effort: the archive no longer references the object.
+    }
+  }
 
   Future<MediaItem> importBytes({
     required Uint8List bytes,
@@ -54,6 +110,7 @@ class MediaStore {
 
     final envelope = await crypto.encryptBytes(bytes, aad: _aad);
     await _originalFile(id).writeAsBytes(envelope, flush: true);
+    await _uploadEnvelope(id, MediaFileKind.original, envelope);
 
     int? width;
     int? height;
@@ -72,12 +129,12 @@ class MediaStore {
             maintainAspect: true,
             interpolation: img.Interpolation.average,
           );
-          final jpeg = Uint8List.fromList(img.encodeJpg(thumbnail, quality: 80));
-          final thumbEnvelope = await crypto.encryptBytes(
-            jpeg,
-            aad: _thumbAad,
+          final jpeg = Uint8List.fromList(
+            img.encodeJpg(thumbnail, quality: 80),
           );
+          final thumbEnvelope = await crypto.encryptBytes(jpeg, aad: _thumbAad);
           await _thumbFile(id).writeAsBytes(thumbEnvelope, flush: true);
+          await _uploadEnvelope(id, MediaFileKind.thumb, thumbEnvelope);
           hasThumbnail = true;
         }
       } catch (_) {
@@ -105,9 +162,7 @@ class MediaStore {
     final cacheKey = 'full:${item.id}';
     final cached = _cache[cacheKey];
     if (cached != null) return cached;
-    final file = _originalFile(item.id);
-    if (!await file.exists()) throw MediaUnavailableException(item.id);
-    final envelope = await file.readAsBytes();
+    final envelope = await _readEnvelope(item.id, MediaFileKind.original);
     final clear = await crypto.decryptBytes(envelope, aad: _aad);
     _remember(cacheKey, clear);
     return clear;
@@ -118,17 +173,30 @@ class MediaStore {
     final cacheKey = 'thumb:${item.id}';
     final cached = _cache[cacheKey];
     if (cached != null) return cached;
-    final file = _thumbFile(item.id);
-    if (!await file.exists()) return readOriginal(item);
-    final envelope = await file.readAsBytes();
-    final clear = await crypto.decryptBytes(envelope, aad: _thumbAad);
-    _remember(cacheKey, clear);
-    return clear;
+    try {
+      final envelope = await _readEnvelope(item.id, MediaFileKind.thumb);
+      final clear = await crypto.decryptBytes(envelope, aad: _thumbAad);
+      _remember(cacheKey, clear);
+      return clear;
+    } catch (_) {
+      return readOriginal(item);
+    }
   }
 
-  Future<Uint8List> readEncryptedOriginal(MediaItem item) async {
+  Future<Uint8List> readEncryptedOriginal(MediaItem item) =>
+      _readEnvelope(item.id, MediaFileKind.original);
+
+  /// Local-cache-only read used by sync. Returns null when this device has no
+  /// cached copy; the cloud copy, if any, is left untouched.
+  Future<Uint8List?> readEncryptedOriginalIfExists(MediaItem item) async {
     final file = _originalFile(item.id);
-    if (!await file.exists()) throw MediaUnavailableException(item.id);
+    if (!await file.exists()) return null;
+    return file.readAsBytes();
+  }
+
+  Future<Uint8List?> readEncryptedThumbnailIfExists(MediaItem item) async {
+    final file = _thumbFile(item.id);
+    if (!await file.exists()) return null;
     return file.readAsBytes();
   }
 
@@ -153,18 +221,19 @@ class MediaStore {
     return copied;
   }
 
-
   Future<Uint8List?> readThumbnailBytesIfExists(MediaItem item) async {
     if (!item.hasThumbnail) return null;
     final cacheKey = 'thumb:${item.id}';
     final cached = _cache[cacheKey];
     if (cached != null) return cached;
-    final file = _thumbFile(item.id);
-    if (!await file.exists()) return null;
-    final envelope = await file.readAsBytes();
-    final clear = await crypto.decryptBytes(envelope, aad: _thumbAad);
-    _remember(cacheKey, clear);
-    return clear;
+    try {
+      final envelope = await _readEnvelope(item.id, MediaFileKind.thumb);
+      final clear = await crypto.decryptBytes(envelope, aad: _thumbAad);
+      _remember(cacheKey, clear);
+      return clear;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Writes clear media bytes into the encrypted vault (used during backup restore).
@@ -181,12 +250,16 @@ class MediaStore {
     _cache.remove('thumb:${item.id}');
     final thumbFile = _thumbFile(item.id);
     if (thumbnailBytes != null && thumbnailBytes.isNotEmpty) {
-      final thumbEnvelope = await crypto.encryptBytes(thumbnailBytes, aad: _thumbAad);
+      final thumbEnvelope = await crypto.encryptBytes(
+        thumbnailBytes,
+        aad: _thumbAad,
+      );
       await thumbFile.writeAsBytes(thumbEnvelope, flush: true);
     } else if (await thumbFile.exists()) {
       await thumbFile.delete();
     }
   }
+
   Future<void> delete(MediaItem item) async {
     _cache.remove('full:${item.id}');
     _cache.remove('thumb:${item.id}');
@@ -194,6 +267,8 @@ class MediaStore {
     if (await original.exists()) await original.delete();
     final thumb = _thumbFile(item.id);
     if (await thumb.exists()) await thumb.delete();
+    await _removeRemote(item.id, MediaFileKind.original);
+    await _removeRemote(item.id, MediaFileKind.thumb);
   }
 
   Future<void> deleteAll() async {
@@ -240,4 +315,3 @@ String mimeTypeForFileName(String fileName) {
     _ => 'application/octet-stream',
   };
 }
-

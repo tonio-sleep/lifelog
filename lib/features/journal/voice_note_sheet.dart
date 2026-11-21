@@ -30,17 +30,38 @@ class VoiceNoteResult {
 /// The sheet is deliberately not dismissible by backdrop or drag. Closing it
 /// while recording or transcribing always goes through a guard so a stray tap
 /// cannot throw away the audio or words the recognizer already captured.
-Future<VoiceNoteResult?> showVoiceNoteSheet(BuildContext context) {
-  return showLifelogSheet<VoiceNoteResult>(
-    context,
-    isDismissible: false,
-    enableDrag: false,
-    builder: (_) => const _VoiceNoteSheet(),
-  );
+Future<VoiceNoteResult?> showVoiceNoteSheet(BuildContext context) async {
+  final sheetKey = GlobalKey<_VoiceNoteSheetState>();
+  final footerRevision = ValueNotifier<int>(0);
+  try {
+    return await showLifelogSheet<VoiceNoteResult>(
+      context,
+      isDismissible: false,
+      enableDrag: false,
+      builder: (_) =>
+          _VoiceNoteSheet(key: sheetKey, footerRevision: footerRevision),
+      footerBuilder: (sheetContext) => ValueListenableBuilder<int>(
+        valueListenable: footerRevision,
+        builder: (_, _, _) {
+          final state = sheetKey.currentState;
+          if (state == null) {
+            // The body mounts on this frame; its initState bumps the notifier
+            // so the real controls replace this placeholder immediately.
+            return const SizedBox(height: 48);
+          }
+          return state.buildFooter(sheetContext);
+        },
+      ),
+    );
+  } finally {
+    footerRevision.dispose();
+  }
 }
 
 class _VoiceNoteSheet extends StatefulWidget {
-  const _VoiceNoteSheet();
+  const _VoiceNoteSheet({super.key, required this.footerRevision});
+
+  final ValueNotifier<int> footerRevision;
 
   @override
   State<_VoiceNoteSheet> createState() => _VoiceNoteSheetState();
@@ -74,7 +95,16 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // The footer is built by the surrounding sheet, so tell it to render the
+    // real controls once this state exists.
+    widget.footerRevision.value++;
     unawaited(_init());
+  }
+
+  @override
+  void setState(VoidCallback fn) {
+    super.setState(fn);
+    if (mounted) widget.footerRevision.value++;
   }
 
   Future<void> _init() async {
@@ -91,8 +121,7 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
       if (!mounted) return;
       if (!micOk) {
         setState(() {
-          _error =
-              'Microphone permission is needed to record a voice note. You can still type your entry.';
+          _error = 'Microphone permission is needed to record a voice note. You can still type your entry.';
           _status = 'Microphone permission not granted';
           _initializing = false;
         });
@@ -109,11 +138,9 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
       _languages = availability.languages;
 
       if (!_transcriberAvailable) {
-        _notice =
-            'Speech recognition is not authorized. Audio will still be recorded and saved.';
+        _notice = 'Speech recognition is not authorized. Audio will still be recorded and saved.';
       } else if (!_onDeviceAvailable) {
-        _notice =
-            'On-device transcription is not available for this language. Audio will still be recorded and saved.';
+        _notice = 'On-device transcription is not available for this language. Audio will still be recorded and saved.';
       }
 
       setState(() {
@@ -142,8 +169,7 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
       _wakeLockEnabled = false;
       if (mounted) {
         setState(() {
-          _notice =
-              'Could not keep the screen awake. Your recording may be interrupted if the screen turns off.';
+          _notice = 'Could not keep the screen awake. Your recording may be interrupted if the screen turns off.';
         });
       }
     }
@@ -310,9 +336,8 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
 
   Future<void> _reportAndHandOff(String message) async {
     if (!mounted) return;
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.maybeOf(context)
+        ?.showSnackBar(SnackBar(content: Text(message)));
     await _handOff();
   }
 
@@ -393,8 +418,8 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
     final isRecording = _session.isRecording;
     final saveLabel = _session.canHandOff
         ? (_session.phase == VoiceNotePhase.failed
-            ? 'Save audio only'
-            : 'Save audio + transcript')
+              ? 'Save audio only'
+              : 'Save audio + transcript')
         : 'Save & transcribe';
     final choice = await showDialog<String>(
       context: context,
@@ -566,7 +591,6 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
     final palette = context.palette;
     final text = context.text;
     final transcript = _session.transcript;
-    final busy = _session.isBusy || _handingOff;
 
     return PopScope<bool>(
       canPop: !_hasWork && !_handingOff,
@@ -579,8 +603,7 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
         children: [
           const SheetTitle(
             title: 'Voice note',
-            subtitle:
-                'Record audio, then transcribe the finished file on this device. Both can be saved to this entry.',
+            subtitle: 'Record audio, then transcribe the finished file on this device. Both can be saved to this entry.',
           ),
           QuietCard(
             padding: const EdgeInsets.all(Insets.md),
@@ -594,8 +617,8 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
                       _session.isRecording
                           ? Icons.mic_rounded
                           : (_session.isTranscribing
-                              ? Icons.graphic_eq_rounded
-                              : Icons.mic_none_rounded),
+                                ? Icons.graphic_eq_rounded
+                                : Icons.mic_none_rounded),
                       color: _session.isRecording
                           ? context.scheme.error
                           : palette.mutedText,
@@ -621,8 +644,7 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
                 if (_session.isTranscribing) ...[
                   const SizedBox(height: Insets.sm),
                   LinearProgressIndicator(
-                    value:
-                        _session.progress <= 0 ? null : _session.progress,
+                    value: _session.progress <= 0 ? null : _session.progress,
                     minHeight: 4,
                   ),
                 ],
@@ -630,7 +652,8 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
                   Align(
                     alignment: Alignment.centerLeft,
                     child: TextButton.icon(
-                      onPressed: (_initializing ||
+                      onPressed:
+                          (_initializing ||
                               _session.isBusy ||
                               _audioPath != null)
                           ? null
@@ -660,10 +683,10 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
             child: Text(
               transcript.isEmpty
                   ? (_session.isTranscribing
-                      ? 'Transcribing the finished recording...'
-                      : (_session.isRecording
-                          ? 'Words will appear here after recording stops.'
-                          : 'Your transcribed text will appear here.'))
+                        ? 'Transcribing the finished recording...'
+                        : (_session.isRecording
+                              ? 'Words will appear here after recording stops.'
+                              : 'Your transcribed text will appear here.'))
                   : transcript,
               style: text.bodyMedium?.copyWith(
                 color: transcript.isEmpty ? palette.dimText : null,
@@ -685,41 +708,45 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
               style: text.bodySmall?.copyWith(color: palette.mutedText),
             ),
           ],
-          const SizedBox(height: Insets.md),
           if (_initializing)
             const Center(
               child: Padding(
                 padding: EdgeInsets.all(Insets.md),
                 child: CircularProgressIndicator(),
               ),
-            )
-          else
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: _handingOff ? null : _requestClose,
-                    child: const Text('Cancel'),
-                  ),
-                ),
-                const SizedBox(width: Insets.sm),
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: busy ? null : _primaryAction,
-                    icon: Icon(
-                      _session.isRecording
-                          ? Icons.stop_rounded
-                          : (_session.isTranscribing
-                              ? Icons.hourglass_top_rounded
-                              : Icons.mic_rounded),
-                    ),
-                    label: Text(_primaryLabel()),
-                  ),
-                ),
-              ],
             ),
         ],
       ),
+    );
+  }
+
+  /// Rendered outside the scrollable body by [showLifelogSheet], above the
+  /// keyboard and the app navigation bar.
+  Widget buildFooter(BuildContext context) {
+    final busy = _session.isBusy || _handingOff;
+    return Row(
+      children: [
+        Expanded(
+          child: OutlinedButton(
+            onPressed: _handingOff ? null : _requestClose,
+            child: const Text('Cancel'),
+          ),
+        ),
+        const SizedBox(width: Insets.sm),
+        Expanded(
+          child: FilledButton.icon(
+            onPressed: busy || _initializing ? null : _primaryAction,
+            icon: Icon(
+              _session.isRecording
+                  ? Icons.stop_rounded
+                  : (_session.isTranscribing
+                        ? Icons.hourglass_top_rounded
+                        : Icons.mic_rounded),
+            ),
+            label: Text(_primaryLabel()),
+          ),
+        ),
+      ],
     );
   }
 

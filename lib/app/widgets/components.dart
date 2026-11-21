@@ -49,7 +49,9 @@ class HeaderButton extends StatelessWidget {
             height: 44,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: filled ? primary.withValues(alpha: 0.12) : Colors.transparent,
+              color: filled
+                  ? primary.withValues(alpha: 0.12)
+                  : Colors.transparent,
               shape: BoxShape.circle,
             ),
             child: Icon(icon, size: 22, color: fg),
@@ -105,7 +107,8 @@ class ScreenFrame extends StatelessWidget {
         final side = math.max(base, (constraints.maxWidth - maxWidth) / 2);
         // The root tab bar is translucent and drawn under the scroll view.
         final tabBarSpace = pushed ? 0.0 : 49.0;
-        final bottom = Insets.xl + tabBarSpace + MediaQuery.paddingOf(context).bottom;
+        final bottom =
+            Insets.xl + tabBarSpace + MediaQuery.paddingOf(context).bottom;
         final scroll = CustomScrollView(
           physics: onRefresh != null
               ? const AlwaysScrollableScrollPhysics()
@@ -182,7 +185,11 @@ class _LargeTitleDelegate extends SliverPersistentHeaderDelegate {
   double get maxExtent => _bar + (subtitle == null ? 52 : 72);
 
   @override
-  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
     final range = maxExtent - minExtent;
     final t = (shrinkOffset / range).clamp(0.0, 1.0);
     final collapsed = t > 0.92;
@@ -417,7 +424,12 @@ class ListGroup extends StatelessWidget {
           ),
           if (footer != null)
             Padding(
-              padding: const EdgeInsets.fromLTRB(Insets.xs, Insets.sm, Insets.xs, 0),
+              padding: const EdgeInsets.fromLTRB(
+                Insets.xs,
+                Insets.sm,
+                Insets.xs,
+                0,
+              ),
               child: Text(
                 footer!,
                 style: context.text.bodySmall?.copyWith(color: palette.dimText),
@@ -497,7 +509,11 @@ class ListRow extends StatelessWidget {
               ),
               ?trailing,
               if (chevron)
-                Icon(Icons.chevron_right_rounded, size: 20, color: palette.dimText),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 20,
+                  color: palette.dimText,
+                ),
             ],
           ),
         ),
@@ -549,8 +565,12 @@ class Artwork extends ConsumerWidget {
     final dark = context.palette.isDark;
     final hue = (_fnv(seed.isEmpty ? 'lifelog' : seed) % 360).toDouble();
     final a = HSLColor.fromAHSL(1, hue, 0.5, dark ? 0.30 : 0.60).toColor();
-    final b = HSLColor.fromAHSL(1, (hue + 48) % 360, 0.55, dark ? 0.20 : 0.48)
-        .toColor();
+    final b = HSLColor.fromAHSL(
+      1,
+      (hue + 48) % 360,
+      0.55,
+      dark ? 0.20 : 0.48,
+    ).toColor();
     final fallback = DecoratedBox(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -671,7 +691,9 @@ class FilterRow<T> extends StatelessWidget {
                     labelFor(value),
                     style: context.text.labelMedium?.copyWith(
                       color: isSelected ? accent : palette.mutedText,
-                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                      fontWeight: isSelected
+                          ? FontWeight.w600
+                          : FontWeight.w500,
                     ),
                   ),
                 ],
@@ -755,12 +777,14 @@ class SegmentedPills<T> extends StatelessWidget {
                             child: Center(
                               child: AnimatedDefaultTextStyle(
                                 duration: Motion.fast,
-                                style: (context.text.labelLarge ?? const TextStyle())
-                                    .copyWith(
-                                      color: value == selected
-                                          ? context.scheme.onSurface
-                                          : palette.mutedText,
-                                    ),
+                                style:
+                                    (context.text.labelLarge ??
+                                            const TextStyle())
+                                        .copyWith(
+                                          color: value == selected
+                                              ? context.scheme.onSurface
+                                              : palette.mutedText,
+                                        ),
                                 child: Text(labelFor(value)),
                               ),
                             ),
@@ -778,14 +802,19 @@ class SegmentedPills<T> extends StatelessWidget {
   }
 }
 
+/// Builds controls that stay visible below a sheet's scrollable body.
+typedef LifelogSheetFooterBuilder = Widget Function(BuildContext context);
+
 /// Opens a bottom sheet that scrolls, avoids the keyboard and caps its width
-/// on desktop.
+/// on desktop. Sheets use the root navigator by default so an app navigation
+/// bar or a nested tab navigator can never paint over the controls.
 Future<T?> showLifelogSheet<T>(
   BuildContext context, {
   required WidgetBuilder builder,
+  LifelogSheetFooterBuilder? footerBuilder,
   bool isDismissible = true,
   bool enableDrag = true,
-  bool useRootNavigator = false,
+  bool useRootNavigator = true,
 }) {
   return showModalBottomSheet<T>(
     context: context,
@@ -798,36 +827,63 @@ Future<T?> showLifelogSheet<T>(
     builder: (sheetContext) {
       final keyboardHeight = MediaQuery.viewInsetsOf(sheetContext).bottom;
       final keyboardOpen = keyboardHeight > 0;
-      return GestureDetector(
-        // Tapping anywhere that is not a field lowers the keyboard without
-        // dismissing the sheet, like a native iOS keyboard.
-        behavior: HitTestBehavior.translucent,
-        onTap: () => FocusScope.of(sheetContext).unfocus(),
-        child: Padding(
-          padding: EdgeInsets.only(bottom: keyboardHeight),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                child: SingleChildScrollView(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                      Insets.page,
-                      0,
-                      Insets.page,
-                      Insets.xl,
+      final availableHeight =
+          MediaQuery.sizeOf(sheetContext).height - keyboardHeight - 8;
+      return ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: availableHeight > 0 ? availableHeight : 0,
+        ),
+        child: GestureDetector(
+          // Tapping anywhere that is not a field lowers the keyboard without
+          // dismissing the sheet, like a native iOS keyboard.
+          behavior: HitTestBehavior.translucent,
+          onTap: () => FocusScope.of(sheetContext).unfocus(),
+          child: Padding(
+            padding: EdgeInsets.only(bottom: keyboardHeight),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Padding(
+                      padding: EdgeInsets.fromLTRB(
+                        Insets.page,
+                        0,
+                        Insets.page,
+                        footerBuilder == null ? Insets.xl : Insets.md,
+                      ),
+                      child: builder(sheetContext),
                     ),
-                    child: builder(sheetContext),
                   ),
                 ),
-              ),
-              // Multiline fields show a newline key instead of "Done" on iOS,
-              // so give every sheet an explicit accessory bar with Done.
-              if (keyboardOpen)
-                KeyboardDoneBar(
-                  onDone: () => FocusScope.of(sheetContext).unfocus(),
-                ),
-            ],
+                if (footerBuilder != null)
+                  Container(
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: context.scheme.surface,
+                      border: Border(
+                        top: BorderSide(color: context.scheme.outlineVariant),
+                      ),
+                    ),
+                    padding: const EdgeInsets.fromLTRB(
+                      Insets.page,
+                      Insets.sm,
+                      Insets.page,
+                      Insets.sm,
+                    ),
+                    child: SafeArea(
+                      top: false,
+                      child: footerBuilder(sheetContext),
+                    ),
+                  ),
+                // Multiline fields show a newline key instead of "Done" on iOS,
+                // so give every sheet an explicit accessory bar with Done.
+                if (keyboardOpen)
+                  KeyboardDoneBar(
+                    onDone: () => FocusScope.of(sheetContext).unfocus(),
+                  ),
+              ],
+            ),
           ),
         ),
       );
@@ -854,9 +910,7 @@ class KeyboardDoneBar extends StatelessWidget {
         border: Border(top: BorderSide(color: palette.border, width: 1)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(
-              alpha: palette.isDark ? 0.28 : 0.08,
-            ),
+            color: Colors.black.withValues(alpha: palette.isDark ? 0.28 : 0.08),
             blurRadius: 12,
             offset: const Offset(0, -4),
           ),
@@ -878,7 +932,8 @@ class KeyboardDoneBar extends StatelessWidget {
                     minimumSize: const Size(64, 44),
                     tapTargetSize: MaterialTapTargetSize.padded,
                   ),
-                  onPressed: onDone ??
+                  onPressed:
+                      onDone ??
                       () => FocusManager.instance.primaryFocus?.unfocus(),
                   child: Text(
                     'Done',
@@ -898,7 +953,12 @@ class KeyboardDoneBar extends StatelessWidget {
 }
 
 class SheetTitle extends StatelessWidget {
-  const SheetTitle({super.key, required this.title, this.subtitle, this.leading});
+  const SheetTitle({
+    super.key,
+    required this.title,
+    this.subtitle,
+    this.leading,
+  });
 
   final String title;
   final String? subtitle;

@@ -7,6 +7,7 @@ Cloudflare Worker + R2 backend for Lifelog cloud login and encrypted backup sync
 - **Client-side encryption:** the Lifelog app encrypts backups with a user passphrase (Argon2id + AES-256-GCM) before upload. The Worker and R2 store only encrypted backup blobs.
 - **Server-side secrets only:** R2 is accessed via a Worker binding. Do **not** put Cloudflare API tokens or R2 S3 keys in the app or repository.
 - **Authentication:** account password is hashed with PBKDF2-SHA256 (salted, high iteration count) and stored in R2 as `auth/user.json`. Login returns an HMAC-signed session token (Bearer token) with expiry; tokens are validated by the Worker using `TOKEN_SECRET`.
+- **App key:** every non-`OPTIONS` request must send `X-Lifelog-App-Key`. The Worker compares it to the `APP_KEY` secret before any route logic. This is a gate/obfuscation only: a released IPA can be reverse engineered, so it does not replace account sessions or client-side encryption. Rotate `APP_KEY` and rebuild the app together.
 - **Transport:** use HTTPS Worker URLs only.
 - **Operational security:** rotate/revoke any credentials that were exposed (chat logs, screenshots, commits, etc.). Use strong unique passwords for the app sync account and backup passphrase.
 
@@ -15,7 +16,8 @@ Cloudflare Worker + R2 backend for Lifelog cloud login and encrypted backup sync
 ## What it stores in R2
 
 - `auth/user.json` – single-user account record (username, password salt/hash metadata, token version). No plaintext password.
-- `backups/<username>/latest.lifelog` – latest client-side encrypted backup blob.
+- `backups/<username>/latest.lifelog` – latest client-side encrypted archive blob (cloud-primary snapshots omit embedded media).
+- `media/<username>/<id>/original.bin` and `media/<username>/<id>/thumb.bin` – client-side encrypted media objects fetched on demand and cached locally by the app.
 
 ## Prerequisites
 
@@ -39,10 +41,12 @@ Cloudflare Worker + R2 backend for Lifelog cloud login and encrypted backup sync
    ```bash
    npx wrangler r2 bucket create lifelog-backups
    ```
-5. Set the token-signing secret (use a long random value, keep it private):
+5. Set the secrets (use long random values, keep them private):
    ```bash
    npx wrangler secret put TOKEN_SECRET
+   npx wrangler secret put APP_KEY
    ```
+   Use the same `APP_KEY` value as the Flutter build's `LIFELOG_API_KEY` dart-define.
 6. Deploy:
    ```bash
    npx wrangler deploy
@@ -59,13 +63,19 @@ For local dev you still need an R2 bucket/binding and `TOKEN_SECRET` configured 
 
 ## API (used by the app)
 
+All routes require the `X-Lifelog-App-Key` header. Data routes also require `Authorization: Bearer <token>`.
+
 - `GET /api/health`
 - `POST /api/auth/register` `{ username, password }` (first account only; single-user)
 - `POST /api/auth/login` `{ username, password }` -> `{ token, ... }`
-- `GET /api/auth/me` (Bearer token)
-- `GET /api/backup/meta` (Bearer token)
-- `PUT /api/backup` (Bearer token, `application/octet-stream` encrypted backup)
-- `GET /api/backup` (Bearer token, returns encrypted backup bytes)
+- `GET /api/auth/me`
+- `GET /api/backup/meta`
+- `PUT /api/backup` (`application/octet-stream` encrypted archive)
+- `GET /api/backup` (returns encrypted archive bytes)
+- `GET|HEAD|PUT|DELETE /api/media/<id>/original` (encrypted original)
+- `GET|HEAD|PUT|DELETE /api/media/<id>/thumb` (encrypted thumbnail)
+
+Run `npm test` for the app-key gate and route contract checks.
 
 ## Notes
 

@@ -7,10 +7,13 @@ compatibility_date = "2026-03-01"
 binding = "BACKUP_BUCKET"
 bucket_name = "lifelog-backups"
 
-# Secrets (set with `wrangler secret put TOKEN_SECRET`):
+# Secrets (set with `wrangler secret put <NAME>`):
 # - TOKEN_SECRET: long random secret used to sign session tokens (HMAC-SHA256).
+# - APP_KEY: compiled into the app and required on every non-OPTIONS endpoint.
+#   It is a rotatable gate, not a device identity: a released IPA can be
+#   reverse engineered, so account sessions remain required for data routes.
 #
 # Security notes:
 # - Never commit secrets or account credentials.
-# - Backups stored in R2 are client-side encrypted by the app before upload.
+# - Backups and media stored in R2 are client-side encrypted by the app.
 # - Use HTTPS endpoints only (Cloudflare provides TLS).

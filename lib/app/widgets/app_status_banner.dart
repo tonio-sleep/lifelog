@@ -21,6 +21,7 @@ class _AppStatusBannerState extends ConsumerState<AppStatusBanner> {
   Widget build(BuildContext context) {
     final services = ref.watch(appServicesProvider);
     final saveStatus = ref.watch(archiveSaveStatusProvider);
+    final cloudSync = ref.watch(cloudAutoSyncProvider);
     final palette = LifelogPalette.of(context);
     final scheme = Theme.of(context).colorScheme;
 
@@ -33,13 +34,18 @@ class _AppStatusBannerState extends ConsumerState<AppStatusBanner> {
           text: 'Changes are not saved to disk: ${saveStatus.error}',
           color: scheme.error,
         ),
+      if (cloudSync.phase == CloudAutoSyncPhase.failed &&
+          cloudSync.error != null &&
+          cloudSync.error!.trim().isNotEmpty &&
+          !_dismissed.contains('cloud:${cloudSync.error}'))
+        (
+          key: 'cloud:${cloudSync.error}',
+          text: 'Cloud sync has not saved yet: ${cloudSync.error}',
+          color: scheme.error,
+        ),
       for (final warning in services.startupWarnings)
         if (warning.trim().isNotEmpty && !_dismissed.contains(warning))
-          (
-            key: warning,
-            text: warning,
-            color: Colors.amber.shade800,
-          ),
+          (key: warning, text: warning, color: Colors.amber.shade800),
     ];
 
     if (messages.isEmpty) return const SizedBox.shrink();
@@ -71,9 +77,8 @@ class _AppStatusBannerState extends ConsumerState<AppStatusBanner> {
                 Expanded(
                   child: Text(
                     message.text,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: palette.mutedText,
-                    ),
+                    style: Theme.of(context).textTheme.bodySmall
+                        ?.copyWith(color: palette.mutedText),
                   ),
                 ),
                 IconButton(

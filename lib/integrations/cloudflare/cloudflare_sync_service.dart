@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -9,6 +9,11 @@ import 'package:http/http.dart' as http;
 typedef UploadByteProgress = void Function(int sent, int total);
 
 const Duration _syncTimeout = Duration(seconds: 30);
+
+/// Compiled into every build with `--dart-define=LIFELOG_API_KEY=...`.
+/// An empty value makes the client fail closed instead of sending a request
+/// the Worker will reject.
+const String lifelogCompiledAppKey = String.fromEnvironment('LIFELOG_API_KEY');
 
 /// The Worker sends `expiresIn`; older builds of this app stored
 /// `expiresInSeconds`. Both may arrive as a number or a numeric string.
@@ -63,6 +68,14 @@ class CloudflareBackupMeta {
   final String? etag;
 }
 
+enum CloudflareMediaKind {
+  original('original'),
+  thumb('thumb');
+
+  const CloudflareMediaKind(this.pathSegment);
+  final String pathSegment;
+}
+
 class CloudflareSession {
   CloudflareSession({
     required this.token,
@@ -76,11 +89,11 @@ class CloudflareSession {
   final DateTime? obtainedAt;
 
   Map<String, dynamic> toJson() => {
-        'token': token,
-        'username': username,
-        'expiresInSeconds': expiresInSeconds,
-        'obtainedAt': (obtainedAt ?? DateTime.now()).toIso8601String(),
-      };
+    'token': token,
+    'username': username,
+    'expiresInSeconds': expiresInSeconds,
+    'obtainedAt': (obtainedAt ?? DateTime.now()).toIso8601String(),
+  };
 
   factory CloudflareSession.fromJson(Map<String, dynamic> json) {
     return CloudflareSession(
@@ -95,8 +108,11 @@ class CloudflareSession {
 /// Client for the Lifelog Cloudflare Worker sync API.
 /// The Worker stores only client-side encrypted backup blobs and auth metadata.
 class CloudflareSyncService {
-  CloudflareSyncService({http.Client? httpClient}) : _http = httpClient ?? http.Client();
+  CloudflareSyncService({http.Client? httpClient, String? appKey})
+    : _http = httpClient ?? http.Client(),
+      _appKey = appKey ?? lifelogCompiledAppKey;
   final http.Client _http;
+  final String _appKey;
 
   static String normalizeBaseUrl(String raw) {
     var v = raw.trim();
@@ -131,19 +147,27 @@ class CloudflareSyncService {
     return Uri.parse('$base$path');
   }
 
+  Map<String, String> _headers({Map<String, String>? extra}) {
+    if (_appKey.trim().isEmpty) {
+      throw CloudflareSyncException(
+        'This build is missing its app key. Reinstall the app from the current build.',
+      );
+    }
+    return {'X-Lifelog-App-Key': _appKey, ...?extra};
+  }
+
   Map<String, String> _authHeaders(String token, {Map<String, String>? extra}) {
-    return {
-      'Authorization': 'Bearer $token',
-      ...?extra,
-    };
+    return _headers(extra: {'Authorization': 'Bearer $token', ...?extra});
   }
 
   Future<void> checkHealth(String baseUrl) async {
     final resp = await _http
-        .get(_uri(baseUrl, '/api/health'))
+        .get(_uri(baseUrl, '/api/health'), headers: _headers())
         .timeout(_syncTimeout);
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      throw CloudflareSyncException(_friendlyHttpError(resp, fallback: 'Could not reach the sync server.'));
+      throw CloudflareSyncException(
+        _friendlyHttpError(resp, fallback: 'Could not reach the sync server.'),
+      );
     }
   }
 
@@ -155,13 +179,16 @@ class CloudflareSyncService {
     final resp = await _http
         .post(
           _uri(baseUrl, '/api/auth/register'),
-          headers: const {'Content-Type': 'application/json'},
+          headers: _headers(extra: const {'Content-Type': 'application/json'}),
           body: jsonEncode({'username': username.trim(), 'password': password}),
         )
         .timeout(_syncTimeout);
     final data = _decodeJson(resp);
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      throw CloudflareSyncException(_messageFrom(data) ?? _friendlyHttpError(resp, fallback: 'Could not create account.'));
+      throw CloudflareSyncException(
+        _messageFrom(data) ??
+            _friendlyHttpError(resp, fallback: 'Could not create account.'),
+      );
     }
     final token = data['token'] as String?;
     final user = (data['username'] as String?)?.trim();
@@ -184,13 +211,16 @@ class CloudflareSyncService {
     final resp = await _http
         .post(
           _uri(baseUrl, '/api/auth/login'),
-          headers: const {'Content-Type': 'application/json'},
+          headers: _headers(extra: const {'Content-Type': 'application/json'}),
           body: jsonEncode({'username': username.trim(), 'password': password}),
         )
         .timeout(_syncTimeout);
     final data = _decodeJson(resp);
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      throw CloudflareSyncException(_messageFrom(data) ?? _friendlyHttpError(resp, fallback: 'Could not sign in.'));
+      throw CloudflareSyncException(
+        _messageFrom(data) ??
+            _friendlyHttpError(resp, fallback: 'Could not sign in.'),
+      );
     }
     final token = data['token'] as String?;
     final user = (data['username'] as String?)?.trim();
@@ -210,22 +240,24 @@ class CloudflareSyncService {
     required String token,
   }) async {
     final resp = await _http
-        .get(
-          _uri(baseUrl, '/api/backup/meta'),
-          headers: _authHeaders(token),
-        )
+        .get(_uri(baseUrl, '/api/backup/meta'), headers: _authHeaders(token))
         .timeout(_syncTimeout);
     final data = _decodeJson(resp);
     if (resp.statusCode == 401) {
       throw CloudflareSyncException('Session expired. Please sign in again.');
     }
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      throw CloudflareSyncException(_messageFrom(data) ?? _friendlyHttpError(resp, fallback: 'Could not check cloud backup.'));
+      throw CloudflareSyncException(
+        _messageFrom(data) ??
+            _friendlyHttpError(resp, fallback: 'Could not check cloud backup.'),
+      );
     }
     final rawExists = data['exists'];
     if (rawExists is! bool) {
       // Missing/unknown metadata must never be read as "no remote backup".
-      throw CloudflareSyncException('Could not confirm the cloud backup state.');
+      throw CloudflareSyncException(
+        'Could not confirm the cloud backup state.',
+      );
     }
     if (!rawExists) return CloudflareBackupMeta(exists: false);
     return CloudflareBackupMeta(
@@ -243,10 +275,7 @@ class CloudflareSyncService {
     required Uint8List bytes,
     UploadByteProgress? onByteProgress,
   }) async {
-    final request = http.StreamedRequest(
-      'PUT',
-      _uri(baseUrl, '/api/backup'),
-    );
+    final request = http.StreamedRequest('PUT', _uri(baseUrl, '/api/backup'));
     request.headers.addAll(
       _authHeaders(
         token,
@@ -276,15 +305,16 @@ class CloudflareSyncService {
     }
 
     final streamed = await response.timeout(_syncTimeout);
-    final resp = await http.Response
-        .fromStream(streamed)
-        .timeout(_syncTimeout);
+    final resp = await http.Response.fromStream(streamed).timeout(_syncTimeout);
     if (resp.statusCode == 401) {
       throw CloudflareSyncException('Session expired. Please sign in again.');
     }
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
       final data = _decodeJson(resp);
-      throw CloudflareSyncException(_messageFrom(data) ?? _friendlyHttpError(resp, fallback: 'Could not upload backup.'));
+      throw CloudflareSyncException(
+        _messageFrom(data) ??
+            _friendlyHttpError(resp, fallback: 'Could not upload backup.'),
+      );
     }
     // The Worker accepted the whole body. Only now is byte progress truthful.
     onByteProgress?.call(bytes.length, bytes.length);
@@ -295,10 +325,7 @@ class CloudflareSyncService {
     required String token,
   }) async {
     final resp = await _http
-        .get(
-          _uri(baseUrl, '/api/backup'),
-          headers: _authHeaders(token),
-        )
+        .get(_uri(baseUrl, '/api/backup'), headers: _authHeaders(token))
         .timeout(_syncTimeout);
     if (resp.statusCode == 401) {
       throw CloudflareSyncException('Session expired. Please sign in again.');
@@ -308,9 +335,122 @@ class CloudflareSyncService {
     }
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
       final data = _decodeJson(resp);
-      throw CloudflareSyncException(_messageFrom(data) ?? _friendlyHttpError(resp, fallback: 'Could not download backup.'));
+      throw CloudflareSyncException(
+        _messageFrom(data) ??
+            _friendlyHttpError(resp, fallback: 'Could not download backup.'),
+      );
     }
     return resp.bodyBytes;
+  }
+
+  Uri _mediaUri(String baseUrl, String id, CloudflareMediaKind kind) => _uri(
+    baseUrl,
+    '/api/media/${Uri.encodeComponent(id)}/${kind.pathSegment}',
+  );
+
+  Future<Uint8List> downloadMedia({
+    required String baseUrl,
+    required String token,
+    required String id,
+    required CloudflareMediaKind kind,
+  }) async {
+    final resp = await _http
+        .get(_mediaUri(baseUrl, id, kind), headers: _authHeaders(token))
+        .timeout(_syncTimeout);
+    if (resp.statusCode == 401 || resp.statusCode == 403) {
+      final data = _decodeJson(resp);
+      throw CloudflareSyncException(_messageFrom(data) ?? 'Access denied.');
+    }
+    if (resp.statusCode == 404) {
+      throw CloudflareSyncException('Media is not available in the cloud yet.');
+    }
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      final data = _decodeJson(resp);
+      throw CloudflareSyncException(
+        _messageFrom(data) ??
+            _friendlyHttpError(resp, fallback: 'Could not download media.'),
+      );
+    }
+    return resp.bodyBytes;
+  }
+
+  /// Returns the stored encrypted byte length, or null when the object is
+  /// absent. Used to avoid re-uploading unchanged media on every archive sync.
+  Future<int?> mediaSize({
+    required String baseUrl,
+    required String token,
+    required String id,
+    required CloudflareMediaKind kind,
+  }) async {
+    final request = http.Request('HEAD', _mediaUri(baseUrl, id, kind))
+      ..headers.addAll(_authHeaders(token));
+    final streamed = await _http.send(request).timeout(_syncTimeout);
+    final resp = await http.Response.fromStream(streamed).timeout(_syncTimeout);
+    if (resp.statusCode == 404) return null;
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      final data = _decodeJson(resp);
+      throw CloudflareSyncException(
+        _messageFrom(data) ??
+            _friendlyHttpError(resp, fallback: 'Could not check cloud media.'),
+      );
+    }
+    return int.tryParse(resp.headers['content-length'] ?? '');
+  }
+
+  Future<void> uploadMedia({
+    required String baseUrl,
+    required String token,
+    required String id,
+    required CloudflareMediaKind kind,
+    required Uint8List bytes,
+  }) async {
+    final request = http.StreamedRequest('PUT', _mediaUri(baseUrl, id, kind));
+    request.headers.addAll(
+      _authHeaders(
+        token,
+        extra: const {'Content-Type': 'application/octet-stream'},
+      ),
+    );
+    final response = _http.send(request);
+    try {
+      const chunkSize = 64 * 1024;
+      for (var offset = 0; offset < bytes.length; offset += chunkSize) {
+        final end = offset + chunkSize < bytes.length
+            ? offset + chunkSize
+            : bytes.length;
+        request.sink.add(Uint8List.sublistView(bytes, offset, end));
+      }
+    } finally {
+      await request.sink.close().timeout(_syncTimeout);
+    }
+    final streamed = await response.timeout(_syncTimeout);
+    final resp = await http.Response.fromStream(streamed).timeout(_syncTimeout);
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      final data = _decodeJson(resp);
+      throw CloudflareSyncException(
+        _messageFrom(data) ??
+            _friendlyHttpError(resp, fallback: 'Could not upload media.'),
+      );
+    }
+  }
+
+  Future<void> deleteMedia({
+    required String baseUrl,
+    required String token,
+    required String id,
+    required CloudflareMediaKind kind,
+  }) async {
+    final request = http.Request('DELETE', _mediaUri(baseUrl, id, kind))
+      ..headers.addAll(_authHeaders(token));
+    final streamed = await _http.send(request).timeout(_syncTimeout);
+    final resp = await http.Response.fromStream(streamed).timeout(_syncTimeout);
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      final data = _decodeJson(resp);
+      throw CloudflareSyncException(
+        _messageFrom(data) ??
+            _friendlyHttpError(resp, fallback: 'Could not delete cloud media.'),
+      );
+    }
   }
 
   Map<String, dynamic> _decodeJson(http.Response resp) {
@@ -333,7 +473,9 @@ class CloudflareSyncService {
     if (resp.statusCode == 401) return 'Session expired. Please sign in again.';
     if (resp.statusCode == 403) return 'Access denied.';
     if (resp.statusCode == 404) return 'Not found.';
-    if (resp.statusCode >= 500) return 'Sync server error. Please try again later.';
+    if (resp.statusCode >= 500) {
+      return 'Sync server error. Please try again later.';
+    }
     return fallback;
   }
 }

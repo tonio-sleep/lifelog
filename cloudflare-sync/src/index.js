@@ -2,6 +2,9 @@
 // Cloudflare Workers WebCrypto currently supports PBKDF2 iteration counts up to 100000.
 const PBKDF2_ITERATIONS = 100000;
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
+const APP_KEY_HEADER = "x-lifelog-app-key";
+const MEDIA_MAX_BYTES = 300 * 1024 * 1024;
+const THUMB_MAX_BYTES = 32 * 1024 * 1024;
 
 export default {
   async fetch(request, env, ctx) {
@@ -22,6 +25,23 @@ function serverConfigError(request, env) {
   if (!env.TOKEN_SECRET) {
     return json({ error: "Server not configured: missing TOKEN_SECRET" }, 500, request);
   }
+  if (!env.APP_KEY) {
+    return json({ error: "Server not configured: missing APP_KEY" }, 500, request);
+  }
+  return null;
+}
+
+// Every endpoint except CORS preflight requires the compiled-in app key.
+// This is a gate, not authentication: a key extracted from a released IPA can
+// be replayed. Keep it rotatable and keep the account session requirement.
+function requireAppKey(request, env) {
+  if (!env || !env.APP_KEY) {
+    return json({ error: "Server not configured: missing APP_KEY" }, 500, request);
+  }
+  const presented = String(request.headers.get(APP_KEY_HEADER) || "");
+  if (!timingSafeEqualBytesString(presented, String(env.APP_KEY))) {
+    return json({ error: "App key rejected" }, 401, request);
+  }
   return null;
 }
 
@@ -34,8 +54,14 @@ async function handle(request, env) {
     return new Response(null, { status: 204, headers: corsHeaders(request) });
   }
 
+  const appKeyFailure = requireAppKey(request, env);
+  if (appKeyFailure) return appKeyFailure;
+
   if (method === "GET" && path === "/api/health") {
-    const configured = Boolean(env?.BACKUP_BUCKET) && Boolean(env?.TOKEN_SECRET);
+    const configured =
+      Boolean(env?.BACKUP_BUCKET) &&
+      Boolean(env?.TOKEN_SECRET) &&
+      Boolean(env?.APP_KEY);
     return json(
       { ok: true, service: "lifelog-cloudflare-sync", configured },
       200,
@@ -76,6 +102,13 @@ async function handle(request, env) {
     return downloadBackup(request, env, auth.user.username);
   }
 
+  const mediaMatch = path.match(/^\/api\/media\/([^/]+)\/(original|thumb)$/);
+  if (mediaMatch && ["GET", "HEAD", "PUT", "DELETE"].includes(method)) {
+    const auth = await requireAuth(request, env);
+    if (!auth.ok) return auth.response;
+    return handleMedia(request, env, auth.user.username, mediaMatch[1], mediaMatch[2], method);
+  }
+
   return json({ error: "Not found" }, 404, request);
 }
 
@@ -84,8 +117,8 @@ function corsHeaders(request) {
   const origin = request.headers.get("Origin") || "*";
   return {
     "access-control-allow-origin": origin,
-    "access-control-allow-methods": "GET,PUT,POST,DELETE,OPTIONS",
-    "access-control-allow-headers": "Authorization,Content-Type",
+    "access-control-allow-methods": "GET,HEAD,PUT,POST,DELETE,OPTIONS",
+    "access-control-allow-headers": `Authorization,Content-Type,${APP_KEY_HEADER}`,
     "access-control-max-age": "86400",
     vary: "Origin",
   };
@@ -307,6 +340,95 @@ async function downloadBackup(request, env, username) {
 function backupKey(username) {
   const safe = String(username || "user").replace(/[^a-z0-9._@-]/gi, "_");
   return `backups/${safe}/latest.lifelog`;
+}
+
+function mediaKey(username, id, kind) {
+  const safeUser = String(username || "user").replace(/[^a-z0-9._@-]/gi, "_");
+  return `media/${safeUser}/${id}/${kind}.bin`;
+}
+
+function validMediaId(id) {
+  return /^[A-Za-z0-9_-]{1,64}$/.test(String(id || ""));
+}
+
+async function handleMedia(request, env, username, rawId, kind, method) {
+  const cfg = serverConfigError(request, env);
+  if (cfg) return cfg;
+  const id = String(rawId || "");
+  if (!validMediaId(id)) return json({ error: "Invalid media id" }, 400, request);
+
+  const key = mediaKey(username, id, kind);
+  const maxBytes = kind === "thumb" ? THUMB_MAX_BYTES : MEDIA_MAX_BYTES;
+
+  if (method === "PUT") {
+    const len = Number(request.headers.get("content-length") || "0");
+    if (len && len > maxBytes) return json({ error: "Media too large" }, 413, request);
+    let body;
+    try {
+      body = await request.arrayBuffer();
+    } catch {
+      return json({ error: "Invalid media payload" }, 400, request);
+    }
+    if (!body || body.byteLength === 0) {
+      return json({ error: "Empty media" }, 400, request);
+    }
+    if (body.byteLength > maxBytes) {
+      return json({ error: "Media too large" }, 413, request);
+    }
+    const now = new Date().toISOString();
+    try {
+      await env.BACKUP_BUCKET.put(key, body, {
+        httpMetadata: { contentType: "application/octet-stream" },
+        customMetadata: { modifiedAt: now, kind: "lifelog-encrypted-media", mediaKind: kind },
+      });
+    } catch (err) {
+      console.error("R2 media put failed", err?.stack || err);
+      return json({ error: "Could not store media" }, 500, request);
+    }
+    return json({ ok: true, size: body.byteLength, uploadedAt: now }, 200, request);
+  }
+
+  if (method === "DELETE") {
+    try {
+      await env.BACKUP_BUCKET.delete(key);
+    } catch (err) {
+      console.error("R2 media delete failed", err?.stack || err);
+      return json({ error: "Could not delete media" }, 500, request);
+    }
+    return json({ ok: true }, 200, request);
+  }
+
+  let obj;
+  try {
+    obj = method === "HEAD"
+      ? await env.BACKUP_BUCKET.head(key)
+      : await env.BACKUP_BUCKET.get(key);
+  } catch (err) {
+    console.error("R2 media read failed", err?.stack || err);
+    return method === "HEAD"
+      ? new Response(null, { status: 500, headers: corsHeaders(request) })
+      : json({ error: "Could not read media" }, 500, request);
+  }
+  if (!obj) {
+    return method === "HEAD"
+      ? new Response(null, { status: 404, headers: corsHeaders(request) })
+      : json({ error: "Media not found" }, 404, request);
+  }
+  const headers = {
+    "content-type": "application/octet-stream",
+    "cache-control": "no-store",
+    "content-length": String(obj.size),
+    ...corsHeaders(request),
+  };
+  if (obj.etag) headers.etag = obj.etag;
+  const modifiedAt =
+    (obj.customMetadata && obj.customMetadata.modifiedAt) ||
+    (obj.uploaded ? obj.uploaded.toISOString() : null);
+  if (modifiedAt) headers["x-media-modified-at"] = modifiedAt;
+  if (method === "HEAD") {
+    return new Response(null, { status: 200, headers });
+  }
+  return new Response(obj.body, { status: 200, headers });
 }
 
 async function pbkdf2(password, salt, iterations) {

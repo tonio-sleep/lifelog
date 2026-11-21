@@ -1,4 +1,5 @@
-﻿import 'dart:async';
+import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,6 +8,8 @@ import 'package:uuid/uuid.dart';
 import '../../core/backup/backup_service.dart';
 import '../../core/util/dates.dart';
 import '../../domain/meals_migration.dart';
+import '../../integrations/cloudflare/cloud_sync_engine.dart';
+import '../../integrations/cloudflare/cloudflare_sync_service.dart';
 import '../../domain/models/archive.dart';
 import '../../domain/models/journal.dart';
 import '../../domain/models/media.dart';
@@ -16,10 +19,154 @@ import '../../domain/models/places.dart';
 import '../../domain/models/timeline.dart';
 import '../../domain/models/trackers.dart';
 import '../app_services.dart';
+import 'settings_provider.dart';
 
 final appServicesProvider = Provider<AppServices>((ref) {
   throw UnimplementedError('AppServices must be overridden at bootstrap.');
 });
+
+enum CloudAutoSyncPhase { idle, syncing, saved, failed }
+
+class CloudAutoSyncState {
+  const CloudAutoSyncState({
+    this.phase = CloudAutoSyncPhase.idle,
+    this.error,
+    this.lastAttempt,
+  });
+
+  final CloudAutoSyncPhase phase;
+  final String? error;
+  final DateTime? lastAttempt;
+}
+
+final cloudAutoSyncProvider =
+    NotifierProvider<CloudAutoSyncController, CloudAutoSyncState>(
+      CloudAutoSyncController.new,
+    );
+
+/// Debounced, retrying cloud-primary sync. Local writes remain fast; the
+/// encrypted archive and media objects are pushed in the background with an
+/// honest status that never claims success before the Worker accepts bytes.
+class CloudAutoSyncController extends Notifier<CloudAutoSyncState> {
+  Timer? _debounce;
+  Timer? _retry;
+  CloudSyncEngine? _engine;
+  int _failures = 0;
+  bool _disposed = false;
+
+  @override
+  CloudAutoSyncState build() {
+    final services = ref.watch(appServicesProvider);
+    final engine = CloudSyncEngine(
+      api: services.cloudflareSync,
+      backup: services.backup,
+      mediaStore: services.mediaStore,
+      credentials: _loadCredentials,
+      archive: () async => ref.read(archiveProvider),
+      recordSync: (at) =>
+          ref.read(settingsProvider.notifier).recordCloudflareSync(at),
+    );
+    _engine = engine;
+    ref.onDispose(() {
+      _disposed = true;
+      _debounce?.cancel();
+      _retry?.cancel();
+      services.mediaStore.remoteSource = null;
+    });
+    return const CloudAutoSyncState();
+  }
+
+  Future<CloudSyncCredentials?> _loadCredentials() async {
+    final settings = ref.read(settingsProvider);
+    if (!settings.cloudflareConnected) return null;
+    final workerUrl = settings.cloudflareWorkerUrl?.trim() ?? '';
+    final sessionJson = await ref
+        .read(settingsProvider.notifier)
+        .cloudflareSessionJson();
+    final passphrase = await ref
+        .read(settingsProvider.notifier)
+        .cloudflareBackupPassphrase();
+    if (sessionJson == null ||
+        passphrase == null ||
+        passphrase.trim().isEmpty) {
+      throw CloudflareSyncException(
+        'Cloud sync is connected but its passphrase is unavailable. Reconnect in Settings.',
+      );
+    }
+    try {
+      final map = jsonDecode(sessionJson) as Map<String, dynamic>;
+      final token = map['token'] as String? ?? '';
+      if (token.isEmpty) {
+        throw CloudflareSyncException(
+          'Cloud sync session is unavailable. Sign in again.',
+        );
+      }
+      return CloudSyncCredentials(
+        workerUrl: workerUrl,
+        token: token,
+        passphrase: passphrase,
+      );
+    } on CloudflareSyncException {
+      rethrow;
+    } catch (_) {
+      throw CloudflareSyncException(
+        'Cloud sync session could not be read. Sign in again.',
+      );
+    }
+  }
+
+  /// Called after a successful local archive save.
+  void schedule({Duration delay = const Duration(milliseconds: 900)}) {
+    if (_disposed) return;
+    _debounce?.cancel();
+    _retry?.cancel();
+    _debounce = Timer(delay, () {
+      unawaited(_run());
+    });
+  }
+
+  Future<void> syncNow() => _run();
+
+  Future<void> _run() async {
+    final engine = _engine;
+    if (_disposed || engine == null) return;
+    if (state.phase == CloudAutoSyncPhase.syncing) return;
+    if (!ref.read(settingsProvider).cloudflareConnected) {
+      // Local-only saves are durable on disk; they are not cloud saves and
+      // must not be reported as one.
+      if (state.phase != CloudAutoSyncPhase.idle) {
+        state = const CloudAutoSyncState();
+      }
+      return;
+    }
+
+    state = CloudAutoSyncState(
+      phase: CloudAutoSyncPhase.syncing,
+      lastAttempt: DateTime.now(),
+    );
+    try {
+      await engine.syncNow();
+      if (_disposed) return;
+      _failures = 0;
+      state = CloudAutoSyncState(
+        phase: CloudAutoSyncPhase.saved,
+        lastAttempt: DateTime.now(),
+      );
+    } catch (error) {
+      if (_disposed) return;
+      _failures++;
+      state = CloudAutoSyncState(
+        phase: CloudAutoSyncPhase.failed,
+        error: '$error',
+        lastAttempt: DateTime.now(),
+      );
+      final backoff = Duration(seconds: (2 * _failures).clamp(2, 30));
+      _retry = Timer(backoff, () {
+        unawaited(_run());
+      });
+    }
+  }
+}
 
 final archiveProvider = NotifierProvider<ArchiveController, Archive>(
   ArchiveController.new,
@@ -45,8 +192,8 @@ class ArchiveSaveStatusController extends Notifier<ArchiveSaveStatus> {
 
 final archiveSaveStatusProvider =
     NotifierProvider<ArchiveSaveStatusController, ArchiveSaveStatus>(
-  ArchiveSaveStatusController.new,
-);
+      ArchiveSaveStatusController.new,
+    );
 
 /// Incremented whenever media bytes on disk may have changed (for example a
 /// restore). Image widgets watch this so they reload cached bytes.
@@ -85,10 +232,9 @@ class ArchiveController extends Notifier<Archive> {
   Archive build() => ref.watch(appServicesProvider).archive;
 
   void _publishSaveStatus() {
-    ref.read(archiveSaveStatusProvider.notifier).update(
-          isSaving: isSaving,
-          error: lastSaveError,
-        );
+    ref
+        .read(archiveSaveStatusProvider.notifier)
+        .update(isSaving: isSaving, error: lastSaveError);
   }
 
   Future<void> _persist(Archive next) {
@@ -100,6 +246,8 @@ class ArchiveController extends Notifier<Archive> {
       try {
         await _services.archiveStore.save(snapshot);
         lastSaveError = null;
+        // Local data is now a cache of the new state; push it promptly.
+        ref.read(cloudAutoSyncProvider.notifier).schedule();
       } catch (error) {
         lastSaveError = error.toString();
         rethrow;
@@ -481,10 +629,13 @@ class ArchiveController extends Notifier<Archive> {
     }
     final next = state.copy();
     // Avoid exact duplicates in quick succession.
-    final last = next.locationSamples.isEmpty ? null : next.locationSamples.last;
+    final last = next.locationSamples.isEmpty
+        ? null
+        : next.locationSamples.last;
     if (last != null) {
       final dt = sample.recordedAt.difference(last.recordedAt).inSeconds.abs();
-      final sameSpot = (sample.latitude - last.latitude).abs() < 0.00001 &&
+      final sameSpot =
+          (sample.latitude - last.latitude).abs() < 0.00001 &&
           (sample.longitude - last.longitude).abs() < 0.00001;
       if (dt < 30 && sameSpot) return;
     }
@@ -493,7 +644,10 @@ class ArchiveController extends Notifier<Archive> {
     const maxSamples = 20000;
     if (next.locationSamples.length > maxSamples) {
       next.locationSamples.sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
-      next.locationSamples.removeRange(0, next.locationSamples.length - maxSamples);
+      next.locationSamples.removeRange(
+        0,
+        next.locationSamples.length - maxSamples,
+      );
     }
     await _persist(next);
   }
@@ -611,4 +765,3 @@ class ArchiveController extends Notifier<Archive> {
   bool _sameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
 }
-

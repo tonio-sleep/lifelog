@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../app/providers/providers.dart';
 import '../app/providers/settings_provider.dart';
 import '../domain/models/settings.dart';
 import '../features/cloudflare/cloudflare_required_auth_screen.dart';
@@ -36,12 +37,12 @@ class LifelogApp extends ConsumerWidget {
       home: !settings.onboardingComplete
           ? const OnboardingScreen()
           : !settings.cloudflareConnected && !settings.cloudflareSetupDone
-              ? const CloudflareRequiredAuthScreen()
-              : const LockGate(
-                  child: LocationTrackingHost(
-                    child: _StartupSync(child: AppShell()),
-                  ),
-                ),
+          ? const CloudflareRequiredAuthScreen()
+          : const LockGate(
+              child: LocationTrackingHost(
+                child: _StartupSync(child: AppShell()),
+              ),
+            ),
     );
   }
 }
@@ -67,5 +68,10 @@ class _StartupSyncState extends ConsumerState<_StartupSync> {
   }
 
   @override
-  Widget build(BuildContext context) => widget.child;
+  Widget build(BuildContext context) {
+    // Initialize cloud sync early so media reads can use the online cache
+    // fallback before any screen opens an attachment.
+    ref.watch(cloudAutoSyncProvider);
+    return widget.child;
+  }
 }

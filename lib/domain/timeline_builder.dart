@@ -44,17 +44,18 @@ List<TimelineItem> buildTimelineForDay(
   final items = <TimelineItem>[];
   final migratedRefs = migratedMealLegacyRefs(archive);
 
-  for (final entry in archive.entriesOn(day)) {
+  for (final entry in archive.entriesOn(day, includeDrafts: true)) {
     items.add(
       TimelineItem(
         id: 'journal:${entry.id}',
         at: entry.createdAt,
         title: entry.displayTitle,
-        subtitle: entry.excerpt,
+        subtitle: entry.draft ? 'Draft · ${entry.excerpt}' : entry.excerpt,
         source: TimelineSource.journal,
         confidence: TimelineConfidence.confirmed,
         derived: true,
         sourceId: entry.id,
+        metadata: entry.draft ? const {'draft': 'true'} : const {},
       ),
     );
   }
@@ -63,21 +64,26 @@ List<TimelineItem> buildTimelineForDay(
     // Once a record has become a meal, showing it here too is a duplicate.
     if (migratedRefs.contains('tracker:${record.id}')) continue;
     final tracker = archive.trackerById(record.trackerId);
-    if (tracker == null) continue;
-    final value = TrackerMath.recordLabel(tracker, record);
     final note = record.note.trim();
+    final value = tracker == null
+        ? (record.text.trim().isEmpty ? 'Recorded entry' : record.text.trim())
+        : TrackerMath.recordLabel(tracker, record);
     final subtitle = note.isEmpty ? value : '$value · $note';
     items.add(
       TimelineItem(
         id: 'tracker:${record.id}',
         at: record.startedAt ?? record.recordedAt,
-        title: tracker.name,
-        subtitle: subtitle,
+        title: tracker?.name ??
+            (note.isEmpty ? 'Tracker record' : note),
+        subtitle: tracker == null && note.isNotEmpty ? value : subtitle,
         source: TimelineSource.tracker,
         confidence: TimelineConfidence.confirmed,
         derived: true,
         sourceId: record.id,
-        metadata: {'trackerId': tracker.id},
+        metadata: {
+          'trackerId': tracker?.id ?? record.trackerId,
+          if (tracker == null) 'missingTracker': 'true',
+        },
       ),
     );
   }

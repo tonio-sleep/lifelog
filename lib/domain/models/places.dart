@@ -1,5 +1,6 @@
 import 'package:uuid/uuid.dart';
 
+import '../../core/util/dates.dart';
 import 'timeline.dart';
 
 const _uuid = Uuid();
@@ -65,9 +66,7 @@ class Place {
     return Place(
       id: json['id'] as String? ?? _uuid.v4(),
       name: json['name'] as String? ?? 'Place',
-      createdAt:
-          DateTime.tryParse(json['createdAt'] as String? ?? '') ??
-          DateTime.now(),
+      createdAt: parseTimestampOr(json['createdAt'], DateTime.now()),
       latitude: (json['latitude'] as num?)?.toDouble(),
       longitude: (json['longitude'] as num?)?.toDouble(),
       radiusMeters: (json['radiusMeters'] as num?)?.toDouble() ?? 120,
@@ -111,9 +110,7 @@ class LocationSample {
   factory LocationSample.fromJson(Map<String, dynamic> json) {
     return LocationSample(
       id: json['id'] as String? ?? _uuid.v4(),
-      recordedAt:
-          DateTime.tryParse(json['recordedAt'] as String? ?? '') ??
-          DateTime.now(),
+      recordedAt: parseTimestampOr(json['recordedAt'], DateTime.now()),
       latitude: (json['latitude'] as num?)?.toDouble() ?? 0,
       longitude: (json['longitude'] as num?)?.toDouble() ?? 0,
       accuracyMeters: (json['accuracyMeters'] as num?)?.toDouble(),
@@ -185,10 +182,9 @@ class Visit {
     return Visit(
       id: json['id'] as String? ?? _uuid.v4(),
       label: json['label'] as String? ?? 'Visit',
-      startAt:
-          DateTime.tryParse(json['startAt'] as String? ?? '') ?? now,
+      startAt: parseTimestampOr(json['startAt'], now),
       placeId: json['placeId'] as String?,
-      endAt: DateTime.tryParse(json['endAt'] as String? ?? ''),
+      endAt: parseTimestamp(json['endAt']),
       confidence: confidence,
       notes: json['notes'] as String? ?? '',
     );

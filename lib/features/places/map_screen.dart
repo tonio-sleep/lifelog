@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/providers/day_provider.dart';
 import '../../app/providers/providers.dart';
 import '../../app/providers/settings_provider.dart';
 import '../../app/theme/app_theme.dart';
@@ -20,7 +21,10 @@ import 'place_dialogs.dart';
 import 'place_map.dart';
 
 class MapScreen extends ConsumerStatefulWidget {
-  const MapScreen({super.key});
+  const MapScreen({super.key, this.initialDate});
+
+  /// When opened from Today, show the day the person was viewing.
+  final DateTime? initialDate;
 
   @override
   ConsumerState<MapScreen> createState() => _MapScreenState();
@@ -34,11 +38,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   MapPoint? _livePoint;
   DateTime? _liveCheckedAt;
   bool _refreshingLive = false;
+  bool _permissionRequested = false;
 
   @override
   void initState() {
     super.initState();
-    _day = dayStart(DateTime.now());
+    _day = dayStart(widget.initialDate ?? ref.read(selectedDayProvider));
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_refreshBackgroundStatus());
@@ -58,28 +63,35 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   Future<void> _refreshLiveLocation() async {
     if (_refreshingLive) return;
     _refreshingLive = true;
-    final settings = ref.read(settingsProvider);
-    if (settings.locationTrackingEnabled || settings.backgroundLocationEnabled) {
+    // Ask once when the map opens. Tracking settings control recording to the
+    // archive, not whether the map may show a current-location dot.
+    final firstAttempt = !_permissionRequested;
+    _permissionRequested = true;
+    try {
       final position = await LocationTracking.getCurrentPosition(
-        requestPermission: false,
-        attempts: 1,
+        requestPermission: firstAttempt,
+        attempts: firstAttempt ? 2 : 1,
       );
       final sample = position == null
           ? null
           : LocationTracking.sampleFromPosition(position);
-      if (sample != null && mounted) {
-        setState(() {
+      if (!mounted) return;
+      setState(() {
+        if (sample != null) {
           _livePoint = MapPoint(
             latitude: sample.latitude,
             longitude: sample.longitude,
             kind: 'current',
             name: 'Current location',
           );
-          _liveCheckedAt = DateTime.now();
-        });
-      }
+        }
+        _liveCheckedAt = DateTime.now();
+      });
+    } catch (_) {
+      // A denied or unavailable location fix must not break the map screen.
+    } finally {
+      _refreshingLive = false;
     }
-    _refreshingLive = false;
   }
 
   bool get _isIOS => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
@@ -356,7 +368,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   day: day,
                   summary: summary,
                 ),
-                if (_livePoint != null)
+                if (isToday && _livePoint != null)
                   Padding(
                     padding: const EdgeInsets.only(top: Insets.sm),
                     child: _LiveLocationLine(
@@ -548,14 +560,17 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           ),
         )
         .toList();
+    final isToday = sameDay(day, DateTime.now());
     return DetailedMap(
       data: LifelogMapData(
         places: placePoints,
         stops: stopPoints,
         route: route,
-        current: _livePoint,
+        // A live fix belongs to today only; never recenter a past-day map.
+        current: isToday ? _livePoint : null,
         privateMode: _privateMode,
-        followUser: summary.status?.isCurrent ?? true,
+        showUser: isToday,
+        followUser: isToday && (summary.status?.isCurrent ?? true),
       ),
       onPinDropped: (point) => showPlaceEditor(
         context,

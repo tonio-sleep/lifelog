@@ -24,10 +24,13 @@ import 'quick_add.dart';
 import 'today_composer.dart';
 import 'today_widgets.dart';
 
+/// Navigation callback that can carry the day the person is viewing.
+typedef TodayNavigate = void Function(String destination, {DateTime? day});
+
 class TodayScreen extends ConsumerStatefulWidget {
   const TodayScreen({super.key, this.onNavigate});
 
-  final ValueChanged<String>? onNavigate;
+  final TodayNavigate? onNavigate;
 
   @override
   ConsumerState<TodayScreen> createState() => _TodayScreenState();
@@ -126,7 +129,7 @@ class _DayBody extends ConsumerWidget {
   const _DayBody({required this.day, this.onNavigate});
 
   final DateTime day;
-  final ValueChanged<String>? onNavigate;
+  final TodayNavigate? onNavigate;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -202,6 +205,16 @@ class _DayBody extends ConsumerWidget {
             ),
           ),
         ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () => onNavigate?.call('places', day: day),
+            icon: const Icon(Icons.place_outlined, size: 16),
+            label: Text(
+              isToday ? 'See today on the map' : 'See this day on the map',
+            ),
+          ),
+        ),
         if (latest != null) ...[
           const SizedBox(height: Insets.md),
           NowPlayingCard(scrobble: latest, onTap: () => onNavigate?.call('music')),
@@ -228,7 +241,7 @@ class _DayBody extends ConsumerWidget {
         SectionHeader(
           title: isToday ? 'Today so far' : 'That day',
           actionLabel: 'Timeline',
-          onAction: () => onNavigate?.call('timeline'),
+          onAction: () => onNavigate?.call('timeline', day: day),
         ),
         TimelineDayList(
           day: day,

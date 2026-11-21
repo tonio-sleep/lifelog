@@ -265,13 +265,17 @@ class Archive {
     }
 
     for (final entry in entries) {
-      if (!entry.draft && !entry.archived) addIfInMonth(entry.createdAt);
+      // Drafts are visible in Journal and Timeline, so they mark the day too.
+      if (!entry.archived) addIfInMonth(entry.createdAt);
     }
     for (final item in media) {
       addIfInMonth(item.createdAt);
     }
     for (final visit in visits) {
       addIfInMonth(visit.startAt);
+    }
+    for (final sample in locationSamples) {
+      addIfInMonth(sample.recordedAt);
     }
     for (final scrobble in scrobbles) {
       addIfInMonth(scrobble.playedAt);
@@ -281,6 +285,9 @@ class Archive {
     }
     for (final meal in meals) {
       addIfInMonth(meal.at);
+    }
+    for (final event in events) {
+      if (!event.hidden) addIfInMonth(event.occurredAt);
     }
     return days;
   }
@@ -314,11 +321,33 @@ class Archive {
   };
 
   factory Archive.fromJson(Map<String, dynamic> json) {
-    List<Map<String, dynamic>> list(String key) =>
-        (json[key] as List? ?? const [])
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
+    // Validate the envelope before parsing. A wrong shape must never turn a
+    // real archive into Archive.empty() and silently show empty screens.
+    final format = json['format'];
+    if (format != null && format != 'lifelog-archive') {
+      throw FormatException('Unsupported archive format: $format');
+    }
+    final version = json['version'];
+    if (version != null && version is! int) {
+      throw const FormatException('Archive version is not an integer');
+    }
+    if (version != null && version != 1) {
+      throw FormatException('Unsupported archive version: $version');
+    }
+
+    List<Map<String, dynamic>> list(String key) {
+      final raw = json[key];
+      if (raw == null) return const <Map<String, dynamic>>[];
+      if (raw is! List) {
+        throw FormatException('Archive field "$key" is not a list');
+      }
+      return raw.map((item) {
+        if (item is! Map) {
+          throw FormatException('Archive field "$key" has a non-object entry');
+        }
+        return Map<String, dynamic>.from(item);
+      }).toList();
+    }
 
     return Archive(
       entries: list('entries').map(JournalEntry.fromJson).toList(),

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme/app_theme.dart';
+import '../../app/widgets/app_status_banner.dart';
 import '../../app/widgets/common.dart';
 import '../../features/insights/insights_screen.dart';
 import '../../features/journal/journal_screen.dart';
@@ -49,6 +50,10 @@ class _AppShellState extends ConsumerState<AppShell> {
   AppDestination _destination = AppDestination.today;
   int _tab = 0;
 
+  /// Days carried from Today into the pushed day-scoped screens.
+  DateTime? _timelineDay;
+  DateTime? _mapDay;
+
   /// Each mobile tab owns its own stack so pushing a detail page does not
   /// affect the other tabs and tapping the active tab can pop to root.
   final List<GlobalKey<NavigatorState>> _tabNavigators = List.generate(
@@ -68,7 +73,7 @@ class _AppShellState extends ConsumerState<AppShell> {
     setState(() => _destination = destination);
   }
 
-  void _openPage(AppDestination destination) {
+  void _openPage(AppDestination destination, {DateTime? day}) {
     if (!mounted) return;
     // Tab destinations must never produce a blank pushed page.
     final tab = switch (destination) {
@@ -84,10 +89,10 @@ class _AppShellState extends ConsumerState<AppShell> {
     }
     final Widget screen = switch (destination) {
       AppDestination.photos => const PhotosScreen(),
-      AppDestination.places => const MapScreen(),
+      AppDestination.places => MapScreen(initialDate: day),
       AppDestination.music => const MusicScreen(),
       AppDestination.memories => const MemoriesScreen(),
-      AppDestination.timeline => const TimelineScreen(),
+      AppDestination.timeline => TimelineScreen(initialDate: day),
       AppDestination.insights => const InsightsScreen(),
       AppDestination.search => const SearchScreen(),
       _ => Scaffold(
@@ -108,19 +113,23 @@ class _AppShellState extends ConsumerState<AppShell> {
     );
   }
 
-  void _navigateByName(String name) {
+  void _navigateByName(String name, {DateTime? day}) {
     final desktop = MediaQuery.sizeOf(context).width >= 900;
     for (final destination in AppDestination.values) {
       if (destination.name != name) continue;
+      if (day != null) {
+        if (destination == AppDestination.timeline) _timelineDay = day;
+        if (destination == AppDestination.places) _mapDay = day;
+      }
       if (desktop) {
-        _select(destination);
+        setState(() => _destination = destination);
         return;
       }
       final tab = _tabByName[name];
       if (tab != null) {
         setState(() => _tab = tab);
       } else {
-        _openPage(destination);
+        _openPage(destination, day: day);
       }
       return;
     }
@@ -133,28 +142,42 @@ class _AppShellState extends ConsumerState<AppShell> {
 
     if (desktop) {
       return Scaffold(
-        body: Row(
+        body: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _SideNavigation(
-              selected: _destination,
-              onSelected: _select,
-              onAdd: () => showQuickAdd(context, ref),
-            ),
+            const AppStatusBanner(),
             Expanded(
-              child: _TabStack(
-                index: _destination.index,
+              child: Row(
                 children: [
-                  TodayScreen(onNavigate: _navigateByName),
-                  const JournalScreen(),
-                  const TrackersScreen(),
-                  const TimelineScreen(),
-                  const MemoriesScreen(),
-                  const PhotosScreen(),
-                  const MapScreen(),
-                  const MusicScreen(),
-                  const InsightsScreen(),
-                  const SearchScreen(),
-                  const SettingsScreen(),
+                  _SideNavigation(
+                    selected: _destination,
+                    onSelected: _select,
+                    onAdd: () => showQuickAdd(context, ref),
+                  ),
+                  Expanded(
+                    child: _TabStack(
+                      index: _destination.index,
+                      children: [
+                        TodayScreen(onNavigate: _navigateByName),
+                        const JournalScreen(),
+                        const TrackersScreen(),
+                        TimelineScreen(
+                          key: ValueKey('timeline-${_timelineDay ?? 'now'}'),
+                          initialDate: _timelineDay,
+                        ),
+                        const MemoriesScreen(),
+                        const PhotosScreen(),
+                        MapScreen(
+                          key: ValueKey('map-${_mapDay ?? 'now'}'),
+                          initialDate: _mapDay,
+                        ),
+                        const MusicScreen(),
+                        const InsightsScreen(),
+                        const SearchScreen(),
+                        const SettingsScreen(),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -169,37 +192,47 @@ class _AppShellState extends ConsumerState<AppShell> {
       extendBody: keyboardHeight == 0,
       body: SafeArea(
         bottom: false,
-        child: _TabStack(
-          index: _tab,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Navigator(
-              key: _tabNavigators[0],
-              onGenerateRoute: (_) => CupertinoPageRoute<void>(
-                builder: (_) => TodayScreen(onNavigate: _navigateByName),
-              ),
-            ),
-            Navigator(
-              key: _tabNavigators[1],
-              onGenerateRoute: (_) => CupertinoPageRoute<void>(
-                builder: (_) => const JournalScreen(),
-              ),
-            ),
-            Navigator(
-              key: _tabNavigators[2],
-              onGenerateRoute: (_) => CupertinoPageRoute<void>(
-                builder: (_) => const TrackersScreen(),
-              ),
-            ),
-            Navigator(
-              key: _tabNavigators[3],
-              onGenerateRoute: (_) => CupertinoPageRoute<void>(
-                builder: (_) => LibraryScreen(onOpen: _navigateByName),
-              ),
-            ),
-            Navigator(
-              key: _tabNavigators[4],
-              onGenerateRoute: (_) => CupertinoPageRoute<void>(
-                builder: (_) => const SettingsScreen(),
+            const AppStatusBanner(),
+            Expanded(
+              child: _TabStack(
+                index: _tab,
+                children: [
+                  Navigator(
+                    key: _tabNavigators[0],
+                    onGenerateRoute: (_) => CupertinoPageRoute<void>(
+                      builder: (_) => TodayScreen(onNavigate: _navigateByName),
+                    ),
+                  ),
+                  Navigator(
+                    key: _tabNavigators[1],
+                    onGenerateRoute: (_) => CupertinoPageRoute<void>(
+                      builder: (_) => const JournalScreen(),
+                    ),
+                  ),
+                  Navigator(
+                    key: _tabNavigators[2],
+                    onGenerateRoute: (_) => CupertinoPageRoute<void>(
+                      builder: (_) => const TrackersScreen(),
+                    ),
+                  ),
+                  Navigator(
+                    key: _tabNavigators[3],
+                    onGenerateRoute: (_) => CupertinoPageRoute<void>(
+                      builder: (_) => LibraryScreen(
+                        onOpen: (name) => _navigateByName(name),
+                      ),
+                    ),
+                  ),
+                  Navigator(
+                    key: _tabNavigators[4],
+                    onGenerateRoute: (_) => CupertinoPageRoute<void>(
+                      builder: (_) => const SettingsScreen(),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -268,13 +301,13 @@ class _TabStackState extends State<_TabStack>
       opacity: _controller.drive(CurveTween(curve: Motion.out)),
       child: IndexedStack(
         index: widget.index,
-        children: [
-          for (var i = 0; i < widget.children.length; i++)
-            if (_visited.contains(i))
-              TickerMode(enabled: i == widget.index, child: widget.children[i])
-            else
-              const SizedBox.shrink(),
-        ],
+        // IndexedStack uses the original destination index, so the list must
+        // stay the same length even before every tab has been visited.
+        children: List<Widget>.generate(widget.children.length, (i) {
+          return _visited.contains(i)
+              ? TickerMode(enabled: i == widget.index, child: widget.children[i])
+              : const SizedBox.shrink();
+        }),
       ),
     );
   }

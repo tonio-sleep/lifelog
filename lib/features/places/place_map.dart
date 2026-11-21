@@ -366,7 +366,10 @@ class _DetailedMapState extends State<DetailedMap> {
   @override
   void didUpdateWidget(covariant DetailedMap oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _pushData();
+    // DaySwitcher rebuilds often while a live fix arrives. Only send data to
+    // native when it actually changed, or every 20 seconds would recenter the
+    // map away from the selected day's route.
+    if (!_sameData(oldWidget.data, widget.data)) _pushData();
   }
 
   LifelogMapData get _effectiveData => widget.data.copyWith(
@@ -376,9 +379,43 @@ class _DetailedMapState extends State<DetailedMap> {
       );
 
   void _pushData() {
-    _controller?.update(_effectiveData);
+    final controller = _controller;
+    if (controller == null) return;
+    controller.update(_effectiveData);
     _fitPending = false;
   }
+
+  static bool _samePoints(List<MapPoint> a, List<MapPoint> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      final x = a[i];
+      final y = b[i];
+      if (x.latitude != y.latitude ||
+          x.longitude != y.longitude ||
+          x.id != y.id ||
+          x.name != y.name ||
+          x.notes != y.notes ||
+          x.color != y.color ||
+          x.kind != y.kind) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static bool _samePoint(MapPoint? a, MapPoint? b) {
+    if (a == null || b == null) return a == b;
+    return _samePoints([a], [b]);
+  }
+
+  static bool _sameData(LifelogMapData a, LifelogMapData b) =>
+      _samePoints(a.places, b.places) &&
+      _samePoints(a.stops, b.stops) &&
+      _samePoints(a.route, b.route) &&
+      _samePoint(a.current, b.current) &&
+      a.privateMode == b.privateMode &&
+      a.crosshair == b.crosshair &&
+      a.showUser == b.showUser;
 
   void _onCreated(int viewId) {
     _controller = LifelogMapController(viewId, (point) {
@@ -410,6 +447,10 @@ class _DetailedMapState extends State<DetailedMap> {
   @override
   Widget build(BuildContext context) {
     final palette = LifelogPalette.of(context);
+    final hasPlottedData = widget.data.places.isNotEmpty ||
+        widget.data.stops.isNotEmpty ||
+        widget.data.route.isNotEmpty ||
+        widget.data.current != null;
     if (!isNativeMapAvailable) {
       return SizedBox(
         height: widget.height,
@@ -430,6 +471,35 @@ class _DetailedMapState extends State<DetailedMap> {
                 onPlatformViewCreated: _onCreated,
               ),
             ),
+            if (!hasPlottedData && !widget.data.crosshair)
+              Center(
+                child: IgnorePointer(
+                  child: Container(
+                    margin: const EdgeInsets.all(Insets.lg),
+                    padding: const EdgeInsets.all(Insets.lg),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.9),
+                      borderRadius: BorderRadius.circular(Radii.md),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.public_off_outlined,
+                          color: palette.mutedText,
+                          size: 24,
+                        ),
+                        const SizedBox(height: Insets.sm),
+                        Text(
+                          'No plotted locations for this day',
+                          textAlign: TextAlign.center,
+                          style: context.text.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             if (widget.data.crosshair)
               IgnorePointer(
                 child: Center(
@@ -489,7 +559,7 @@ class _DetailedMapState extends State<DetailedMap> {
                 ),
                 child: Text(
                   widget.data.privateMode
-                      ? 'Privacy mode · names hidden'
+                      ? 'Privacy mode · names and route hidden'
                       : 'Apple Maps · drag to explore · long-press to pin',
                   style: context.text.labelSmall?.copyWith(
                     color: Colors.white,

@@ -18,6 +18,7 @@ private final class LifelogMapPointAnnotation: MKPointAnnotation {
 private final class LifelogMapCoordinator: NSObject, MKMapViewDelegate {
   private weak var mapView: MKMapView?
   private let channel: FlutterMethodChannel
+  private var lastCurrentCoordinate: CLLocationCoordinate2D?
 
   init(mapView: MKMapView, channel: FlutterMethodChannel) {
     self.mapView = mapView
@@ -40,8 +41,9 @@ private final class LifelogMapCoordinator: NSObject, MKMapViewDelegate {
   func apply(_ arguments: Any?) {
     guard let mapView, let args = arguments as? [String: Any] else { return }
 
+    let privateMode = args["privateMode"] as? Bool ?? false
     mapView.pointOfInterestFilter = .includingAll
-    mapView.showsUserLocation = args["showUser"] as? Bool ?? true
+    mapView.showsUserLocation = !privateMode && (args["showUser"] as? Bool ?? true)
     mapView.showsCompass = true
     mapView.showsScale = true
     mapView.showsBuildings = true
@@ -63,7 +65,6 @@ private final class LifelogMapCoordinator: NSObject, MKMapViewDelegate {
         blue: CGFloat(Int(rawColor) & 0xFF) / 255,
         alpha: 1
       )
-      let privateMode = args["privateMode"] as? Bool ?? false
       annotation.title = privateMode ? "Saved place" : (value["name"] as? String ?? "Place")
       annotation.subtitle = privateMode ? nil : (value["notes"] as? String)
       mapView.addAnnotation(annotation)
@@ -76,25 +77,47 @@ private final class LifelogMapCoordinator: NSObject, MKMapViewDelegate {
       annotation.itemId = value["id"] as? String ?? ""
       annotation.kind = "stop"
       annotation.color = .systemOrange
-      annotation.title = value["name"] as? String ?? "Stop"
-      annotation.subtitle = value["notes"] as? String
+      annotation.title = privateMode ? "Hidden stop" : (value["name"] as? String ?? "Stop")
+      annotation.subtitle = privateMode ? nil : (value["notes"] as? String)
+      mapView.addAnnotation(annotation)
+    }
+
+    let suppliedCurrent = coordinate(args["current"])
+    lastCurrentCoordinate = privateMode ? nil : suppliedCurrent
+    if !privateMode, let current = suppliedCurrent {
+      // The current fix is data too: plot it and include it when fitting the
+      // camera. Without this, a day with no saved pins looked like a blank map.
+      let annotation = LifelogMapPointAnnotation()
+      annotation.coordinate = current
+      annotation.itemId = "current"
+      annotation.kind = "current"
+      annotation.color = .systemBlue
+      annotation.title = "Current location"
       mapView.addAnnotation(annotation)
     }
 
     var route = (args["route"] as? [[String: Any]] ?? []).compactMap { coordinate($0) }
-    if route.count > 1 {
+    if !privateMode && route.count > 1 {
       let polyline = MKPolyline(coordinates: &route, count: route.count)
       mapView.addOverlay(polyline)
+    } else if !privateMode, route.count == 1 {
+      let annotation = LifelogMapPointAnnotation()
+      annotation.coordinate = route[0]
+      annotation.kind = "route"
+      annotation.color = .systemBlue
+      annotation.title = "Recorded location"
+      mapView.addAnnotation(annotation)
     }
 
     let shouldFit = args["fitOnLoad"] as? Bool ?? true
     if shouldFit {
       fitAll()
-    } else if let current = coordinate(args["current"]) {
+    } else if let current = suppliedCurrent, !privateMode {
       mapView.setCenter(current, animated: false)
     }
-    if args["followUser"] as? Bool ?? false,
-       mapView.userLocation.location != nil {
+    if args["followUser"] as? Bool ?? false, !privateMode {
+      // MapKit starts following as soon as a location becomes available; it
+      // must not depend on userLocation already being populated.
       mapView.userTrackingMode = .follow
     }
   }
@@ -126,6 +149,8 @@ private final class LifelogMapCoordinator: NSObject, MKMapViewDelegate {
     let annotations = mapView.annotations.filter { !($0 is MKUserLocation) }
     if !annotations.isEmpty {
       mapView.showAnnotations(annotations, animated: true)
+    } else if let current = lastCurrentCoordinate {
+      mapView.setCenter(current, animated: true)
     } else if let location = mapView.userLocation.location {
       mapView.setCenter(location.coordinate, animated: true)
     }
@@ -159,7 +184,12 @@ private final class LifelogMapCoordinator: NSObject, MKMapViewDelegate {
     view.annotation = annotation
     view.canShowCallout = true
     view.markerTintColor = point.color
-    view.glyphText = point.kind == "stop" ? "S" : "P"
+    switch point.kind {
+    case "stop": view.glyphText = "S"
+    case "current": view.glyphText = "●"
+    case "route": view.glyphText = "•"
+    default: view.glyphText = "P"
+    }
     return view
   }
 
@@ -286,11 +316,9 @@ private final class LifelogMapSearchHandler: NSObject {
       binaryMessenger: messenger
     )
     super.init()
-    channel.setMethodCallHandler { [weak self] call, result in
-      guard let self else {
-        result(nil)
-        return
-      }
+    // The channel owns this handler through its closure. A weak capture here
+    // let ARC deallocate it immediately, so every search returned nil.
+    channel.setMethodCallHandler { call, result in
       switch call.method {
       case "search":
         self.search(call.arguments as? String ?? "") { result($0) }
@@ -1020,6 +1048,7 @@ private final class LifelogTranscriptionHandler: NSObject, FlutterStreamHandler 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private var transcriptionHandler: LifelogTranscriptionHandler?
+  private var mapSearchHandler: LifelogMapSearchHandler?
 
   override func application(
     _ application: UIApplication,
@@ -1043,7 +1072,9 @@ private final class LifelogTranscriptionHandler: NSObject, FlutterStreamHandler 
         LifelogMapViewFactory(messenger: mapRegistrar.messenger()),
         withId: "lifelog/map"
       )
-      _ = LifelogMapSearchHandler(messenger: mapRegistrar.messenger())
+      mapSearchHandler = LifelogMapSearchHandler(
+        messenger: mapRegistrar.messenger()
+      )
     }
     if let transcriptionRegistrar = engineBridge.pluginRegistry.registrar(
       forPlugin: "LifelogTranscription"

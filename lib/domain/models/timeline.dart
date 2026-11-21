@@ -1,5 +1,7 @@
 import 'package:uuid/uuid.dart';
 
+import '../../core/util/dates.dart';
+
 const _uuid = Uuid();
 
 enum TimelineSource {
@@ -76,9 +78,7 @@ class TimelineEvent {
     return TimelineEvent(
       id: json['id'] as String? ?? _uuid.v4(),
       title: json['title'] as String? ?? 'Event',
-      occurredAt:
-          DateTime.tryParse(json['occurredAt'] as String? ?? '') ??
-          DateTime.now(),
+      occurredAt: parseTimestampOr(json['occurredAt'], DateTime.now()),
       notes: json['notes'] as String? ?? '',
       hidden: json['hidden'] as bool? ?? false,
     );

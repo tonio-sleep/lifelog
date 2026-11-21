@@ -53,6 +53,18 @@ class AppServices {
 
   Directory get mediaDirectory => mediaStore.directory;
 
+  static Future<bool> _hasKeyArtifacts(Directory root) async {
+    final base = File(p.join(root.path, KeyVault.fallbackFileName));
+    for (final candidate in <File>[
+      base,
+      File('${base.path}${KeyVault.fallbackTempSuffix}'),
+      File('${base.path}${KeyVault.fallbackBackupSuffix}'),
+    ]) {
+      if (await candidate.exists()) return true;
+    }
+    return false;
+  }
+
   static Future<AppServices> bootstrap() async {
     final support = await getApplicationSupportDirectory();
     final root = Directory(p.join(support.path, 'lifelog'));
@@ -67,9 +79,10 @@ class AppServices {
 
     // Check before loading the key: a new key must never be generated just
     // because secure storage is temporarily unreadable on an existing install.
-    final archiveExists = await File(
-      p.join(root.path, ArchiveStore.fileName),
-    ).exists();
+    // Any archive copy (primary, temp, backup or quarantined) counts.
+    final archiveDataExists = await ArchiveStore.hasAnyArchiveFile(root);
+    final keyArtifactsExist = await _hasKeyArtifacts(root);
+    final archiveExists = archiveDataExists || keyArtifactsExist;
 
     final vault = KeyVault(directory: root);
     final key = await vault.loadOrCreate(archiveExists: archiveExists);
@@ -85,7 +98,15 @@ class AppServices {
     );
     final settingsStore = SettingsStore(directory: root);
     var settings = await settingsStore.load();
-    var archive = await archiveStore.load() ?? Archive.empty();
+    final loadedArchive = await archiveStore.load();
+    if (loadedArchive == null && archiveDataExists) {
+      throw ArchiveLoadException(
+        'Archive files exist but none of them could be read. Existing data '
+        'was left in place; restore from a backup instead of starting empty.',
+        StateError('No readable archive candidate'),
+      );
+    }
+    var archive = loadedArchive ?? Archive.empty();
 
     final startupWarnings = <String>[
       if (vault.lastWarning != null) vault.lastWarning!,

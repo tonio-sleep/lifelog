@@ -1,5 +1,7 @@
 import 'package:uuid/uuid.dart';
 
+import '../../core/util/dates.dart';
+
 const _uuid = Uuid();
 
 /// Optional mood score attached to a journal entry (1-10, higher is better).
@@ -305,8 +307,8 @@ class JournalEntry {
         : const <VocabItem>[];
     return JournalEntry(
       id: json['id'] as String? ?? _uuid.v4(),
-      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ?? now,
-      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ?? now,
+      createdAt: parseTimestampOr(json['createdAt'], now),
+      updatedAt: parseTimestampOr(json['updatedAt'], now),
       title: json['title'] as String? ?? '',
       body: json['body'] as String? ?? '',
       kind: JournalEntryKind.tryParse(json['kind'] as String?),

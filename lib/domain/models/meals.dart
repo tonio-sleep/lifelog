@@ -131,8 +131,8 @@ class MealRecord {
       };
 
   factory MealRecord.fromJson(Map<String, dynamic> json) {
-    var at = DateTime.tryParse(json['at'] as String? ?? '') ??
-        DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+    var at = dates.parseTimestamp(json['at']) ??
+        dates.parseTimestamp(json['createdAt']) ??
         DateTime.now();
     final storedDay = json['day'] as String?;
     final day = storedDay != null && storedDay.trim().isNotEmpty
@@ -159,7 +159,7 @@ class MealRecord {
     return MealRecord(
       id: json['id'] as String? ?? _uuid.v4(),
       at: at,
-      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? ''),
+      createdAt: dates.parseTimestamp(json['createdAt']),
       day: day,
       kind: kind,
       name: rawName.isEmpty ? 'Untitled ${kind.label.toLowerCase()}' : rawName,

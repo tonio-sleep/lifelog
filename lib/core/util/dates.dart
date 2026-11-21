@@ -3,35 +3,62 @@ import 'package:intl/intl.dart';
 /// Local-day helpers. Lifelog stores timestamps as UTC internally but renders
 /// everything in the device's current local time. A saved timezone offset may
 /// be added when multi-device sync is introduced.
-DateTime dayStart(DateTime value) =>
-    DateTime(value.year, value.month, value.day);
+DateTime dayStart(DateTime value) {
+  final local = value.toLocal();
+  return DateTime(local.year, local.month, local.day);
+}
 
 DateTime dayEnd(DateTime value) {
   final start = dayStart(value);
   return DateTime(start.year, start.month, start.day + 1);
 }
 
-bool sameDay(DateTime a, DateTime b) =>
-    a.year == b.year && a.month == b.month && a.day == b.day;
+bool sameDay(DateTime a, DateTime b) {
+  final localA = a.toLocal();
+  final localB = b.toLocal();
+  return localA.year == localB.year &&
+      localA.month == localB.month &&
+      localA.day == localB.day;
+}
 
 bool isSameDayAs(DateTime value, DateTime day) => sameDay(value, day);
 
-String dayKey(DateTime value) =>
-    '${value.year.toString().padLeft(4, '0')}-'
-    '${value.month.toString().padLeft(2, '0')}-'
-    '${value.day.toString().padLeft(2, '0')}';
+String dayKey(DateTime value) {
+  final local = value.toLocal();
+  return '${local.year.toString().padLeft(4, '0')}-'
+      '${local.month.toString().padLeft(2, '0')}-'
+      '${local.day.toString().padLeft(2, '0')}';
+}
+
+/// Parses an archived timestamp into the device's local zone. Stored values
+/// may carry a `Z` suffix; comparing their raw UTC calendar fields would move
+/// records to the wrong day near midnight.
+DateTime? parseTimestamp(Object? value) {
+  if (value is! String) return null;
+  final text = value.trim();
+  if (text.isEmpty) return null;
+  return DateTime.tryParse(text)?.toLocal();
+}
+
+DateTime parseTimestampOr(Object? value, DateTime fallback) =>
+    parseTimestamp(value) ?? fallback.toLocal();
 
 DateTime parseDayKey(String key) {
   final parts = key.split('-');
-  if (parts.length != 3) return DateTime.now();
-  return DateTime(
-    int.tryParse(parts[0]) ?? 2000,
-    int.tryParse(parts[1]) ?? 1,
-    int.tryParse(parts[2]) ?? 1,
-  );
+  if (parts.length != 3) return DateTime(2000);
+  final year = int.tryParse(parts[0]);
+  final month = int.tryParse(parts[1]);
+  final day = int.tryParse(parts[2]);
+  if (year == null || month == null || day == null) return DateTime(2000);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return DateTime(2000);
+  final parsed = DateTime(year, month, day);
+  if (parsed.year != year || parsed.month != month || parsed.day != day) {
+    return DateTime(2000);
+  }
+  return parsed;
 }
 
-String formatTime(DateTime value) => DateFormat.jm().format(value);
+String formatTime(DateTime value) => DateFormat.jm().format(value.toLocal());
 
 String formatTimeRange(DateTime start, DateTime? end) {
   if (end == null) return formatTime(start);
@@ -39,14 +66,16 @@ String formatTimeRange(DateTime start, DateTime? end) {
 }
 
 String formatDayHeader(DateTime value) =>
-    DateFormat('EEEE, MMMM d').format(value);
+    DateFormat('EEEE, MMMM d').format(value.toLocal());
 
 String formatDayLong(DateTime value) =>
-    DateFormat('EEEE, MMMM d, y').format(value);
+    DateFormat('EEEE, MMMM d, y').format(value.toLocal());
 
-String formatMonthYear(DateTime value) => DateFormat('MMMM y').format(value);
+String formatMonthYear(DateTime value) =>
+    DateFormat('MMMM y').format(value.toLocal());
 
-String formatShortDate(DateTime value) => DateFormat('MMM d').format(value);
+String formatShortDate(DateTime value) =>
+    DateFormat('MMM d').format(value.toLocal());
 
 String relativeDayLabel(DateTime value, {DateTime? now}) {
   final today = dayStart(now ?? DateTime.now());

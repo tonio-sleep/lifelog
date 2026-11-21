@@ -35,9 +35,12 @@ class KeyVault {
     : _storage = storage ?? const FlutterSecureStorage();
 
   static const secureKeyName = 'lifelog.master_key.v1';
-  static const _fallbackFileName = 'master.key';
-  static const _tempSuffix = '.tmp';
-  static const _backupSuffix = '.bak';
+  static const fallbackFileName = 'master.key';
+  static const fallbackTempSuffix = '.tmp';
+  static const fallbackBackupSuffix = '.bak';
+  static const _fallbackFileName = fallbackFileName;
+  static const _tempSuffix = fallbackTempSuffix;
+  static const _backupSuffix = fallbackBackupSuffix;
 
   final Directory directory;
   final FlutterSecureStorage _storage;

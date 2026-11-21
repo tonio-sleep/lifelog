@@ -139,9 +139,7 @@ class TrackerDefinition {
       id: json['id'] as String? ?? _uuid.v4(),
       name: json['name'] as String? ?? 'Tracker',
       type: TrackerType.parse(json['type'] as String?),
-      createdAt:
-          DateTime.tryParse(json['createdAt'] as String? ?? '') ??
-          DateTime.now(),
+      createdAt: parseTimestampOr(json['createdAt'], DateTime.now()),
       icon: json['icon'] as String? ?? 'circle',
       colorValue: (json['colorValue'] as num?)?.toInt() ?? 0xFF6B8F71,
       category: json['category'] as String? ?? 'Personal',
@@ -254,14 +252,12 @@ class TrackerRecord {
     return TrackerRecord(
       id: json['id'] as String? ?? _uuid.v4(),
       trackerId: json['trackerId'] as String? ?? '',
-      recordedAt:
-          DateTime.tryParse(json['recordedAt'] as String? ?? '') ??
-          DateTime.now(),
+      recordedAt: parseTimestampOr(json['recordedAt'], DateTime.now()),
       value: (json['value'] as num?)?.toDouble(),
       text: json['text'] as String? ?? '',
       note: json['note'] as String? ?? '',
-      startedAt: DateTime.tryParse(json['startedAt'] as String? ?? ''),
-      endedAt: DateTime.tryParse(json['endedAt'] as String? ?? ''),
+      startedAt: parseTimestamp(json['startedAt']),
+      endedAt: parseTimestamp(json['endedAt']),
       durationMinutes: (json['durationMinutes'] as num?)?.toDouble(),
       count: (json['count'] as num?)?.toDouble(),
     );

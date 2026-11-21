@@ -25,9 +25,33 @@ class ArchiveStore {
 
   File get file => File(p.join(directory.path, fileName));
 
+  /// True when any on-disk archive artifact exists. Bootstrap uses this to
+  /// avoid treating an unreadable install as a fresh one.
+  static Future<bool> hasAnyArchiveFile(Directory directory) async {
+    if (!await directory.exists()) return false;
+    final base = File(p.join(directory.path, fileName));
+    for (final candidate in <File>[
+      base,
+      File('${base.path}$_tempSuffix'),
+      File('${base.path}$_backupSuffix'),
+    ]) {
+      if (await candidate.exists()) return true;
+    }
+    await for (final entity in directory.list(followLinks: false)) {
+      if (entity is File &&
+          p.basename(entity.path).startsWith(_quarantinePrefix)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// Loads the newest readable copy. A completed write always leaves the
   /// primary file intact, but a crash or a damaged disk can still make it
   /// unreadable, so the temp and backup copies are tried as well.
+  ///
+  /// Unreadable files are never renamed or deleted here. A transient key or
+  /// storage failure must not turn the next launch into a silent fresh start.
   Future<Archive?> load() async {
     final candidates = <File>[
       file,
@@ -35,9 +59,11 @@ class ArchiveStore {
       File('${file.path}$_backupSuffix'),
     ];
     final causes = <Object>[];
+    final paths = <String>[];
 
     for (final candidate in candidates) {
       if (!await candidate.exists()) continue;
+      paths.add(candidate.path);
       try {
         final envelope = await candidate.readAsBytes();
         final clear = await crypto.decryptBytes(envelope, aad: _aad);
@@ -48,18 +74,17 @@ class ArchiveStore {
         return Archive.fromJson(decoded);
       } catch (error) {
         causes.add(error);
-        // Do not leave a damaged file in the primary slot where every launch
-        // will trip over it again. IO failures are transient and never moved.
-        if (error is! FileSystemException) await _quarantine(candidate);
       }
     }
 
     if (causes.isEmpty) return null;
     throw ArchiveLoadException(
       'The encrypted archive could not be opened. It may have been '
-      'written with a different key, or the file may be damaged.',
+      'written with a different key, or the file may be damaged. No local '
+      'files were moved or deleted.',
       causes.first,
       causes: causes,
+      paths: paths,
     );
   }
 
@@ -94,28 +119,19 @@ class ArchiveStore {
     await temp.rename(target.path);
   }
 
-  Future<void> _quarantine(File candidate) async {
-    try {
-      if (!await candidate.exists()) return;
-      final target = File(
-        '${candidate.parent.path}'
-        '${p.separator}$_quarantinePrefix'
-        '${DateTime.now().microsecondsSinceEpoch}',
-      );
-      await candidate.rename(target.path);
-    } catch (_) {
-      // Quarantining is best effort; the load error still reports the cause.
-    }
-  }
-
   Future<void> delete() async {
     if (await file.exists()) await file.delete();
   }
 }
 
 class ArchiveLoadException implements Exception {
-  ArchiveLoadException(this.message, this.cause, {List<Object>? causes})
-    : causes = causes ?? <Object>[cause];
+  ArchiveLoadException(
+    this.message,
+    this.cause, {
+    List<Object>? causes,
+    List<String>? paths,
+  })  : causes = causes ?? <Object>[cause],
+        paths = paths ?? const <String>[];
 
   final String message;
   final Object cause;
@@ -124,6 +140,12 @@ class ArchiveLoadException implements Exception {
   /// backup is recoverable or the key itself is wrong.
   final List<Object> causes;
 
+  /// Local files that were present but unreadable. None were moved or deleted.
+  final List<String> paths;
+
   @override
-  String toString() => '$message Cause: $cause';
+  String toString() {
+    final pathText = paths.isEmpty ? '' : ' Files: ${paths.join(', ')}';
+    return '$message Cause: $cause$pathText';
+  }
 }

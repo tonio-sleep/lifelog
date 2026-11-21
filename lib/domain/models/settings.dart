@@ -1,3 +1,5 @@
+import '../../core/util/dates.dart';
+
 enum AppThemeMode {
   system,
   light,
@@ -426,21 +428,15 @@ class AppSettings {
       themeMode: mode,
       lastfmUsername: json['lastfmUsername'] as String?,
       lastfmApiKeyCipher: json['lastfmApiKeyCipher'] as String?,
-      lastfmConnectedAt: DateTime.tryParse(
-        json['lastfmConnectedAt'] as String? ?? '',
-      ),
-      lastfmLastSync: DateTime.tryParse(
-        json['lastfmLastSync'] as String? ?? '',
-      ),
-      lastfmLastSyncFrom: DateTime.tryParse(
-        json['lastfmLastSyncFrom'] as String? ?? '',
-      ),
+      lastfmConnectedAt: parseTimestamp(json['lastfmConnectedAt']),
+      lastfmLastSync: parseTimestamp(json['lastfmLastSync']),
+      lastfmLastSyncFrom: parseTimestamp(json['lastfmLastSyncFrom']),
       weekStartsMonday: json['weekStartsMonday'] as bool? ?? false,
       lockEnabled: json['lockEnabled'] as bool? ?? false,
       pinSalt: json['pinSalt'] as String?,
       pinHash: json['pinHash'] as String?,
       autoLockMinutes: (json['autoLockMinutes'] as num?)?.toInt() ?? 5,
-      lastBackupAt: DateTime.tryParse(json['lastBackupAt'] as String? ?? ''),
+      lastBackupAt: parseTimestamp(json['lastBackupAt']),
       hiddenInsightCategories:
           (json['hiddenInsightCategories'] as List?)
               ?.whereType<String>()
@@ -463,10 +459,8 @@ class AppSettings {
       cloudflarePassphraseCipher:
           json['cloudflarePassphraseCipher'] as String?,
       cloudflarePassphraseOwner: json['cloudflarePassphraseOwner'] as String?,
-      cloudflareConnectedAt:
-          DateTime.tryParse(json['cloudflareConnectedAt'] as String? ?? ''),
-      cloudflareLastSyncAt:
-          DateTime.tryParse(json['cloudflareLastSyncAt'] as String? ?? ''),
+      cloudflareConnectedAt: parseTimestamp(json['cloudflareConnectedAt']),
+      cloudflareLastSyncAt: parseTimestamp(json['cloudflareLastSyncAt']),
       // Installs that were already signed in count as set up.
       cloudflareSetupDone: json['cloudflareSetupDone'] as bool? ??
           ((json['cloudflareSessionCipher'] as String?)?.isNotEmpty ?? false),

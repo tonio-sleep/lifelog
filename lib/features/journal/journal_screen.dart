@@ -49,7 +49,9 @@ class _JournalView {
     final filtered = all.where((entry) {
       switch (filter) {
         case _JournalFilter.active:
-          if (entry.draft || entry.archived) return false;
+          // Drafts are real saved entries. Hiding them made the Journal look
+          // empty while Today and Timeline showed the same records.
+          if (entry.archived) return false;
         case _JournalFilter.drafts:
           if (!entry.draft || entry.archived) return false;
         case _JournalFilter.archived:
@@ -97,8 +99,9 @@ class _JournalView {
             (s, v) => s + _words(v.term) + _words(v.meaning),
           ),
     );
-    final published =
-        archive.entries.where((e) => !e.draft && !e.archived).toList();
+    // Match the default filter: all saved, non-archived entries including
+    // drafts autosaved by the editor and voice-note handoff.
+    final published = archive.entries.where((e) => !e.archived).toList();
     return _JournalView(
       filtered: filtered,
       byDay: byDay,
@@ -130,6 +133,15 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
   _JournalFilter? _viewFilter;
   String? _viewQuery;
   _JournalView? _view;
+
+  void _clearFilters() {
+    _search.clear();
+    setState(() {
+      _query = '';
+      _searching = false;
+      _filter = _JournalFilter.active;
+    });
+  }
 
   _JournalView _viewFor(Archive archive) {
     final cached = _view;
@@ -204,7 +216,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
         values: _JournalFilter.values,
         selected: _filter,
         labelFor: (value) => switch (value) {
-          _JournalFilter.active => 'Entries',
+          _JournalFilter.active => 'All',
           _JournalFilter.drafts => 'Drafts',
           _JournalFilter.archived => 'Archive',
         },
@@ -244,6 +256,12 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
           ? null
           : '$entryCount ${plural(entryCount, 'entry')} in $dayCount ${plural(dayCount, 'day')} · ${formatCompactNumber(wordCount)} ${plural(wordCount, 'word')}',
       actions: [
+        if (_query.isNotEmpty || _filter != _JournalFilter.active || _searching)
+          HeaderButton(
+            icon: Icons.filter_alt_off_outlined,
+            tooltip: 'Clear filters',
+            onPressed: _clearFilters,
+          ),
         HeaderButton(
           icon: _searching ? Icons.search_off_rounded : Icons.search_rounded,
           tooltip: _searching ? 'Close search' : 'Search',

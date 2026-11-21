@@ -1,5 +1,7 @@
 import 'package:uuid/uuid.dart';
 
+import '../../core/util/dates.dart';
+
 const _uuid = Uuid();
 
 /// Metadata for a photo, video or audio file. The bytes live encrypted on
@@ -95,8 +97,7 @@ class MediaItem {
     final now = DateTime.now();
     return MediaItem(
       id: json['id'] as String? ?? _uuid.v4(),
-      createdAt:
-          DateTime.tryParse(json['createdAt'] as String? ?? '') ?? now,
+      createdAt: parseTimestampOr(json['createdAt'], now),
       mimeType: json['mimeType'] as String? ?? 'application/octet-stream',
       bytes: (json['bytes'] as num?)?.toInt() ?? 0,
       caption: json['caption'] as String? ?? '',

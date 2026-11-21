@@ -51,9 +51,7 @@ class MusicScrobble {
       id: json['id'] as String? ?? _uuid.v4(),
       artist: json['artist'] as String? ?? '',
       title: json['title'] as String? ?? '',
-      playedAt:
-          DateTime.tryParse(json['playedAt'] as String? ?? '') ??
-          DateTime.now(),
+      playedAt: parseTimestampOr(json['playedAt'], DateTime.now()),
       album: json['album'] as String? ?? '',
       artworkUrl: json['artworkUrl'] as String?,
       durationSeconds: (json['durationSeconds'] as num?)?.toInt(),

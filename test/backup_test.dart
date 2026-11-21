@@ -155,10 +155,10 @@ void main() {
     final recovered = await store.load();
     expect(recovered, isNotNull);
     expect(recovered!.entries.single.title, 'first');
-    expect(
-      quarantined(root, 'archive.lifelog.corrupt-'),
-      isNotEmpty,
-    );
+    // Recovery is non-destructive: the damaged primary stays in place so a
+    // failed key load can never look like a fresh install on the next launch.
+    expect(quarantined(root, 'archive.lifelog.corrupt-'), isEmpty);
+    expect(await store.file.readAsBytes(), [1, 2, 3]);
   });
 
   test('archive load reports the cause when no copy can be opened', () async {
@@ -177,7 +177,10 @@ void main() {
     }
     expect(thrown, isA<ArchiveLoadException>());
     expect(thrown.toString(), contains('Cause:'));
-    expect(quarantined(root, 'archive.lifelog.corrupt-'), hasLength(3));
+    expect((thrown! as ArchiveLoadException).paths, hasLength(3));
+    expect(quarantined(root, 'archive.lifelog.corrupt-'), isEmpty);
+    expect(await File('${store.file.path}.tmp').exists(), isTrue);
+    expect(await File('${store.file.path}.bak').exists(), isTrue);
   });
 
   test('settings saves are atomic and recover from a damaged primary',

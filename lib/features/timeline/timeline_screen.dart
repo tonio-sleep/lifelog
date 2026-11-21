@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/providers/day_provider.dart';
 import '../../app/theme/app_theme.dart';
 import '../../app/widgets/common.dart';
 import '../../app/widgets/components.dart';
@@ -25,7 +26,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
   @override
   void initState() {
     super.initState();
-    _day = dayStart(widget.initialDate ?? DateTime.now());
+    _day = dayStart(widget.initialDate ?? ref.read(selectedDayProvider));
   }
 
   void _shift(int delta) =>

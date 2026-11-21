@@ -52,8 +52,9 @@ class _ItemProgressState {
 
 /// Imports picked media with visible per-item progress.
 ///
-/// Details are collected first, one file at a time, and only then is the
-/// modal progress dialog opened for the actual read/encrypt/save pass. Keeping
+/// Details are collected first, one file at a time (or once for the whole
+/// batch with Add all), and only then is the modal progress dialog opened for
+/// the actual read/encrypt/save pass. Keeping
 /// one modal surface on screen at a time avoids the previous failure where the
 /// details sheet could be hidden behind the progress dialog and never return
 /// an Add result.
@@ -97,12 +98,23 @@ Future<MediaImportSummary> importPickedMedia(
   final tags = <int, List<String>>{};
 
   // ---------------------------------------------------------------------------
-  // Pass 1: collect caption/tags or an explicit Skip/Cancel for every file.
+  // Pass 1: collect caption/tags, accept the rest in bulk, or stop the batch.
   // ---------------------------------------------------------------------------
   var stopDetails = false;
+  var addAllRemaining = false;
+  var bulkCaption = '';
+  List<String> bulkTags = const [];
   for (var i = 0; i < files.length; i++) {
     if (stopDetails || !context.mounted) break;
     final file = files[i];
+    if (addAllRemaining) {
+      // Add all was chosen: the details from that sheet apply to every later
+      // file, so no further sheet is shown for this batch.
+      captions[i] = bulkCaption;
+      tags[i] = bulkTags;
+      setItem(i, _ItemState.pending);
+      continue;
+    }
     setItem(i, _ItemState.details, 'Waiting for details');
     final details = await askMediaDetails(
       context,
@@ -124,6 +136,14 @@ Future<MediaImportSummary> importPickedMedia(
         tags[i] = details.tags;
         // Reset to pending so the save pass reports real progress for it.
         setItem(i, _ItemState.pending);
+        break;
+      case MediaDetailsAction.addAll:
+        bulkCaption = details.caption;
+        bulkTags = List<String>.unmodifiable(details.tags);
+        captions[i] = bulkCaption;
+        tags[i] = bulkTags;
+        setItem(i, _ItemState.pending);
+        addAllRemaining = true;
         break;
       case MediaDetailsAction.skip:
         markSkipped(i);

@@ -1196,7 +1196,7 @@ String _formatDuration(Duration duration) {
       '${seconds.toString().padLeft(2, '0')}';
 }
 
-enum MediaDetailsAction { add, skip, skipAll, cancel }
+enum MediaDetailsAction { add, addAll, skip, skipAll, cancel }
 
 class MediaDetailsResult {
   const MediaDetailsResult({
@@ -1210,8 +1210,9 @@ class MediaDetailsResult {
   final List<String> tags;
 }
 
-/// Adds a caption and tags before importing a picked file. The explicit
-/// Skip all / Cancel choices let a multi-file import be stopped cleanly.
+/// Adds a caption and tags before importing a picked file. In a multi-file
+/// pick, Add all applies these details to every remaining file without asking
+/// again; Skip all / Cancel stop the batch cleanly.
 Future<MediaDetailsResult?> askMediaDetails(
   BuildContext context, {
   required String fileName,
@@ -1310,6 +1311,15 @@ class _MediaDetailsSheetState extends State<_MediaDetailsSheet> {
             ),
           ],
         ),
+        if ((widget.total ?? 1) > 1) ...[
+          const SizedBox(height: Insets.sm),
+          Text(
+            'Add all uses these details for every file.',
+            style: context.text.bodySmall?.copyWith(
+              color: context.palette.dimText,
+            ),
+          ),
+        ],
         const SizedBox(height: Insets.lg),
         Row(
           children: [
@@ -1328,6 +1338,23 @@ class _MediaDetailsSheetState extends State<_MediaDetailsSheet> {
                   const MediaDetailsResult(action: MediaDetailsAction.skipAll),
                 ),
                 child: const Text('Skip all'),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: Insets.sm),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(context).pop(
+                  MediaDetailsResult(
+                    action: MediaDetailsAction.addAll,
+                    caption: _caption.text.trim(),
+                    tags: normaliseTags(_tags.text.split(',')),
+                  ),
+                ),
+                child: const Text('Add all'),
               ),
             ),
             const SizedBox(width: Insets.sm),

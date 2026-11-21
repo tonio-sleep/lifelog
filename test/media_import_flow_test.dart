@@ -175,6 +175,78 @@ void main() {
     await tester.pump(const Duration(milliseconds: 600));
   }, timeout: const Timeout(Duration(seconds: 20)));
 
+  testWidgets('Add all saves every file with the details from that sheet',
+      (tester) async {
+    final root = createTestDir('lifelog-media-add-all');
+    addTearDown(() => root.deleteSync(recursive: true));
+    final services = makeServices(root);
+    final bytes = samplePng();
+    final picked = [
+      for (var i = 1; i <= 3; i++)
+        XFile.fromData(
+          bytes,
+          path: p.join(root.path, 'batch$i.png'),
+          mimeType: 'image/png',
+        ),
+    ];
+    MediaImportSummary? summary;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [appServicesProvider.overrideWithValue(services)],
+        child: MaterialApp(
+          theme: AppTheme.light(),
+          home: Scaffold(
+            body: Consumer(
+              builder: (context, ref, _) => ElevatedButton(
+                onPressed: () async {
+                  summary = await importPickedMedia(context, ref, picked);
+                },
+                child: const Text('Import'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Import'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Add to your archive'), findsOneWidget);
+    expect(find.text('Add all uses these details for every file.'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).at(0), 'Batch day');
+    await tester.enterText(find.byType(TextField).at(1), 'family, trip');
+    await tester.tap(find.text('Add all'));
+
+    for (var attempt = 0; attempt < 150 && summary == null; attempt++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
+
+    expect(summary, isNotNull);
+    final result = summary!;
+    expect(result.total, 3);
+    expect(result.added, 3);
+    expect(result.skipped, 0);
+    expect(result.failed, 0);
+    expect(find.text('3 items added.'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(find.text('Add to your archive'), findsNothing);
+
+    final saved = await tester.runAsync(() => services.archiveStore.load());
+    expect(saved, isNotNull);
+    expect(saved!.media, hasLength(3));
+    for (final item in saved.media) {
+      expect(item.caption, 'Batch day');
+      expect(item.tags, containsAll(['family', 'trip']));
+    }
+
+    await tester.pump(const Duration(milliseconds: 600));
+  }, timeout: const Timeout(Duration(seconds: 30)));
+
   testWidgets('Cancel in details sheet never reports media as added',
       (tester) async {
     final root = createTestDir('lifelog-media-cancel');

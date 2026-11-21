@@ -47,6 +47,8 @@ class DayStats {
     required this.uniqueArtists,
     required this.topTrack,
     required this.topArtist,
+    required this.topTrackArtworkUrl,
+    required this.topArtistArtworkUrl,
     required this.topPlace,
     required this.topPlaceTime,
   });
@@ -71,10 +73,33 @@ class DayStats {
   final int uniqueArtists;
   final ({String name, String artist, int plays})? topTrack;
   final ({String name, int plays})? topArtist;
+  final String? topTrackArtworkUrl;
+  final String? topArtistArtworkUrl;
   final String? topPlace;
   final Duration topPlaceTime;
 
   int get entries => writing.length;
+
+  /// A one-line narrative built only from records that exist. It is a caption
+  /// for the day, never a replacement for the underlying entries.
+  String get summary {
+    final highlights = <String>[];
+    if (entries > 0) {
+      highlights.add('$entries ${plural(entries, 'entry', 'entries')}');
+    }
+    if (photos + videos > 0) {
+      highlights.add(
+        '${photos + videos} ${plural(photos + videos, 'photo', 'photos')}',
+      );
+    }
+    if (songs > 0) highlights.add('$songs ${plural(songs, 'song')}');
+    if (meals > 0) highlights.add('$meals ${plural(meals, 'meal')}');
+    if (topPlace != null) highlights.add('time at $topPlace');
+    if (highlights.isEmpty) return 'Nothing recorded for this day.';
+    if (highlights.length == 1) return '${highlights.first} recorded.';
+    final last = highlights.removeLast();
+    return '${highlights.join(', ')} and $last.';
+  }
 
   bool get isEmpty =>
       entries == 0 &&
@@ -135,6 +160,27 @@ class DayStats {
         .where((t) => TrackerMath.loggedOn(archive.trackerRecords, t.id, day))
         .length;
 
+    // Keep the cover that belongs to the headline artist/track rather than
+    // whichever scrobble happened to be last.
+    String? topTrackArtworkUrl;
+    String? topArtistArtworkUrl;
+    final topTrackKey = music.topTracks.isEmpty
+        ? null
+        : '${music.topTracks.first.artist}|${music.topTracks.first.name}'
+              .toLowerCase();
+    final topArtistKey = music.topArtists.isEmpty
+        ? null
+        : music.topArtists.first.name.toLowerCase();
+    for (final scrobble in music.scrobbles) {
+      if (!Artwork.usable(scrobble.artworkUrl)) continue;
+      final key = '${scrobble.displayArtist}|${scrobble.displayTitle}'
+          .toLowerCase();
+      if (key == topTrackKey) topTrackArtworkUrl ??= scrobble.artworkUrl;
+      if (scrobble.displayArtist.toLowerCase() == topArtistKey) {
+        topArtistArtworkUrl ??= scrobble.artworkUrl;
+      }
+    }
+
     return DayStats(
       day: dayStart(day),
       writing: writing,
@@ -154,6 +200,8 @@ class DayStats {
       uniqueArtists: music.uniqueArtists,
       topTrack: music.topTracks.isEmpty ? null : music.topTracks.first,
       topArtist: music.topArtists.isEmpty ? null : music.topArtists.first,
+      topTrackArtworkUrl: topTrackArtworkUrl,
+      topArtistArtworkUrl: topArtistArtworkUrl,
       topPlace: topPlace,
       topPlaceTime: topPlaceTime,
     );
@@ -162,23 +210,43 @@ class DayStats {
   /// Stat tiles for this day. The first three are always present so the
   /// journal reads consistently; the rest only appear when there is data.
   List<_Stat> _stats(LifelogPalette palette) => [
-        _Stat(Icons.edit_note_rounded, entries, 'Entries', palette.journal,
-            always: true),
-        _Stat(Icons.photo_outlined, photos + videos, 'Photos', palette.photo,
-            always: true),
-        _Stat(Icons.mood_outlined, checkins, 'Check-ins', palette.tracker,
-            always: true),
-        _Stat(Icons.restaurant_outlined, meals, 'Meals', palette.warning),
-        _Stat(Icons.music_note_rounded, songs, 'Songs', palette.music),
-        _Stat(Icons.place_outlined, places, 'Places', palette.place),
-        _Stat(Icons.task_alt_rounded, habits, 'Habits', palette.success),
-        _Stat(Icons.bolt_rounded, events, 'Events', palette.manual),
-      ];
+    _Stat(
+      Icons.edit_note_rounded,
+      entries,
+      'Entries',
+      palette.journal,
+      always: true,
+    ),
+    _Stat(
+      Icons.photo_outlined,
+      photos + videos,
+      'Photos',
+      palette.photo,
+      always: true,
+    ),
+    _Stat(
+      Icons.mood_outlined,
+      checkins,
+      'Check-ins',
+      palette.tracker,
+      always: true,
+    ),
+    _Stat(Icons.restaurant_outlined, meals, 'Meals', palette.warning),
+    _Stat(Icons.music_note_rounded, songs, 'Songs', palette.music),
+    _Stat(Icons.place_outlined, places, 'Places', palette.place),
+    _Stat(Icons.task_alt_rounded, habits, 'Habits', palette.success),
+    _Stat(Icons.bolt_rounded, events, 'Events', palette.manual),
+  ];
 }
 
 class _Stat {
-  const _Stat(this.icon, this.value, this.label, this.color,
-      {this.always = false});
+  const _Stat(
+    this.icon,
+    this.value,
+    this.label,
+    this.color, {
+    this.always = false,
+  });
 
   final IconData icon;
   final int value;
@@ -197,14 +265,17 @@ class DayStatStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final items = stats._stats(context.palette).where((s) => s.visible).toList();
+    final items = stats
+        ._stats(context.palette)
+        .where((s) => s.visible)
+        .toList();
     return SizedBox(
       height: 78,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         clipBehavior: Clip.none,
         itemCount: items.length,
-        separatorBuilder: (_, __) => const SizedBox(width: Insets.sm),
+        separatorBuilder: (_, _) => const SizedBox(width: Insets.sm),
         itemBuilder: (context, i) => _StatTile(stat: items[i], width: 84),
       ),
     );
@@ -309,6 +380,11 @@ class DayOverviewCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text('Day at a glance', style: text.titleSmall),
+          const SizedBox(height: 4),
+          Text(
+            stats.summary,
+            style: text.bodyMedium?.copyWith(color: palette.mutedText),
+          ),
           const SizedBox(height: Insets.md),
           LayoutBuilder(
             builder: (context, constraints) {
@@ -332,6 +408,8 @@ class DayOverviewCard extends StatelessWidget {
             _InsightRow(
               icon: Icons.music_note_rounded,
               color: palette.music,
+              artworkUrl: stats.topTrackArtworkUrl,
+              artworkSeed: '${stats.topTrack!.artist}|${stats.topTrack!.name}',
               title: 'Most played',
               body:
                   '${stats.topTrack!.name} · ${stats.topTrack!.artist}'
@@ -342,6 +420,9 @@ class DayOverviewCard extends StatelessWidget {
               _InsightRow(
                 icon: Icons.mic_external_on_outlined,
                 color: palette.music,
+                artworkUrl: stats.topArtistArtworkUrl,
+                artworkSeed: stats.topArtist!.name,
+                circle: true,
                 title: 'Top artist',
                 body:
                     '${stats.topArtist!.name} · ${stats.topArtist!.plays} '
@@ -373,12 +454,18 @@ class _InsightRow extends StatelessWidget {
     required this.color,
     required this.title,
     required this.body,
+    this.artworkUrl,
+    this.artworkSeed,
+    this.circle = false,
   });
 
   final IconData icon;
   final Color color;
   final String title;
   final String body;
+  final String? artworkUrl;
+  final String? artworkSeed;
+  final bool circle;
 
   @override
   Widget build(BuildContext context) {
@@ -387,7 +474,16 @@ class _InsightRow extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        IconBadge(icon: icon, color: color, size: 34, iconSize: 17),
+        if (artworkSeed != null)
+          Artwork(
+            url: artworkUrl,
+            seed: artworkSeed!,
+            size: 38,
+            circle: circle,
+            icon: icon,
+          )
+        else
+          IconBadge(icon: icon, color: color, size: 34, iconSize: 17),
         const SizedBox(width: Insets.md),
         Expanded(
           child: Column(
@@ -447,7 +543,9 @@ class JournalDayCard extends StatelessWidget {
         _FooterLine(
           icon: Icons.music_note_rounded,
           color: palette.music,
-          text: '${stats.topTrack!.name} · ${stats.topTrack!.artist}',
+          artworkUrl: stats.topTrackArtworkUrl,
+          artworkSeed: '${stats.topTrack!.artist}|${stats.topTrack!.name}',
+          text: 'Top song: ${stats.topTrack!.name} · ${stats.topTrack!.artist}',
         ),
       if (stats.topPlace != null)
         _FooterLine(
@@ -518,8 +616,9 @@ class JournalDayCard extends StatelessWidget {
                         ].join(' · '),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: text.bodySmall
-                            ?.copyWith(color: palette.mutedText),
+                        style: text.bodySmall?.copyWith(
+                          color: palette.mutedText,
+                        ),
                       ),
                     ],
                   ),
@@ -610,16 +709,16 @@ class _MiniStat extends StatelessWidget {
   }
 
   static String _singular(String label) => switch (label) {
-        'Entries' => 'Entry',
-        'Photos' => 'Photo',
-        'Check-ins' => 'Check-in',
-        'Meals' => 'Meal',
-        'Songs' => 'Song',
-        'Places' => 'Place',
-        'Habits' => 'Habit',
-        'Events' => 'Event',
-        _ => label,
-      };
+    'Entries' => 'Entry',
+    'Photos' => 'Photo',
+    'Check-ins' => 'Check-in',
+    'Meals' => 'Meal',
+    'Songs' => 'Song',
+    'Places' => 'Place',
+    'Habits' => 'Habit',
+    'Events' => 'Event',
+    _ => label,
+  };
 }
 
 class _FooterLine extends StatelessWidget {
@@ -627,11 +726,15 @@ class _FooterLine extends StatelessWidget {
     required this.icon,
     required this.color,
     required this.text,
+    this.artworkUrl,
+    this.artworkSeed,
   });
 
   final IconData icon;
   final Color color;
   final String text;
+  final String? artworkUrl;
+  final String? artworkSeed;
 
   @override
   Widget build(BuildContext context) {
@@ -639,7 +742,10 @@ class _FooterLine extends StatelessWidget {
       padding: const EdgeInsets.only(top: 2),
       child: Row(
         children: [
-          Icon(icon, size: 14, color: color),
+          if (artworkSeed != null)
+            Artwork(url: artworkUrl, seed: artworkSeed!, size: 20, icon: icon)
+          else
+            Icon(icon, size: 14, color: color),
           const SizedBox(width: 6),
           Expanded(
             child: Text(
@@ -668,19 +774,39 @@ class JournalOverviewCard extends StatelessWidget {
     final palette = context.palette;
     final live = archive.entries.where((e) => !e.archived).toList();
     final checkins = live.where((e) => e.isCheckinEntry).length;
-    final writing =
-        live.where((e) => !e.isCheckinEntry && !_metricsOnly(e)).length;
+    final writing = live
+        .where((e) => !e.isCheckinEntry && !_metricsOnly(e))
+        .length;
     final streak = currentStreak(archive, DateTime.now());
     final tiles = <_Stat>[
-      _Stat(Icons.local_fire_department_rounded, streak, 'Streak',
-          palette.warning,
-          always: true),
-      _Stat(Icons.edit_note_rounded, writing, 'Entries', palette.journal,
-          always: true),
-      _Stat(Icons.photo_outlined, archive.media.length, 'Photos', palette.photo,
-          always: true),
-      _Stat(Icons.mood_outlined, checkins, 'Check-ins', palette.tracker,
-          always: true),
+      _Stat(
+        Icons.local_fire_department_rounded,
+        streak,
+        'Streak',
+        palette.warning,
+        always: true,
+      ),
+      _Stat(
+        Icons.edit_note_rounded,
+        writing,
+        'Entries',
+        palette.journal,
+        always: true,
+      ),
+      _Stat(
+        Icons.photo_outlined,
+        archive.media.length,
+        'Photos',
+        palette.photo,
+        always: true,
+      ),
+      _Stat(
+        Icons.mood_outlined,
+        checkins,
+        'Check-ins',
+        palette.tracker,
+        always: true,
+      ),
     ];
     return Padding(
       padding: const EdgeInsets.only(bottom: Insets.md),

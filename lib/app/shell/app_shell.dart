@@ -96,21 +96,20 @@ class _AppShellState extends ConsumerState<AppShell> {
       AppDestination.insights => const InsightsScreen(),
       AppDestination.search => const SearchScreen(),
       _ => Scaffold(
-            appBar: AppBar(title: const Text('Unavailable')),
-            body: Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text(
-                  'This screen is not available: ${destination.name}',
-                  textAlign: TextAlign.center,
-                ),
-              ),
+        appBar: AppBar(title: const Text('Unavailable')),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(
+              'This screen is not available: ${destination.name}',
+              textAlign: TextAlign.center,
             ),
           ),
+        ),
+      ),
     };
-    Navigator.of(context).push(
-      CupertinoPageRoute<void>(builder: (_) => screen),
-    );
+    Navigator.of(context)
+        .push(CupertinoPageRoute<void>(builder: (_) => screen));
   }
 
   void _navigateByName(String name, {DateTime? day}) {
@@ -306,7 +305,10 @@ class _TabStackState extends State<_TabStack>
         // stay the same length even before every tab has been visited.
         children: List<Widget>.generate(widget.children.length, (i) {
           return _visited.contains(i)
-              ? TickerMode(enabled: i == widget.index, child: widget.children[i])
+              ? TickerMode(
+                  enabled: i == widget.index,
+                  child: widget.children[i],
+                )
               : const SizedBox.shrink();
         }),
       ),
@@ -392,12 +394,24 @@ class _SideNavigation extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(Insets.xl, Insets.xl, Insets.lg, Insets.lg),
+              padding: const EdgeInsets.fromLTRB(
+                Insets.xl,
+                Insets.xl,
+                Insets.lg,
+                Insets.lg,
+              ),
               child: Row(
                 children: [
                   const LifelogMark(size: 34),
                   const SizedBox(width: Insets.md),
-                  Text('Lifelog', style: AppTheme.serif(context.text.titleLarge, size: 20, weight: FontWeight.w500)),
+                  Text(
+                    'Lifelog',
+                    style: AppTheme.serif(
+                      context.text.titleLarge,
+                      size: 20,
+                      weight: FontWeight.w500,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -417,7 +431,10 @@ class _SideNavigation extends StatelessWidget {
                   for (var g = 0; g < _groups.length; g++) ...[
                     if (g > 0)
                       Padding(
-                        padding: const EdgeInsets.symmetric(vertical: Insets.sm, horizontal: Insets.md),
+                        padding: const EdgeInsets.symmetric(
+                          vertical: Insets.sm,
+                          horizontal: Insets.md,
+                        ),
                         child: Divider(color: palette.border),
                       ),
                     for (final destination in _groups[g])
@@ -431,7 +448,12 @@ class _SideNavigation extends StatelessWidget {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(Insets.md, 0, Insets.md, Insets.sm),
+              padding: const EdgeInsets.fromLTRB(
+                Insets.md,
+                0,
+                Insets.md,
+                Insets.sm,
+              ),
               child: _NavTile(
                 destination: AppDestination.settings,
                 selected: selected == AppDestination.settings,
@@ -439,14 +461,29 @@ class _SideNavigation extends StatelessWidget {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(Insets.xl, Insets.sm, Insets.lg, Insets.lg),
+              padding: const EdgeInsets.fromLTRB(
+                Insets.xl,
+                Insets.sm,
+                Insets.lg,
+                Insets.lg,
+              ),
               child: Row(
                 children: [
-                  Icon(Icons.lock_outline_rounded, size: 13, color: palette.dimText),
+                  Icon(
+                    Icons.lock_outline_rounded,
+                    size: 13,
+                    color: palette.dimText,
+                  ),
                   const SizedBox(width: 6),
-                  Text(
-                    'Encrypted, on this device',
-                    style: context.text.labelSmall?.copyWith(color: palette.dimText),
+                  Expanded(
+                    child: Text(
+                      'Encrypted, on this device',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: context.text.labelSmall?.copyWith(
+                        color: palette.dimText,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -482,7 +519,10 @@ class _NavTile extends StatelessWidget {
         onTap: onTap,
         child: AnimatedContainer(
           duration: Motion.fast,
-          padding: const EdgeInsets.symmetric(horizontal: Insets.md, vertical: 10),
+          padding: const EdgeInsets.symmetric(
+            horizontal: Insets.md,
+            vertical: 10,
+          ),
           decoration: BoxDecoration(
             color: selected ? palette.subtle : Colors.transparent,
             borderRadius: BorderRadius.circular(Radii.md),

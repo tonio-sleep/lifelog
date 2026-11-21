@@ -113,6 +113,7 @@ void main() {
       expect(session.isRecording, isTrue);
       expect(session.canHandOff, isFalse);
 
+      session.beginStopping();
       session.beginTranscription();
       expect(session.isTranscribing, isTrue);
       expect(session.percentLabel, '~0%');
@@ -140,32 +141,85 @@ void main() {
       expect(session.handedOff, isTrue);
     });
 
-    test('a failed transcription keeps captured words and can still hand off',
-        () {
+    test(
+      'a failed transcription keeps captured words and can still hand off',
+      () {
+        final session = VoiceNoteSession();
+        session.beginRecording();
+        session.beginStopping();
+        session.beginTranscription();
+        session.updateProgress(
+          const TranscriptionUpdate(
+            transcriptionId: 'one',
+            transcript: 'partial words',
+            fraction: 0.7,
+            estimated: true,
+            isFinal: false,
+          ),
+        );
+
+        session.transcriptionFailed(
+          message: 'Transcription stopped.',
+          partialTranscript: 'partial words captured',
+          fraction: 0.7,
+        );
+
+        expect(session.phase, VoiceNotePhase.failed);
+        expect(session.canHandOff, isTrue);
+        expect(session.error, contains('stopped'));
+        expect(session.transcript, 'partial words captured');
+        expect(session.percentLabel, '~70%');
+      },
+    );
+
+    test('stopping is an exclusive phase that blocks a second stop', () {
       final session = VoiceNoteSession();
       session.beginRecording();
+      session.beginStopping();
+
+      expect(session.phase, VoiceNotePhase.stopping);
+      expect(session.isBusy, isTrue);
+      expect(session.isRecording, isFalse);
+      expect(session.canHandOff, isFalse);
+
+      session.beginStopping();
+      session.beginRecording();
+      expect(session.phase, VoiceNotePhase.stopping);
+
+      session.beginTranscription();
+      expect(session.isTranscribing, isTrue);
+    });
+
+    test('abandoned sessions ignore late native progress and results', () {
+      final session = VoiceNoteSession();
+      session.beginRecording();
+      session.beginStopping();
       session.beginTranscription();
       session.updateProgress(
         const TranscriptionUpdate(
           transcriptionId: 'one',
           transcript: 'partial words',
-          fraction: 0.7,
+          fraction: 0.4,
           estimated: true,
           isFinal: false,
         ),
       );
+      session.markAbandoned();
 
-      session.transcriptionFailed(
-        message: 'Transcription stopped.',
-        partialTranscript: 'partial words captured',
-        fraction: 0.7,
+      session.updateProgress(
+        const TranscriptionUpdate(
+          transcriptionId: 'one',
+          transcript: 'late words',
+          fraction: 0.9,
+          estimated: false,
+          isFinal: false,
+        ),
       );
+      session.transcriptionSucceeded('late final words');
 
-      expect(session.phase, VoiceNotePhase.failed);
-      expect(session.canHandOff, isTrue);
-      expect(session.error, contains('stopped'));
-      expect(session.transcript, 'partial words captured');
-      expect(session.percentLabel, '~70%');
+      expect(session.transcript, 'partial words');
+      expect(session.phase, VoiceNotePhase.transcribing);
+      expect(session.canHandOff, isFalse);
     });
 
     test('discard marks the recording abandoned', () {

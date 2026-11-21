@@ -655,62 +655,67 @@ class FilterRow<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
-    return ListView.separated(
-      scrollDirection: Axis.horizontal,
-      shrinkWrap: true,
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      itemCount: values.length,
-      separatorBuilder: (_, _) => const SizedBox(width: Insets.sm),
-      itemBuilder: (context, index) {
-        final value = values[index];
-        final isSelected = value == selected;
-        final accent = colorFor?.call(value) ?? context.scheme.primary;
-        final icon = iconFor?.call(value);
-        return Semantics(
-          button: true,
-          selected: isSelected,
-          label: labelFor(value),
-          child: Pressable(
-            borderRadius: BorderRadius.circular(Radii.pill),
-            haptic: true,
-            onTap: () => onChanged(value),
-            child: AnimatedContainer(
-              duration: Motion.fast,
-              constraints: const BoxConstraints(minHeight: 44),
-              padding: const EdgeInsets.symmetric(horizontal: Insets.md),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: isSelected
-                    ? accent.withValues(alpha: 0.15)
-                    : palette.subtle,
-                borderRadius: BorderRadius.circular(Radii.pill),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (icon != null) ...[
-                    Icon(
-                      icon,
-                      size: 15,
-                      color: isSelected ? accent : palette.mutedText,
+    // A horizontal viewport needs a bounded cross axis. Inside ScreenFrame's
+    // vertical CustomScrollView an unbounded shrink-wrapped ListView made every
+    // screen with a filter row paint inconsistently (and sometimes blank).
+    return SizedBox(
+      height: 48,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        itemCount: values.length,
+        separatorBuilder: (_, _) => const SizedBox(width: Insets.sm),
+        itemBuilder: (context, index) {
+          final value = values[index];
+          final isSelected = value == selected;
+          final accent = colorFor?.call(value) ?? context.scheme.primary;
+          final icon = iconFor?.call(value);
+          return Semantics(
+            button: true,
+            selected: isSelected,
+            label: labelFor(value),
+            child: Pressable(
+              borderRadius: BorderRadius.circular(Radii.pill),
+              haptic: true,
+              onTap: () => onChanged(value),
+              child: AnimatedContainer(
+                duration: Motion.fast,
+                constraints: const BoxConstraints(minHeight: 44),
+                padding: const EdgeInsets.symmetric(horizontal: Insets.md),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? accent.withValues(alpha: 0.15)
+                      : palette.subtle,
+                  borderRadius: BorderRadius.circular(Radii.pill),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (icon != null) ...[
+                      Icon(
+                        icon,
+                        size: 15,
+                        color: isSelected ? accent : palette.mutedText,
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                    Text(
+                      labelFor(value),
+                      style: context.text.labelMedium?.copyWith(
+                        color: isSelected ? accent : palette.mutedText,
+                        fontWeight: isSelected
+                            ? FontWeight.w600
+                            : FontWeight.w500,
+                      ),
                     ),
-                    const SizedBox(width: 6),
                   ],
-                  Text(
-                    labelFor(value),
-                    style: context.text.labelMedium?.copyWith(
-                      color: isSelected ? accent : palette.mutedText,
-                      fontWeight: isSelected
-                          ? FontWeight.w600
-                          : FontWeight.w500,
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }
@@ -841,8 +846,9 @@ Future<T?> showLifelogSheet<T>(
       final keyboardOpen = keyboardHeight > 0;
       // Home indicator / system navigation bar. SafeArea in the route only
       // covers the top, so the last button used to sit underneath it.
-      final bottomSystemInset =
-          keyboardOpen ? 0.0 : MediaQuery.viewPaddingOf(sheetContext).bottom;
+      final bottomSystemInset = keyboardOpen
+          ? 0.0
+          : MediaQuery.viewPaddingOf(sheetContext).bottom;
       final availableHeight =
           MediaQuery.sizeOf(sheetContext).height - keyboardHeight - 8;
       return ConstrainedBox(
@@ -867,8 +873,8 @@ Future<T?> showLifelogSheet<T>(
                         0,
                         Insets.page,
                         (footerBuilder == null
-                                ? Insets.xl + bottomSystemInset
-                                : Insets.md),
+                            ? Insets.xl + bottomSystemInset
+                            : Insets.md),
                       ),
                       child: builder(sheetContext),
                     ),

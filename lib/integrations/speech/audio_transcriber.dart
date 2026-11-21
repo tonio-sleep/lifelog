@@ -204,30 +204,32 @@ double transcriptionProgressFraction({
 /// Thin Dart wrapper around the native Speech framework channel.
 class AudioTranscriber {
   AudioTranscriber({MethodChannel? methodChannel, EventChannel? eventChannel})
-      : _method = methodChannel ??
-            const MethodChannel(transcriptionMethodChannel),
-        _events = eventChannel ??
-            const EventChannel(transcriptionEventChannel);
+    : _method =
+          methodChannel ?? const MethodChannel(transcriptionMethodChannel),
+      _events = eventChannel ?? const EventChannel(transcriptionEventChannel);
 
   final MethodChannel _method;
   final EventChannel _events;
   StreamSubscription<dynamic>? _subscription;
   final Map<String, void Function(TranscriptionUpdate)> _listeners =
       <String, void Function(TranscriptionUpdate)>{};
-  _PendingTranscription? _active;
+  final Map<String, _PendingTranscription> _pending =
+      <String, _PendingTranscription>{};
   int _nextId = 0;
+  int _epoch = 0;
+  bool _disposed = false;
 
   String _newId() {
     _nextId++;
     return 'transcription-${DateTime.now().microsecondsSinceEpoch}-$_nextId';
   }
 
-  Future<void> _ensureListening() async {
+  void _ensureListening() {
     if (_subscription != null) return;
     _subscription = _events.receiveBroadcastStream().listen(
-          _handleEvent,
-          onError: (Object _) {},
-        );
+      _handleEvent,
+      onError: (Object _) {},
+    );
   }
 
   void _handleEvent(Object? event) {
@@ -274,19 +276,34 @@ class AudioTranscriber {
     required String path,
     required String? localeId,
     required void Function(TranscriptionUpdate) onProgress,
-  }) async {
+  }) {
     final id = _newId();
-    await _ensureListening();
-    final pending = _PendingTranscription(id: id, onProgress: onProgress);
+    final epoch = _epoch;
+    // Register everything synchronously. An await here used to let cancel()
+    // snapshot an empty pending set and leave this task running natively.
+    _ensureListening();
+    final pending = _PendingTranscription(
+      id: id,
+      epoch: epoch,
+      onProgress: onProgress,
+    );
     _listeners[id] = onProgress;
-    _active = pending;
+    _pending[id] = pending;
+    if (_disposed || epoch < _epoch) {
+      pending.fail(
+        _cancelledException(
+          code: _disposed ? 'DISPOSED' : 'CANCELLED',
+          message: _disposed
+              ? 'The transcriber was closed.'
+              : 'Transcription was cancelled.',
+        ),
+      );
+      _forget(pending);
+      return pending.completer.future;
+    }
     // Do not await here: cancel() must be able to complete this future even if
     // the native method result never arrives after a cancelled task.
-    _invokeTranscribe(
-      pending: pending,
-      path: path,
-      localeId: localeId,
-    );
+    _invokeTranscribe(pending: pending, path: path, localeId: localeId);
     return pending.completer.future;
   }
 
@@ -305,12 +322,14 @@ class AudioTranscriber {
         },
       );
       if (reply == null) {
-        pending.fail(const AudioTranscriptionException(
-          code: 'NO_RESULT',
-          message: 'The transcriber returned no result.',
-          partialTranscript: '',
-          fraction: 0,
-        ));
+        pending.fail(
+          const AudioTranscriptionException(
+            code: 'NO_RESULT',
+            message: 'The transcriber returned no result.',
+            partialTranscript: '',
+            fraction: 0,
+          ),
+        );
         return;
       }
       pending.complete(
@@ -334,48 +353,85 @@ class AudioTranscriber {
 
   void _forget(_PendingTranscription pending) {
     _listeners.remove(pending.id);
-    if (identical(_active, pending)) _active = null;
+    _pending.remove(pending.id);
+  }
+
+  AudioTranscriptionException _cancelledException({
+    required String code,
+    required String message,
+  }) {
+    return AudioTranscriptionException(
+      code: code,
+      message: message,
+      partialTranscript: '',
+      fraction: 0,
+    );
   }
 
   Future<void> cancel() async {
-    final pending = _active;
+    final cancelledAt = _epoch;
+    _epoch++;
+    // Snapshot every task that existed when cancel was requested, not just a
+    // single "active" field: a late registration must not survive the await.
+    final pendings = _pending.values
+        .where((pending) => pending.epoch <= cancelledAt)
+        .toList();
     try {
       await _method.invokeMethod<void>('cancel');
-    } on PlatformException catch (_) {
+    } catch (_) {
       // Cancellation is best-effort; the native task is idempotent.
     }
-    if (pending != null) {
-      pending.fail(const AudioTranscriptionException(
-        code: 'CANCELLED',
-        message: 'Transcription was cancelled.',
-        partialTranscript: '',
-        fraction: 0,
-      ));
+    for (final pending in pendings) {
+      pending.fail(
+        _cancelledException(
+          code: 'CANCELLED',
+          message: 'Transcription was cancelled.',
+        ),
+      );
       _forget(pending);
     }
   }
 
   Future<void> dispose() async {
-    final pending = _active;
-    if (pending != null) {
-      pending.fail(const AudioTranscriptionException(
-        code: 'DISPOSED',
-        message: 'The transcriber was closed.',
-        partialTranscript: '',
-        fraction: 0,
-      ));
+    if (_disposed) return;
+    _disposed = true;
+    final disposedAt = _epoch;
+    _epoch++;
+    final pendings = _pending.values
+        .where((pending) => pending.epoch <= disposedAt)
+        .toList();
+    // The native recognizer must be cancelled even when no Dart future is
+    // pending, otherwise it keeps running after the sheet is torn down.
+    try {
+      await _method.invokeMethod<void>('cancel');
+    } catch (_) {
+      // Best effort; dispose must still release the Dart subscription.
+    }
+    for (final pending in pendings) {
+      pending.fail(
+        _cancelledException(
+          code: 'DISPOSED',
+          message: 'The transcriber was closed.',
+        ),
+      );
       _forget(pending);
     }
     await _subscription?.cancel();
     _subscription = null;
     _listeners.clear();
+    _pending.clear();
   }
 }
 
 class _PendingTranscription {
-  _PendingTranscription({required this.id, required this.onProgress});
+  _PendingTranscription({
+    required this.id,
+    required this.epoch,
+    required this.onProgress,
+  });
 
   final String id;
+  final int epoch;
   final void Function(TranscriptionUpdate) onProgress;
   final Completer<TranscriptionResult> completer =
       Completer<TranscriptionResult>();

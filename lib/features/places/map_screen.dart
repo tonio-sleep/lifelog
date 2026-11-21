@@ -12,6 +12,7 @@ import '../../app/widgets/common.dart';
 import '../../app/widgets/components.dart';
 import '../../core/util/dates.dart';
 import '../../domain/models/places.dart';
+import '../../domain/models/settings.dart';
 import '../../integrations/location/background_location_channel.dart';
 import '../../integrations/location/location_tracking.dart';
 import '../../integrations/location/location_tracking_controller.dart';
@@ -20,6 +21,16 @@ import '../../integrations/maps/map_models.dart';
 import '../../integrations/maps/map_platform.dart';
 import 'place_dialogs.dart';
 import 'place_map.dart';
+
+/// User-facing title for a day's journey, without a hardcoded "Today".
+String journeyTitleFor(DateTime day) {
+  final now = DateTime.now();
+  if (sameDay(day, now)) return 'Today’s journey';
+  if (sameDay(day, now.subtract(const Duration(days: 1)))) {
+    return 'Yesterday’s journey';
+  }
+  return 'Journey on ${formatShortDate(day)}';
+}
 
 class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({super.key, this.initialDate});
@@ -34,6 +45,7 @@ class MapScreen extends ConsumerStatefulWidget {
 class _MapScreenState extends ConsumerState<MapScreen> {
   late DateTime _day;
   bool _privateMode = false;
+  bool _showSettings = false;
   BackgroundLocationStatus? _backgroundStatus;
   Timer? _liveTimer;
   MapPoint? _livePoint;
@@ -48,8 +60,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final missing = [
       for (final seg in summary.segments)
         if (seg.wantsName &&
-            !PlaceNameResolver.instance
-                .hasAttempted(seg.latitude!, seg.longitude!))
+            !PlaceNameResolver.instance.hasAttempted(
+              seg.latitude!,
+              seg.longitude!,
+            ))
           seg,
     ];
     if (missing.isEmpty) return;
@@ -57,8 +71,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     () async {
       try {
         for (final seg in missing.take(6)) {
-          await PlaceNameResolver.instance
-              .resolve(seg.latitude!, seg.longitude!);
+          await PlaceNameResolver.instance.resolve(
+            seg.latitude!,
+            seg.longitude!,
+          );
           if (!mounted) return;
           setState(() {});
         }
@@ -127,8 +143,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   bool get _isIOS => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
   Future<void> _refreshBackgroundStatus() async {
-    final status =
-        await ref.read(locationTrackingControllerProvider).backgroundStatus();
+    final status = await ref
+        .read(locationTrackingControllerProvider)
+        .backgroundStatus();
     if (!mounted) return;
     setState(() => _backgroundStatus = status);
   }
@@ -212,7 +229,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   /// monitoring with Always authorization.
   String _backgroundRowSubtitle(BackgroundLocationStatus status) {
     if (!status.enabled) return 'Off';
-    if (!status.locationServicesEnabled) return 'Off · Location Services are off';
+    if (!status.locationServicesEnabled) {
+      return 'Off · Location Services are off';
+    }
     switch (status.authorization) {
       case BackgroundLocationAuthorization.restricted:
         return 'Restricted · iOS does not allow location monitoring';
@@ -257,9 +276,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     if (!mounted) return;
     showSnack(
       context,
-      ok
-          ? 'Current location recorded.'
-          : 'Could not read your current location. Check location access in Settings.',
+      ok ? 'Current location recorded.' : 'Could not read your current location. Check location access in Settings.',
     );
   }
 
@@ -270,7 +287,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final palette = context.palette;
     final places = [...archive.places]
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    final backgroundStatus = _backgroundStatus ??
+    final backgroundStatus =
+        _backgroundStatus ??
         BackgroundLocationStatus(
           enabled: settings.backgroundLocationEnabled,
           authorization: BackgroundLocationAuthorization.unknown,
@@ -294,9 +312,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           onPressed: _recordLocationNow,
         ),
         HeaderButton(
-          icon: Icons.info_outline_rounded,
-          tooltip: 'How places work',
-          onPressed: _showPrivacy,
+          icon: Icons.tune_rounded,
+          tooltip: _showSettings
+              ? 'Hide tracking settings'
+              : 'Tracking settings',
+          filled: _showSettings,
+          onPressed: () => setState(() => _showSettings = !_showSettings),
         ),
         HeaderButton(
           icon: Icons.add_location_alt_outlined,
@@ -310,76 +331,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           day: _day,
           onChanged: (value) => setState(() => _day = value),
         ),
-        const SizedBox(height: Insets.md),
-        ListGroup(
-          title: 'Day tracking',
-          footer: _isIOS
-              ? 'Day tracking records your route while the app is in use. Background visits use iOS place monitoring (not continuous GPS) and need Location Access set to Always in iOS Settings. Your route stays on this device in your encrypted archive. Naming stops sends only rounded coordinates of a stop to OpenStreetMap; turn it off to keep everything offline.'
-              : 'Day tracking records your route while the app is in use. Background visits are an iOS-only feature. Your route stays on this device in your encrypted archive. Naming stops sends only rounded coordinates of a stop to OpenStreetMap; turn it off to keep everything offline.',
-          children: [
-            ListRow(
-              icon: Icons.storefront_outlined,
-              iconColor: palette.place,
-              title: 'Name places I stop at',
-              subtitle: settings.placeLookupEnabled
-                  ? 'On · stops of 5+ min get the nearest place name (OpenStreetMap)'
-                  : 'Off · stops stay as “Another location”',
-              trailing: Switch.adaptive(
-                value: settings.placeLookupEnabled,
-                onChanged: (v) => ref
-                    .read(settingsProvider.notifier)
-                    .setPlaceLookupEnabled(v),
-              ),
-            ),
-            ListRow(
-              icon: Icons.location_searching_rounded,
-              iconColor: palette.place,
-              title: 'Track where I spend time',
-              subtitle: settings.locationTrackingEnabled
-                  ? 'On · records location while the app is in use'
-                  : 'Off',
-              trailing: Switch.adaptive(
-                value: settings.locationTrackingEnabled,
-                onChanged: _toggleTracking,
-              ),
-            ),
-            if (settings.locationTrackingEnabled)
-              ListRow(
-                icon: Icons.pin_drop_outlined,
-                iconColor: palette.place,
-                title: 'Record now',
-                subtitle: 'Capture your current location and update today',
-                chevron: true,
-                onTap: _recordLocationNow,
-              ),
-            if (_isIOS) ...[
-              ListRow(
-                icon: Icons.hourglass_top_rounded,
-                iconColor: palette.place,
-                title: 'Background visits',
-                subtitle: _backgroundRowSubtitle(backgroundStatus),
-                trailing: Switch.adaptive(
-                  value: settings.backgroundLocationEnabled,
-                  onChanged: _toggleBackgroundTracking,
-                ),
-              ),
-              if (settings.backgroundLocationEnabled)
-                ListRow(
-                  icon: Icons.settings_outlined,
-                  iconColor: palette.place,
-                  title: 'Location Access in iOS Settings',
-                  subtitle: 'Choose Always for background visit tracking',
-                  chevron: true,
-                  onTap: () async {
-                    await _openLocationSettings();
-                    if (!mounted) return;
-                    unawaited(_refreshBackgroundStatus());
-                  },
-                ),
-            ],
-          ],
-        ),
-        const SizedBox(height: Insets.md),
+        const SizedBox(height: Insets.sm),
         DaySwitcher(
           day: _day,
           onSwipe: _shift,
@@ -387,18 +339,25 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             final visits = archive.visitsOn(day);
             final String? Function(double, double)? nameFor =
                 settings.placeLookupEnabled
-                    ? PlaceNameResolver.instance.cached
-                    : null;
-            final summary =
-                LocationTracking.summarizeDay(archive, day, nameFor: nameFor);
-            final stops =
-                LocationTracking.inferStops(archive, day, nameFor: nameFor);
+                ? PlaceNameResolver.instance.cached
+                : null;
+            final summary = LocationTracking.summarizeDay(
+              archive,
+              day,
+              nameFor: nameFor,
+            );
+            final stops = LocationTracking.inferStops(
+              archive,
+              day,
+              nameFor: nameFor,
+            );
             if (settings.placeLookupEnabled) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (mounted) _ensureNames(summary);
               });
             }
             final isToday = sameDay(day, DateTime.now());
+            final journeyTitle = journeyTitleFor(day);
             final lastStayBeforeTravel = _lastStayBeforeCurrentTravel(summary);
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -418,11 +377,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     padding: const EdgeInsets.only(bottom: Insets.md),
                     child: _DaySummaryCard(summary: summary, isToday: isToday),
                   ),
-                _buildMap(
-                  places: places,
-                  day: day,
-                  summary: summary,
-                ),
+                _buildMap(places: places, day: day, summary: summary),
                 if (isToday && _livePoint != null)
                   Padding(
                     padding: const EdgeInsets.only(top: Insets.sm),
@@ -457,7 +412,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   },
                 ),
                 if (stops.isNotEmpty) ...[
-                  const SectionHeader(title: 'Travel stops & possible destinations'),
+                  const SectionHeader(title: 'Stops & destinations'),
                   for (final stop in stops)
                     _StopCard(
                       stop: stop,
@@ -471,7 +426,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       ),
                     ),
                 ],
-                const SectionHeader(title: 'Today\'s journey'),
+                SectionHeader(title: journeyTitle),
                 if (summary.segments.isEmpty)
                   EmptyState(
                     icon: Icons.route_outlined,
@@ -481,8 +436,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         : 'Building your day',
                     message: summary.sampleCount == 0
                         ? (settings.locationTrackingEnabled
-                            ? 'Keep the app open sometimes or tap Record now so Lifelog can see where you are.'
-                            : 'Turn on day tracking or log a visit manually.')
+                              ? 'Keep the app open sometimes or tap Record now so Lifelog can see where you are.'
+                              : 'Turn on day tracking or log a visit manually.')
                         : 'Location samples were recorded. Keep tracking to see more detail.',
                     actionLabel: settings.locationTrackingEnabled
                         ? 'Record now'
@@ -501,20 +456,26 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     ),
                 if (visits.any((v) => v.id.startsWith('auto-loc-'))) ...[
                   const SectionHeader(title: 'Auto-tracked places'),
-                  for (final visit
-                      in visits.where((v) => v.id.startsWith('auto-loc-')))
+                  for (final visit in visits.where(
+                    (v) => v.id.startsWith('auto-loc-'),
+                  ))
                     _VisitCard(visit: visit, day: day),
                 ],
                 if (visits.any((v) => !v.id.startsWith('auto-loc-'))) ...[
                   const SectionHeader(title: 'Manual visits'),
-                  for (final visit
-                      in visits.where((v) => !v.id.startsWith('auto-loc-')))
+                  for (final visit in visits.where(
+                    (v) => !v.id.startsWith('auto-loc-'),
+                  ))
                     _VisitCard(visit: visit, day: day),
                 ],
               ],
             );
           },
         ),
+        if (_showSettings) ...[
+          const SectionHeader(title: 'Tracking settings'),
+          _trackingSettings(backgroundStatus, settings),
+        ],
         SectionHeader(
           title: 'Saved places',
           actionLabel: 'New',
@@ -525,8 +486,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
             icon: Icons.place_outlined,
             color: palette.place,
             title: 'No saved places',
-            message:
-                'Save Home, Work or anywhere you go often. Coordinates help match tracked locations to places.',
+            message: 'Save Home, Work or anywhere you go often. Coordinates help match tracked locations to places.',
             actionLabel: 'Add a place',
             onAction: () => showPlaceEditor(context, ref),
             compact: true,
@@ -537,8 +497,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
               for (final place in places)
                 _PlaceRow(
                   place: place,
-                  visits:
-                      archive.visits.where((v) => v.placeId == place.id).length,
+                  visits: archive.visits
+                      .where((v) => v.placeId == place.id)
+                      .length,
                   privateMode: _privateMode,
                   onVisit: () => showVisitEditor(
                     context,
@@ -549,6 +510,90 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                 ),
             ],
           ),
+      ],
+    );
+  }
+
+  Widget _trackingSettings(
+    BackgroundLocationStatus? backgroundStatus,
+    AppSettings settings,
+  ) {
+    final palette = context.palette;
+    return ListGroup(
+      title: 'Day tracking',
+      footer: _isIOS
+          ? 'Day tracking records your route while the app is in use. Background visits use iOS place monitoring (not continuous GPS) and need Location Access set to Always in iOS Settings. Your route stays on this device in your encrypted archive. Naming stops sends only rounded coordinates of a stop to OpenStreetMap; turn it off to keep everything offline.'
+          : 'Day tracking records your route while the app is in use. Background visits are an iOS-only feature. Your route stays on this device in your encrypted archive. Naming stops sends only rounded coordinates of a stop to OpenStreetMap; turn it off to keep everything offline.',
+      children: [
+        ListRow(
+          icon: Icons.storefront_outlined,
+          iconColor: palette.place,
+          title: 'Name places I stop at',
+          subtitle: settings.placeLookupEnabled
+              ? 'On · stops of 5+ min get the nearest place name (OpenStreetMap)'
+              : 'Off · stops stay as “Another location”',
+          trailing: Switch.adaptive(
+            value: settings.placeLookupEnabled,
+            onChanged: (v) =>
+                ref.read(settingsProvider.notifier).setPlaceLookupEnabled(v),
+          ),
+        ),
+        ListRow(
+          icon: Icons.location_searching_rounded,
+          iconColor: palette.place,
+          title: 'Track where I spend time',
+          subtitle: settings.locationTrackingEnabled
+              ? 'On · records location while the app is in use'
+              : 'Off',
+          trailing: Switch.adaptive(
+            value: settings.locationTrackingEnabled,
+            onChanged: _toggleTracking,
+          ),
+        ),
+        if (settings.locationTrackingEnabled)
+          ListRow(
+            icon: Icons.pin_drop_outlined,
+            iconColor: palette.place,
+            title: 'Record now',
+            subtitle: 'Capture your current location and update today',
+            chevron: true,
+            onTap: _recordLocationNow,
+          ),
+        if (_isIOS) ...[
+          ListRow(
+            icon: Icons.hourglass_top_rounded,
+            iconColor: palette.place,
+            title: 'Background visits',
+            subtitle: backgroundStatus == null
+                ? 'Checking iOS location access…'
+                : _backgroundRowSubtitle(backgroundStatus),
+            trailing: Switch.adaptive(
+              value: settings.backgroundLocationEnabled,
+              onChanged: _toggleBackgroundTracking,
+            ),
+          ),
+          if (settings.backgroundLocationEnabled)
+            ListRow(
+              icon: Icons.settings_outlined,
+              iconColor: palette.place,
+              title: 'Location Access in iOS Settings',
+              subtitle: 'Choose Always for background visit tracking',
+              chevron: true,
+              onTap: () async {
+                await _openLocationSettings();
+                if (!mounted) return;
+                unawaited(_refreshBackgroundStatus());
+              },
+            ),
+        ],
+        ListRow(
+          icon: Icons.info_outline_rounded,
+          iconColor: palette.place,
+          title: 'How places work',
+          subtitle: 'Privacy and how location names are looked up',
+          chevron: true,
+          onTap: _showPrivacy,
+        ),
       ],
     );
   }
@@ -589,18 +634,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         ),
       );
     }
-    final stopPoints = LocationTracking.inferStops(ref.read(archiveProvider), day)
-        .map(
-          (stop) => MapPoint(
-            latitude: stop.latitude,
-            longitude: stop.longitude,
-            name: _privateMode ? 'Hidden stop' : stop.label,
-            radiusMeters: 120,
-            kind: 'stop',
-            notes: formatTimeRange(stop.startAt, stop.endAt),
-          ),
-        )
-        .toList();
+    final stopPoints =
+        LocationTracking.inferStops(ref.read(archiveProvider), day)
+            .map(
+              (stop) => MapPoint(
+                latitude: stop.latitude,
+                longitude: stop.longitude,
+                name: _privateMode ? 'Hidden stop' : stop.label,
+                radiusMeters: 120,
+                kind: 'stop',
+                notes: formatTimeRange(stop.startAt, stop.endAt),
+              ),
+            )
+            .toList();
     final placePoints = places
         .where((place) => place.hasCoordinates)
         .map(
@@ -678,15 +724,14 @@ class _NowCard extends StatelessWidget {
     final title = current
         ? status.title
         : isToday
-            ? '${status.title} (last known)'
-            : '${status.title} (last for this day)';
+        ? '${status.title} (last known)'
+        : '${status.title} (last for this day)';
     final detailLines = <String>[
       if (isTravel && fromLabel != null && fromLabel!.isNotEmpty)
         'Left $fromLabel at ${formatTime(status.since)}',
       if (isTravel && (fromLabel == null || fromLabel!.isEmpty))
         'Started moving at ${formatTime(status.since)}',
-      if (!isTravel)
-        status.subtitle,
+      if (!isTravel) status.subtitle,
       if (isTravel) status.subtitle,
       'Last updated ${_agoText(updatedAgo)}',
     ];
@@ -705,8 +750,8 @@ class _NowCard extends StatelessWidget {
                   current
                       ? 'Where you are now'
                       : isToday
-                          ? 'Last known location'
-                          : 'Last location this day',
+                      ? 'Last known location'
+                      : 'Last location this day',
                   style: text.labelMedium?.copyWith(
                     color: palette.mutedText,
                     fontWeight: FontWeight.w600,
@@ -882,32 +927,41 @@ class _JourneySegmentCard extends StatelessWidget {
     final timeText = formatTimeRange(segment.startAt, segment.endAt);
     final title = travel
         ? (segment.isCurrent && isToday ? 'On the road now' : 'Traveling')
-        : (segment.isCurrent && isToday ? '${segment.label} (now)' : segment.label);
+        : (segment.isCurrent && isToday
+              ? '${segment.label} (now)'
+              : segment.label);
     final subtitleParts = <String>[
       timeText,
       if (dur.inMinutes > 0) formatDurationMinutes(dur.inMinutes),
-      if (travel && segment.distanceMeters != null && segment.distanceMeters! >= 100)
+      if (travel &&
+          segment.distanceMeters != null &&
+          segment.distanceMeters! >= 100)
         '~${_distanceText(segment.distanceMeters!)}',
     ];
     final explanation = travel
         ? (segment.isCurrent && isToday
-            ? 'You are moving between places.'
-            : 'Time spent on the move.')
+              ? 'You are moving between places.'
+              : 'Time spent on the move.')
         : (segment.isCurrent && isToday)
-            ? (dur.inMinutes > 0
-                ? 'Here for ${formatDurationMinutes(dur.inMinutes)} so far.'
-                : 'You just arrived.')
-            : movedOn && dur.inMinutes > 0
-                ? 'Stayed ${formatDurationMinutes(dur.inMinutes)}, then moved on at ${formatTime(segment.endAt)}.'
-                : (segment.placeId == null
-                    ? (segment.detail == 'Near this spot'
-                        ? 'Closest named spot to where you stopped.'
-                        : 'Stopped at a location not saved as a place.')
-                    : 'Time spent here.');
+        ? (dur.inMinutes > 0
+              ? 'Here for ${formatDurationMinutes(dur.inMinutes)} so far.'
+              : 'You just arrived.')
+        : movedOn && dur.inMinutes > 0
+        ? 'Stayed ${formatDurationMinutes(dur.inMinutes)}, then moved on at ${formatTime(segment.endAt)}.'
+        : (segment.placeId == null
+              ? (segment.detail == 'Near this spot'
+                    ? 'Closest named spot to where you stopped.'
+                    : 'Stopped at a location not saved as a place.')
+              : 'Time spent here.');
     return Padding(
       padding: const EdgeInsets.only(bottom: Insets.sm),
       child: QuietCard(
-        padding: const EdgeInsets.fromLTRB(Insets.md, Insets.md, Insets.md, Insets.md),
+        padding: const EdgeInsets.fromLTRB(
+          Insets.md,
+          Insets.md,
+          Insets.md,
+          Insets.md,
+        ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -992,12 +1046,21 @@ class _VisitCard extends ConsumerWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: Insets.sm),
       child: QuietCard(
-        padding:
-            const EdgeInsets.fromLTRB(Insets.md, Insets.md, Insets.sm, Insets.md),
+        padding: const EdgeInsets.fromLTRB(
+          Insets.md,
+          Insets.md,
+          Insets.sm,
+          Insets.md,
+        ),
         onTap: () => showVisitEditor(context, ref, existing: visit, day: day),
         child: Row(
           children: [
-            IconBadge(icon: Icons.edit_location_alt_outlined, color: accent, size: 40, iconSize: 20),
+            IconBadge(
+              icon: Icons.edit_location_alt_outlined,
+              color: accent,
+              size: 40,
+              iconSize: 20,
+            ),
             const SizedBox(width: Insets.md),
             Expanded(
               child: Column(
@@ -1015,11 +1078,14 @@ class _VisitCard extends ConsumerWidget {
                       ),
                       if (suggested) ...[
                         const SizedBox(width: Insets.sm),
-                        Text(
-                          visit.confidence.label,
-                          style: text.labelSmall?.copyWith(
-                            color: context.scheme.secondary,
-                            fontWeight: FontWeight.w600,
+                        Tooltip(
+                          message: 'Inferred from your location. Tap to confirm or edit.',
+                          child: Text(
+                            visit.confidence.label,
+                            style: text.labelSmall?.copyWith(
+                              color: context.scheme.secondary,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                       ],
@@ -1048,7 +1114,12 @@ class _VisitCard extends ConsumerWidget {
               icon: Icon(Icons.more_horiz_rounded, color: palette.dimText),
               onSelected: (value) async {
                 if (value == 'edit') {
-                  await showVisitEditor(context, ref, existing: visit, day: day);
+                  await showVisitEditor(
+                    context,
+                    ref,
+                    existing: visit,
+                    day: day,
+                  );
                 } else if (value == 'delete') {
                   final ok = await confirm(
                     context,
@@ -1115,8 +1186,7 @@ class _PlaceRow extends ConsumerWidget {
             final ok = await confirm(
               context,
               title: 'Delete “${place.name}”?',
-              message:
-                  'Visits that mention this place will remain, but will no longer be linked to it.',
+              message: 'Visits that mention this place will remain, but will no longer be linked to it.',
             );
             if (ok) {
               if (!context.mounted) return;
@@ -1138,8 +1208,6 @@ class _PlaceRow extends ConsumerWidget {
   }
 }
 
-
-
 class _LiveLocationLine extends StatelessWidget {
   const _LiveLocationLine({required this.point, required this.checkedAt});
 
@@ -1153,16 +1221,12 @@ class _LiveLocationLine extends StatelessWidget {
         : ' · updated ${_agoText(DateTime.now().difference(checkedAt!))}';
     return Row(
       children: [
-        Icon(
-          Icons.gps_fixed_rounded,
-          size: 16,
-          color: context.palette.place,
-        ),
+        Icon(Icons.gps_fixed_rounded, size: 16, color: context.palette.place),
         const SizedBox(width: Insets.xs),
         Expanded(
           child: Text(
-            'Live fix ${point.latitude.toStringAsFixed(5)}, '
-            '${point.longitude.toStringAsFixed(5)}$ago',
+            'Live near ${point.name.trim().isEmpty ? 'your current area' : point.name}'
+            '$ago',
             style: context.text.labelSmall?.copyWith(
               color: context.palette.mutedText,
               fontFeatures: tabularFigures,
@@ -1240,7 +1304,7 @@ class _StopCard extends StatelessWidget {
                       formatTimeRange(stop.startAt, stop.endAt),
                       if (duration.inMinutes > 0)
                         formatDurationMinutes(duration.inMinutes),
-                      '${stop.sampleCount} GPS checks',
+                      '${stop.sampleCount} location samples',
                     ].join(' · '),
                     style: context.text.bodySmall?.copyWith(
                       color: palette.mutedText,
@@ -1285,7 +1349,9 @@ class _PrivacyPoint extends StatelessWidget {
               const SizedBox(height: 2),
               Text(
                 body,
-                style: context.text.bodySmall?.copyWith(color: palette.mutedText),
+                style: context.text.bodySmall?.copyWith(
+                  color: palette.mutedText,
+                ),
               ),
             ],
           ),

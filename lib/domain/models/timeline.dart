@@ -30,7 +30,7 @@ enum TimelineConfidence {
 
   String get label => switch (this) {
     TimelineConfidence.confirmed => 'Confirmed',
-    TimelineConfidence.suggested => 'Suggested',
+    TimelineConfidence.suggested => 'Auto-detected',
   };
 }
 

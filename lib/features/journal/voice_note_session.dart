@@ -1,6 +1,6 @@
 import '../../integrations/speech/audio_transcriber.dart';
 
-enum VoiceNotePhase { idle, recording, transcribing, ready, failed }
+enum VoiceNotePhase { idle, recording, stopping, transcribing, ready, failed }
 
 /// State for the deferred voice-note flow. Recording and transcription are
 /// separate phases: transcription never starts until the audio file is closed.
@@ -22,8 +22,9 @@ class VoiceNoteSession {
   bool get abandoned => _abandoned;
 
   bool get isRecording => _phase == VoiceNotePhase.recording;
+  bool get isStopping => _phase == VoiceNotePhase.stopping;
   bool get isTranscribing => _phase == VoiceNotePhase.transcribing;
-  bool get isBusy => isRecording || isTranscribing;
+  bool get isBusy => isRecording || isStopping || isTranscribing;
   bool get canHandOff =>
       _phase == VoiceNotePhase.ready || _phase == VoiceNotePhase.failed;
 
@@ -33,6 +34,10 @@ class VoiceNoteSession {
   }
 
   void beginRecording() {
+    if (_phase == VoiceNotePhase.stopping ||
+        _phase == VoiceNotePhase.transcribing) {
+      return;
+    }
     _phase = VoiceNotePhase.recording;
     _progress = 0;
     _progressEstimated = false;
@@ -42,8 +47,15 @@ class VoiceNoteSession {
     _abandoned = false;
   }
 
-  void beginTranscription() {
+  /// Locks the session while the recorder closes the file. Without this phase
+  /// a second Stop tap can stop twice and start two transcriptions.
+  void beginStopping() {
     if (_phase != VoiceNotePhase.recording) return;
+    _phase = VoiceNotePhase.stopping;
+  }
+
+  void beginTranscription() {
+    if (_phase != VoiceNotePhase.stopping) return;
     _phase = VoiceNotePhase.transcribing;
     _progress = 0;
     _progressEstimated = true;
@@ -56,6 +68,7 @@ class VoiceNoteSession {
 
   void updateProgress(TranscriptionUpdate update) {
     if (_phase != VoiceNotePhase.transcribing) return;
+    if (_abandoned || _handedOff) return;
     _progress = update.fraction.clamp(0.0, 1.0).toDouble();
     _progressEstimated = update.estimated;
     if (update.transcript.trim().isNotEmpty) {
@@ -64,6 +77,7 @@ class VoiceNoteSession {
   }
 
   void transcriptionSucceeded(String transcript) {
+    if (_abandoned || _handedOff) return;
     _phase = VoiceNotePhase.ready;
     _transcript = transcript.trim();
     _progress = 1;
@@ -78,6 +92,7 @@ class VoiceNoteSession {
     required String partialTranscript,
     required double fraction,
   }) {
+    if (_abandoned || _handedOff) return;
     _phase = VoiceNotePhase.failed;
     _error = message;
     final partial = partialTranscript.trim();

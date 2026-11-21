@@ -77,6 +77,7 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
   bool _transcriberAvailable = false;
   bool _onDeviceAvailable = false;
   bool _handingOff = false;
+  bool _confirmingClose = false;
   bool _wakeLockEnabled = false;
   String _status = 'Preparing microphone and transcription...';
   String? _error;
@@ -186,17 +187,13 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
   }
 
   Future<void> _start() async {
-    if (_initializing || _session.isBusy || _handingOff) return;
-
-    final oldPath = _audioPath;
-    if (oldPath != null) {
-      try {
-        final old = File(oldPath);
-        if (await old.exists()) await old.delete();
-      } catch (_) {}
+    if (_initializing || _session.isBusy || _handingOff || _confirmingClose) {
+      return;
     }
-    if (!mounted) return;
 
+    // Claim the session before any await. Otherwise a second tap can delete
+    // the same file and call recorder.start() twice.
+    final oldPath = _audioPath;
     final generation = ++_generation;
     setState(() {
       _session.beginRecording();
@@ -206,6 +203,14 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
       _startedAt = null;
       _status = 'Recording...';
     });
+
+    if (oldPath != null) {
+      try {
+        final old = File(oldPath);
+        if (await old.exists()) await old.delete();
+      } catch (_) {}
+    }
+    if (!mounted || generation != _generation) return;
 
     try {
       final dir = await getTemporaryDirectory();
@@ -246,14 +251,22 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
   }
 
   Future<void> _stopAndSave() async {
-    if (_handingOff || _session.isBusy) return;
+    if (_handingOff ||
+        _confirmingClose ||
+        _session.isStopping ||
+        _session.isTranscribing) {
+      return;
+    }
     if (_session.canHandOff) {
       await _handOff();
       return;
     }
     if (!_session.isRecording && _audioPath == null) return;
 
+    // Claim the stopping phase before the first await so a second Stop tap or
+    // a simultaneous Discard cannot close the same file twice.
     final generation = ++_generation;
+    setState(() => _session.beginStopping());
     _ticker?.cancel();
     String? path;
     try {
@@ -262,7 +275,7 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
       // A failed stop still leaves a complete-enough temporary file to use.
     }
     await _releaseWakeLock();
-    if (!mounted || generation != _generation) return;
+    if (!mounted || generation != _generation || _session.abandoned) return;
 
     path ??= _audioPath;
     if (path == null || path.isEmpty || !await File(path).exists()) {
@@ -299,12 +312,15 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
         path: path,
         localeId: _localeId,
         onProgress: (update) {
-          if (!mounted) return;
+          if (!mounted || _session.abandoned || _session.handedOff) return;
           setState(() => _session.updateProgress(update));
         },
       );
       if (!mounted || _session.abandoned || _session.handedOff) return;
       setState(() => _session.transcriptionSucceeded(result.transcript));
+      // While the close confirmation is open, popping here would dismiss the
+      // dialog instead of the sheet. _requestClose finishes the handoff.
+      if (_confirmingClose) return;
       await _handOff();
     } on AudioTranscriptionException catch (e) {
       if (!mounted || _session.abandoned || _session.handedOff) return;
@@ -338,11 +354,12 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
     if (!mounted) return;
     ScaffoldMessenger.maybeOf(context)
         ?.showSnackBar(SnackBar(content: Text(message)));
+    if (_confirmingClose) return;
     await _handOff();
   }
 
   Future<void> _handOff() async {
-    if (_handingOff) return;
+    if (_handingOff || _confirmingClose) return;
     final path = _audioPath;
     if (path == null || path.isEmpty) return;
     if (!await File(path).exists()) {
@@ -385,77 +402,96 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
   }
 
   Future<void> _requestClose() async {
-    if (_handingOff) return;
+    if (_handingOff || _confirmingClose) return;
     if (!_hasWork) {
       Navigator.of(context).pop();
       return;
     }
-    if (_session.isTranscribing) {
-      final choice = await showDialog<String>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Transcription is still running'),
-          content: const Text(
-            'The finished audio is being transcribed on this device. Keep waiting to save the words, or discard the whole recording.',
+
+    // The confirmation dialog and the sheet share a navigator. Hold any
+    // deferred handoff until it closes so we never pop the dialog by mistake.
+    _confirmingClose = true;
+    String? choice;
+    try {
+      if (_session.isStopping || _session.isTranscribing) {
+        choice = await showDialog<String>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Text(
+              _session.isStopping
+                  ? 'The recording is still being saved'
+                  : 'Transcription is still running',
+            ),
+            content: const Text(
+              'The finished audio is being processed on this device. Keep waiting to save the words, or discard the whole recording.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, 'wait'),
+                child: const Text('Keep waiting'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, 'discard'),
+                child: const Text('Discard audio'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, 'wait'),
-              child: const Text('Keep transcribing'),
+        );
+      } else {
+        final isRecording = _session.isRecording;
+        final saveLabel = _session.canHandOff
+            ? (_session.phase == VoiceNotePhase.failed
+                  ? 'Save audio only'
+                  : 'Save audio + transcript')
+            : 'Save & transcribe';
+        choice = await showDialog<String>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Keep this voice note?'),
+            content: Text(
+              isRecording
+                  ? 'A recording is in progress. Stop it to transcribe the finished audio, or discard it.'
+                  : 'The audio is ready. Save it with the words captured so far, or discard it.',
             ),
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, 'discard'),
-              child: const Text('Discard audio'),
-            ),
-          ],
-        ),
-      );
-      if (!mounted) return;
-      if (choice == 'discard') await _discard();
-      return;
+            actions: [
+              if (isRecording)
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, 'recording'),
+                  child: const Text('Keep recording'),
+                ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, 'discard'),
+                child: const Text('Discard'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, 'save'),
+                child: Text(saveLabel),
+              ),
+            ],
+          ),
+        );
+      }
+    } finally {
+      _confirmingClose = false;
     }
 
-    final isRecording = _session.isRecording;
-    final saveLabel = _session.canHandOff
-        ? (_session.phase == VoiceNotePhase.failed
-              ? 'Save audio only'
-              : 'Save audio + transcript')
-        : 'Save & transcribe';
-    final choice = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Keep this voice note?'),
-        content: Text(
-          isRecording
-              ? 'A recording is in progress. Stop it to transcribe the finished audio, or discard it.'
-              : 'The audio is ready. Save it with the words captured so far, or discard it.',
-        ),
-        actions: [
-          if (isRecording)
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, 'recording'),
-              child: const Text('Keep recording'),
-            ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'discard'),
-            child: const Text('Discard'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, 'save'),
-            child: Text(saveLabel),
-          ),
-        ],
-      ),
-    );
     if (!mounted) return;
     if (choice == 'discard') {
       await _discard();
-    } else if (choice == 'save') {
+      return;
+    }
+    if (choice == 'save') {
       if (_session.canHandOff) {
         await _handOff();
       } else {
         await _stopAndSave();
       }
+      return;
+    }
+    // Work may have finished while the dialog was open. The deferred handoff
+    // was skipped then, so finish the close now.
+    if (_session.canHandOff && !_session.abandoned && !_session.handedOff) {
+      await _handOff();
     }
   }
 
@@ -499,6 +535,7 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
 
   String _statusText() {
     if (_session.isRecording) return 'Recording ${_elapsedLabel()}';
+    if (_session.isStopping) return 'Finishing the recording';
     if (_session.isTranscribing) {
       return 'Transcribing ${_session.percentLabel}';
     }
@@ -510,6 +547,9 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
   String _detailText() {
     if (_session.isRecording) {
       return 'The screen stays on while recording. Transcription starts as soon as you stop.';
+    }
+    if (_session.isStopping) {
+      return 'Closing the audio file now. On-device transcription starts next.';
     }
     if (_session.isTranscribing) {
       return 'Reading the finished audio file on this device. Partial words are kept if the app is briefly hidden.';
@@ -525,6 +565,7 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
 
   String _primaryLabel() {
     if (_handingOff) return 'Saving...';
+    if (_session.isStopping) return 'Stopping...';
     if (_session.isRecording) return 'Stop & transcribe';
     if (_session.isTranscribing) {
       return 'Transcribing ${_session.percentLabel}';
@@ -537,7 +578,7 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
   }
 
   void _primaryAction() {
-    if (_handingOff) return;
+    if (_handingOff || _confirmingClose || _session.isStopping) return;
     if (_session.isRecording) {
       unawaited(_stopAndSave());
       return;
@@ -569,7 +610,12 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
     _ticker?.cancel();
     _generation++;
     if (!_session.handedOff && !_session.abandoned) {
-      if (_session.isTranscribing) unawaited(_transcriber.cancel());
+      // Stop late progress/result callbacks from mutating state while teardown
+      // is in flight, whatever phase the session was in.
+      _session.markAbandoned();
+      if (_session.isTranscribing || _session.isStopping) {
+        unawaited(_transcriber.cancel());
+      }
       final path = _audioPath;
       if (path != null) {
         unawaited(() async {
@@ -723,7 +769,14 @@ class _VoiceNoteSheetState extends State<_VoiceNoteSheet>
   /// Rendered outside the scrollable body by [showLifelogSheet], above the
   /// keyboard and the app navigation bar.
   Widget buildFooter(BuildContext context) {
-    final busy = _session.isBusy || _handingOff;
+    // Recording stays active: its primary action is "Stop & transcribe".
+    // Only phases that cannot accept another primary tap are disabled.
+    final busy =
+        _session.isStopping ||
+        _session.isTranscribing ||
+        _handingOff ||
+        _confirmingClose ||
+        _initializing;
     return Row(
       children: [
         Expanded(

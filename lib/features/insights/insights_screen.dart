@@ -9,6 +9,7 @@ import '../../app/theme/app_theme.dart';
 import '../../app/widgets/common.dart';
 import '../../app/widgets/components.dart';
 import '../../core/util/dates.dart';
+import '../../domain/models/archive.dart';
 import '../../domain/models/journal.dart';
 import '../../domain/models/settings.dart';
 import '../../domain/models/trackers.dart';
@@ -21,6 +22,7 @@ enum _Range {
   month,
   quarter,
   year,
+  all,
   custom;
 
   String get label => switch (this) {
@@ -28,11 +30,20 @@ enum _Range {
     _Range.month => '30 days',
     _Range.quarter => '90 days',
     _Range.year => '1 year',
+    _Range.all => 'All time',
     _Range.custom => 'Custom',
   };
 }
 
-const _weekdayLabels = <String>['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const _weekdayLabels = <String>[
+  'Mon',
+  'Tue',
+  'Wed',
+  'Thu',
+  'Fri',
+  'Sat',
+  'Sun',
+];
 
 class InsightsScreen extends ConsumerStatefulWidget {
   const InsightsScreen({super.key});
@@ -45,6 +56,7 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
   _Range _range = _Range.month;
   DateTime? _customStart;
   DateTime? _customEnd;
+  bool _autoRangeChecked = false;
 
   DateTime get _end {
     if (_range == _Range.custom && _customEnd != null) {
@@ -57,14 +69,39 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
     if (_range == _Range.custom && _customStart != null) {
       return dayStart(_customStart!);
     }
+    if (_range == _Range.all) {
+      return _earliestRecord(ref.read(archiveProvider)) ??
+          _end.subtract(const Duration(days: 29));
+    }
     final days = switch (_range) {
       _Range.week => 7,
       _Range.month => 30,
       _Range.quarter => 90,
       _Range.year => 365,
+      _Range.all => 30,
       _Range.custom => 30,
     };
     return _end.subtract(Duration(days: days - 1));
+  }
+
+  static DateTime? _earliestRecord(Archive archive) {
+    final times = <DateTime>[
+      for (final entry in archive.entries) entry.createdAt,
+      for (final item in archive.media) item.createdAt,
+      for (final visit in archive.visits) visit.startAt,
+      for (final scrobble in archive.scrobbles) scrobble.playedAt,
+      for (final event in archive.events) event.occurredAt,
+      for (final record in archive.trackerRecords) record.recordedAt,
+    ];
+    if (times.isEmpty) return null;
+    var earliest = times.first;
+    for (final time in times) {
+      if (time.isBefore(earliest)) earliest = time;
+    }
+    final start = dayStart(earliest);
+    return start.isAfter(dayStart(DateTime.now()))
+        ? dayStart(DateTime.now())
+        : start;
   }
 
   @override
@@ -100,6 +137,35 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
     final events = archive.events
         .where((event) => inRange(event.occurredAt))
         .toList();
+    final hasAnyData =
+        entries.isNotEmpty ||
+        media.isNotEmpty ||
+        visits.isNotEmpty ||
+        scrobbles.isNotEmpty ||
+        events.isNotEmpty ||
+        archive.trackerRecords.any((record) => inRange(record.recordedAt));
+    const allCategories = <String>[
+      'Activity',
+      'Journal',
+      'Trackers',
+      'Weekday',
+      'Places',
+      'Music',
+    ];
+    final allSectionsHidden =
+        hasAnyData && allCategories.every(hidden.contains);
+
+    // Older archives often have no records in the default 30-day window. Jump
+    // to the full history once so Insights does not open as a blank page.
+    if (!_autoRangeChecked &&
+        _range == _Range.month &&
+        !hasAnyData &&
+        _earliestRecord(archive) != null) {
+      _autoRangeChecked = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _range = _Range.all);
+      });
+    }
 
     final countsByDay = <String, int>{};
     void addCount(DateTime at) {
@@ -203,13 +269,31 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
       formatShortDate(end),
     ];
     final maxWeekday = weekdayAverages.fold<double>(0, math.max);
-    final bestWeekday = maxWeekday <= 0 ? null : weekdayAverages.indexOf(maxWeekday);
+    final bestWeekday = maxWeekday <= 0
+        ? null
+        : weekdayAverages.indexOf(maxWeekday);
 
-    // Music insight inputs.
+    // Music insight inputs. Artwork is keyed the same way in the day summary
+    // and the Music screen so every surface shows the same cover.
     final scrobbleArt = <String, String>{};
+    final trackArt = <String, String>{};
+    final trackCounts = <String, ({String title, String artist, int plays})>{};
     for (final s in scrobbles) {
-      if (Artwork.usable(s.artworkUrl)) scrobbleArt[s.displayArtist] = s.artworkUrl!;
+      final artistKey = s.displayArtist.toLowerCase();
+      final trackKey = '${s.displayArtist}|${s.displayTitle}'.toLowerCase();
+      if (Artwork.usable(s.artworkUrl)) {
+        scrobbleArt.putIfAbsent(artistKey, () => s.artworkUrl!);
+        trackArt.putIfAbsent(trackKey, () => s.artworkUrl!);
+      }
+      final existing = trackCounts[trackKey];
+      trackCounts[trackKey] = (
+        title: s.displayTitle,
+        artist: s.displayArtist,
+        plays: (existing?.plays ?? 0) + 1,
+      );
     }
+    final topTracks = trackCounts.values.toList()
+      ..sort((a, b) => b.plays.compareTo(a.plays));
     final scrobblesByDay = List<double>.generate(days, (index) {
       final day = start.add(Duration(days: index));
       return scrobbles.where((s) => sameDay(s.playedAt, day)).length.toDouble();
@@ -236,289 +320,416 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
           onChanged: _selectRange,
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(Insets.xs, Insets.sm, 0, Insets.md),
+          padding: const EdgeInsets.fromLTRB(
+            Insets.xs,
+            Insets.sm,
+            0,
+            Insets.md,
+          ),
           child: Text(
             rangeLabel,
             style: text.labelMedium?.copyWith(color: palette.dimText),
           ),
         ),
-        QuietCard(
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  ProgressRing(
-                    value: activeDays / days,
-                    size: 84,
-                    stroke: 8,
-                    child: Text(
-                      '$activeDays',
-                      style: text.titleLarge?.copyWith(fontFeatures: tabularFigures),
-                    ),
-                  ),
-                  const SizedBox(width: Insets.lg),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '$activeDays of $days ${plural(days, 'day')}',
-                          style: text.headlineSmall,
-                        ),
-                        Text(
-                          'had something recorded',
-                          style: text.bodySmall?.copyWith(color: palette.mutedText),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: Insets.lg),
-              Row(
-                children: [
-                  Expanded(
-                    child: StatTile(
-                      compact: true,
-                      value: '${published.length}',
-                      label: 'Entries',
-                      icon: Icons.menu_book_rounded,
-                      accent: palette.journal,
-                    ),
-                  ),
-                  const SizedBox(width: Insets.md),
-                  Expanded(
-                    child: StatTile(
-                      compact: true,
-                      value: '${media.length}',
-                      label: 'Media',
-                      icon: Icons.photo_rounded,
-                      accent: palette.photo,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: Insets.md),
-              Row(
-                children: [
-                  Expanded(
-                    child: StatTile(
-                      compact: true,
-                      value: '${visits.length}',
-                      label: 'Visits',
-                      icon: Icons.place_rounded,
-                      accent: palette.place,
-                    ),
-                  ),
-                  const SizedBox(width: Insets.md),
-                  Expanded(
-                    child: StatTile(
-                      compact: true,
-                      value: '${scrobbles.length}',
-                      label: 'Plays',
-                      icon: Icons.graphic_eq_rounded,
-                      accent: palette.music,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        if (!hidden.contains('Activity')) ...[
-          const SectionHeader(title: 'Daily activity'),
-          QuietCard(
-            child: MiniBarChart(
-              values: dailyTotals.map((v) => v.toDouble()).toList(),
-              labels: dayLabels,
-              color: scheme.primary,
-              height: 96,
-              highlightIndex: dailyTotals.length - 1,
-            ),
-          ),
-        ],
-        if (!hidden.contains('Journal') && published.isNotEmpty) ...[
-          const SectionHeader(title: 'Writing'),
+        if (!hasAnyData || allSectionsHidden) ...[
           QuietCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
-                    Expanded(
-                      child: _Figure(value: formatCompactNumber(words), label: 'Words'),
+                    Icon(
+                      Icons.insights_outlined,
+                      size: 28,
+                      color: palette.mutedText,
                     ),
+                    const SizedBox(width: Insets.md),
                     Expanded(
-                      child: _Figure(value: '$avgWords', label: 'Per entry'),
-                    ),
-                    Expanded(
-                      child: _Figure(value: '$drafts', label: 'Drafts'),
+                      child: Text(
+                        allSectionsHidden
+                            ? 'All sections are hidden'
+                            : 'Nothing recorded in this range',
+                        style: text.titleMedium,
+                      ),
                     ),
                   ],
                 ),
-                if (moodTotal > 0) ...[
-                  const SizedBox(height: Insets.lg),
+                const SizedBox(height: Insets.sm),
+                Text(
+                  allSectionsHidden
+                      ? 'Turn the sections back on with the button below, or '
+                            'use the tune button above to choose individual ones.'
+                      : 'Insights only use entries, media, visits, music and '
+                            'check-ins that are actually stored on this device. '
+                            'Try a wider range or add something first.',
+                  style: text.bodySmall?.copyWith(color: palette.mutedText),
+                ),
+                const SizedBox(height: Insets.md),
+                Wrap(
+                  spacing: Insets.sm,
+                  children: [
+                    if (allSectionsHidden)
+                      FilledButton.icon(
+                        onPressed: _resetSections,
+                        icon: const Icon(Icons.restore_rounded),
+                        label: const Text('Show all sections'),
+                      ),
+                    if (_range != _Range.all)
+                      FilledButton.icon(
+                        onPressed: () => setState(() => _range = _Range.all),
+                        icon: const Icon(Icons.history_rounded),
+                        label: const Text('Show all time'),
+                      ),
+                    OutlinedButton.icon(
+                      onPressed: () => _selectRange(_Range.custom),
+                      icon: const Icon(Icons.date_range_rounded),
+                      label: const Text('Choose range'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+        if (hasAnyData && !allSectionsHidden) ...[
+          QuietCard(
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    ProgressRing(
+                      value: activeDays / days,
+                      size: 84,
+                      stroke: 8,
+                      child: Text(
+                        '$activeDays',
+                        style: text.titleLarge?.copyWith(
+                          fontFeatures: tabularFigures,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: Insets.lg),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '$activeDays of $days ${plural(days, 'day')}',
+                            style: text.headlineSmall,
+                          ),
+                          Text(
+                            'had something recorded',
+                            style: text.bodySmall?.copyWith(
+                              color: palette.mutedText,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: Insets.lg),
+                Row(
+                  children: [
+                    Expanded(
+                      child: StatTile(
+                        compact: true,
+                        value: '${published.length}',
+                        label: 'Entries',
+                        icon: Icons.menu_book_rounded,
+                        accent: palette.journal,
+                      ),
+                    ),
+                    const SizedBox(width: Insets.md),
+                    Expanded(
+                      child: StatTile(
+                        compact: true,
+                        value: '${media.length}',
+                        label: 'Media',
+                        icon: Icons.photo_rounded,
+                        accent: palette.photo,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: Insets.md),
+                Row(
+                  children: [
+                    Expanded(
+                      child: StatTile(
+                        compact: true,
+                        value: '${visits.length}',
+                        label: 'Visits',
+                        icon: Icons.place_rounded,
+                        accent: palette.place,
+                      ),
+                    ),
+                    const SizedBox(width: Insets.md),
+                    Expanded(
+                      child: StatTile(
+                        compact: true,
+                        value: '${scrobbles.length}',
+                        label: 'Plays',
+                        icon: Icons.graphic_eq_rounded,
+                        accent: palette.music,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          if (!hidden.contains('Activity')) ...[
+            const SectionHeader(title: 'Daily activity'),
+            QuietCard(
+              child: MiniBarChart(
+                values: dailyTotals.map((v) => v.toDouble()).toList(),
+                labels: dayLabels,
+                color: scheme.primary,
+                height: 96,
+                highlightIndex: dailyTotals.length - 1,
+              ),
+            ),
+          ],
+          if (!hidden.contains('Journal') && published.isNotEmpty) ...[
+            const SectionHeader(title: 'Writing'),
+            QuietCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Row(
                     children: [
                       Expanded(
-                        child: Text(
-                          'Mood',
-                          style: text.labelMedium
-                              ?.copyWith(color: palette.mutedText),
+                        child: _Figure(
+                          value: formatCompactNumber(words),
+                          label: 'Words',
                         ),
                       ),
-                      if (moodAverage != null)
-                        Text(
-                          'Avg ${moodAverage.toStringAsFixed(1)}/10',
-                          style: text.labelMedium?.copyWith(
-                            color: moodColor(moodAverage.round(), scheme),
-                            fontWeight: FontWeight.w600,
+                      Expanded(
+                        child: _Figure(value: '$avgWords', label: 'Per entry'),
+                      ),
+                      Expanded(
+                        child: _Figure(value: '$drafts', label: 'Drafts'),
+                      ),
+                    ],
+                  ),
+                  if (moodTotal > 0) ...[
+                    const SizedBox(height: Insets.lg),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Mood',
+                            style: text.labelMedium?.copyWith(
+                              color: palette.mutedText,
+                            ),
                           ),
                         ),
+                        if (moodAverage != null)
+                          Text(
+                            'Avg ${moodAverage.toStringAsFixed(1)}/10',
+                            style: text.labelMedium?.copyWith(
+                              color: moodColor(moodAverage.round(), scheme),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: Insets.sm),
+                    ...[
+                      for (var score = 10; score >= 1; score--)
+                        if ((moodBuckets[score] ?? 0) > 0)
+                          _BreakdownRow(
+                            label: '$score · ${MoodScore.label(score)}',
+                            value: (moodBuckets[score] ?? 0).toDouble(),
+                            maxValue: moodTotal.toDouble(),
+                            color: moodColor(score, scheme),
+                          ),
                     ],
-                  ),
-                  const SizedBox(height: Insets.sm),
-                  ...[
-                    for (var score = 10; score >= 1; score--)
-                      if ((moodBuckets[score] ?? 0) > 0)
-                        _BreakdownRow(
-                          label: '$score · ${MoodScore.label(score)}',
-                          value: (moodBuckets[score] ?? 0).toDouble(),
-                          maxValue: moodTotal.toDouble(),
-                          color: moodColor(score, scheme),
-                        ),
+                  ],
+                  if (topTags.isNotEmpty) ...[
+                    const SizedBox(height: Insets.lg),
+                    Wrap(
+                      spacing: Insets.sm,
+                      runSpacing: Insets.sm,
+                      children: [
+                        for (final tag in topTags.take(8))
+                          TagPill('${tag.key} ${tag.value}'),
+                      ],
+                    ),
                   ],
                 ],
-                if (topTags.isNotEmpty) ...[
+              ),
+            ),
+          ],
+          if (!hidden.contains('Trackers') && activeTrackers.isNotEmpty) ...[
+            const SectionHeader(title: 'Habits'),
+            QuietCard(
+              padding: const EdgeInsets.symmetric(vertical: Insets.xs),
+              child: Column(
+                children: [
+                  for (var i = 0; i < activeTrackers.length; i++) ...[
+                    if (i > 0)
+                      Divider(height: 1, indent: 64, color: palette.border),
+                    _HabitInsightRow(
+                      tracker: activeTrackers[i],
+                      start: start,
+                      end: end,
+                      days: days,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+          if (!hidden.contains('Weekday') && dailyTotals.any((v) => v > 0)) ...[
+            SectionHeader(
+              title: 'Weekly rhythm',
+              subtitle: bestWeekday == null
+                  ? null
+                  : 'Busiest on ${_weekdayLabels[bestWeekday]}',
+            ),
+            QuietCard(
+              child: MiniBarChart(
+                values: weekdayAverages,
+                labels: _weekdayLabels,
+                color: scheme.primary,
+                height: 80,
+                highlightIndex: bestWeekday,
+              ),
+            ),
+          ],
+          if (!hidden.contains('Places') && topPlaces.isNotEmpty) ...[
+            const SectionHeader(title: 'Places'),
+            QuietCard(
+              child: Column(
+                children: [
+                  for (final place in topPlaces.take(5))
+                    HorizontalMetricBar(
+                      label: place.key,
+                      value: place.value.toDouble(),
+                      maxValue: topPlaces.first.value.toDouble(),
+                      trailing: '${place.value}',
+                      color: palette.place,
+                    ),
+                ],
+              ),
+            ),
+          ],
+          if (!hidden.contains('Music') && scrobbles.isNotEmpty) ...[
+            const SectionHeader(title: 'Music'),
+            QuietCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'You listened to ${scrobbles.length} ${plural(scrobbles.length, 'play')}: '
+                    '$uniqueTracks ${plural(uniqueTracks, 'track')} across '
+                    '${artists.length} ${plural(artists.length, 'artist')}.',
+                    style: AppTheme.serif(
+                      text.titleLarge,
+                      size: 19,
+                    ).copyWith(height: 1.3),
+                  ),
                   const SizedBox(height: Insets.lg),
-                  Wrap(
-                    spacing: Insets.sm,
-                    runSpacing: Insets.sm,
-                    children: [
-                      for (final tag in topTags.take(8)) TagPill('${tag.key} ${tag.value}'),
-                    ],
+                  MiniBarChart(
+                    values: scrobblesByDay,
+                    labels: dayLabels,
+                    color: palette.music,
+                    height: 64,
+                    showBaseline: false,
                   ),
-                ],
-              ],
-            ),
-          ),
-        ],
-        if (!hidden.contains('Trackers') && activeTrackers.isNotEmpty) ...[
-          const SectionHeader(title: 'Habits'),
-          QuietCard(
-            padding: const EdgeInsets.symmetric(vertical: Insets.xs),
-            child: Column(
-              children: [
-                for (var i = 0; i < activeTrackers.length; i++) ...[
-                  if (i > 0) Divider(height: 1, indent: 64, color: palette.border),
-                  _HabitInsightRow(
-                    tracker: activeTrackers[i],
-                    start: start,
-                    end: end,
-                    days: days,
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
-        if (!hidden.contains('Weekday') && dailyTotals.any((v) => v > 0)) ...[
-          SectionHeader(
-            title: 'Weekly rhythm',
-            subtitle: bestWeekday == null
-                ? null
-                : 'Busiest on ${_weekdayLabels[bestWeekday]}',
-          ),
-          QuietCard(
-            child: MiniBarChart(
-              values: weekdayAverages,
-              labels: _weekdayLabels,
-              color: scheme.primary,
-              height: 80,
-              highlightIndex: bestWeekday,
-            ),
-          ),
-        ],
-        if (!hidden.contains('Places') && topPlaces.isNotEmpty) ...[
-          const SectionHeader(title: 'Places'),
-          QuietCard(
-            child: Column(
-              children: [
-                for (final place in topPlaces.take(5))
-                  HorizontalMetricBar(
-                    label: place.key,
-                    value: place.value.toDouble(),
-                    maxValue: topPlaces.first.value.toDouble(),
-                    trailing: '${place.value}',
-                    color: palette.place,
-                  ),
-              ],
-            ),
-          ),
-        ],
-        if (!hidden.contains('Music') && scrobbles.isNotEmpty) ...[
-          const SectionHeader(title: 'Music'),
-          QuietCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'You listened to ${scrobbles.length} ${plural(scrobbles.length, 'play')}: '
-                  '$uniqueTracks ${plural(uniqueTracks, 'track')} across '
-                  '${artists.length} ${plural(artists.length, 'artist')}.',
-                  style: AppTheme.serif(text.titleLarge, size: 19).copyWith(height: 1.3),
-                ),
-                const SizedBox(height: Insets.lg),
-                MiniBarChart(
-                  values: scrobblesByDay,
-                  labels: dayLabels,
-                  color: palette.music,
-                  height: 64,
-                  showBaseline: false,
-                ),
-                const SizedBox(height: Insets.lg),
-                SizedBox(
-                  height: 96,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: topArtists.take(8).length,
-                    separatorBuilder: (_, _) => const SizedBox(width: Insets.md),
-                    itemBuilder: (context, index) {
-                      final artist = topArtists[index];
-                      return SizedBox(
-                        width: 64,
-                        child: Column(
-                          children: [
-                            Artwork(
-                              url: scrobbleArt[artist.key],
-                              size: 56,
-                              circle: true,
-                              seed: artist.key,
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              artist.key,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              textAlign: TextAlign.center,
-                              style: text.labelSmall,
-                            ),
-                            Text(
-                              '${artist.value}',
-                              style: text.labelSmall?.copyWith(
-                                color: palette.dimText,
-                                fontFeatures: tabularFigures,
+                  const SizedBox(height: Insets.lg),
+                  SizedBox(
+                    height: 96,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: topArtists.take(8).length,
+                      separatorBuilder: (_, _) =>
+                          const SizedBox(width: Insets.md),
+                      itemBuilder: (context, index) {
+                        final artist = topArtists[index];
+                        return SizedBox(
+                          width: 64,
+                          child: Column(
+                            children: [
+                              Artwork(
+                                url: scrobbleArt[artist.key.toLowerCase()],
+                                size: 56,
+                                circle: true,
+                                seed: artist.key,
                               ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
+                              const SizedBox(height: 4),
+                              Text(
+                                artist.key,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.center,
+                                style: text.labelSmall,
+                              ),
+                              Text(
+                                '${artist.value}',
+                                style: text.labelSmall?.copyWith(
+                                  color: palette.dimText,
+                                  fontFeatures: tabularFigures,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
                   ),
-                ),
-              ],
+                  if (topTracks.isNotEmpty) ...[
+                    const SizedBox(height: Insets.lg),
+                    Text('Top tracks', style: text.titleSmall),
+                    const SizedBox(height: Insets.sm),
+                    SizedBox(
+                      height: 116,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: topTracks.take(8).length,
+                        separatorBuilder: (_, _) =>
+                            const SizedBox(width: Insets.md),
+                        itemBuilder: (context, index) {
+                          final track = topTracks[index];
+                          final key = '${track.artist}|${track.title}'
+                              .toLowerCase();
+                          return SizedBox(
+                            width: 72,
+                            child: Column(
+                              children: [
+                                Artwork(
+                                  url: trackArt[key],
+                                  size: 56,
+                                  seed: key,
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  track.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  textAlign: TextAlign.center,
+                                  style: text.labelSmall,
+                                ),
+                                Text(
+                                  '${track.plays} ${plural(track.plays, 'play')}',
+                                  style: text.labelSmall?.copyWith(
+                                    color: palette.dimText,
+                                    fontFeatures: tabularFigures,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
-          ),
+          ],
         ],
       ],
     );
@@ -547,6 +758,20 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
     setState(() => _range = range);
   }
 
+  Future<void> _resetSections() async {
+    final controller = ref.read(settingsProvider.notifier);
+    for (final category in const <String>[
+      'Activity',
+      'Journal',
+      'Trackers',
+      'Weekday',
+      'Places',
+      'Music',
+    ]) {
+      await controller.hideInsightCategory(category, false);
+    }
+  }
+
   Future<void> _chooseSections(
     BuildContext context,
     AppSettings settings,
@@ -570,7 +795,7 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
           children: [
             const SheetTitle(
               title: 'Sections',
-              subtitle: 'Hiding a section only changes this screen.',
+              subtitle: 'Hidden sections stay hidden after restarting the app.',
             ),
             for (final entry in categories.entries)
               SwitchListTile(
@@ -586,6 +811,14 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen> {
                 }),
               ),
             const SizedBox(height: Insets.md),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => setLocal(() => local.clear()),
+                icon: const Icon(Icons.restore_rounded),
+                label: const Text('Show all sections'),
+              ),
+            ),
             SizedBox(
               width: double.infinity,
               child: FilledButton(
@@ -646,8 +879,18 @@ class _Figure extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Text(value, style: context.text.titleLarge?.copyWith(fontFeatures: tabularFigures)),
-        Text(label, style: context.text.labelSmall?.copyWith(color: context.palette.dimText)),
+        Text(
+          value,
+          style: context.text.titleLarge?.copyWith(
+            fontFeatures: tabularFigures,
+          ),
+        ),
+        Text(
+          label,
+          style: context.text.labelSmall?.copyWith(
+            color: context.palette.dimText,
+          ),
+        ),
       ],
     );
   }
@@ -674,9 +917,16 @@ class _HabitInsightRow extends ConsumerWidget {
     final palette = context.palette;
     var done = 0;
     for (var i = 0; i < days; i++) {
-      if (history.doneOn(DateTime(start.year, start.month, start.day + i))) done++;
+      if (history.doneOn(DateTime(start.year, start.month, start.day + i))) {
+        done++;
+      }
     }
-    final series = TrackerMath.dailySeries(tracker, archive.trackerRecords, end, 14);
+    final series = TrackerMath.dailySeries(
+      tracker,
+      archive.trackerRecords,
+      end,
+      14,
+    );
     final now = DateTime.now();
     var loggedInLast30 = 0;
     for (var i = 0; i < 30; i++) {
@@ -684,16 +934,29 @@ class _HabitInsightRow extends ConsumerWidget {
       if (history.loggedOn(dayInWindow)) loggedInLast30++;
     }
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: Insets.md, vertical: Insets.sm),
+      padding: const EdgeInsets.symmetric(
+        horizontal: Insets.md,
+        vertical: Insets.sm,
+      ),
       child: Row(
         children: [
-          IconBadge(icon: trackerIcon(tracker.icon), color: accent, size: 36, iconSize: 18),
+          IconBadge(
+            icon: trackerIcon(tracker.icon),
+            color: accent,
+            size: 36,
+            iconSize: 18,
+          ),
           const SizedBox(width: Insets.md),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(tracker.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: context.text.titleSmall),
+                Text(
+                  tracker.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: context.text.titleSmall,
+                ),
                 Row(
                   children: [
                     Text(

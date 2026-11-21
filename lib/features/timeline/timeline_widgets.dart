@@ -101,12 +101,18 @@ class _TimelineRow extends ConsumerWidget {
     final style = isMeal
         ? IconAndColor(
             mealIcon(MealKind.fromJson(item.metadata['kind'])),
-            mealAccent(MealKind.fromJson(item.metadata['kind']), scheme, palette),
+            mealAccent(
+              MealKind.fromJson(item.metadata['kind']),
+              scheme,
+              palette,
+            ),
           )
         : sourceStyle(item.source, scheme);
     final hasSubtitle = item.subtitle.trim().isNotEmpty;
     final timeKnown = item.metadata['timeKnown'] != 'false';
-    final timeText = isMeal && !timeKnown ? 'time not recorded' : formatTime(item.at);
+    final timeText = isMeal && !timeKnown
+        ? 'time not recorded'
+        : formatTime(item.at);
 
     TimelineEvent? manualEvent;
     if (item.source == TimelineSource.manual && item.sourceId != null) {
@@ -229,11 +235,14 @@ class _TimelineRow extends ConsumerWidget {
                               ),
                               if (item.confidence ==
                                   TimelineConfidence.suggested)
-                                Text(
-                                  'Suggested',
-                                  style: text.labelSmall?.copyWith(
-                                    color: scheme.secondary,
-                                    fontWeight: FontWeight.w600,
+                                Tooltip(
+                                  message: 'Inferred from your location. Tap to confirm or edit.',
+                                  child: Text(
+                                    item.confidence.label,
+                                    style: text.labelSmall?.copyWith(
+                                      color: scheme.secondary,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
                             ],
@@ -252,8 +261,7 @@ class _TimelineRow extends ConsumerWidget {
                         ],
                       ),
                     ),
-                    if (manualEvent != null)
-                      _EventMenu(event: manualEvent),
+                    if (manualEvent != null) _EventMenu(event: manualEvent),
                   ],
                 ),
               ),
@@ -290,7 +298,12 @@ class _TimelineRow extends ConsumerWidget {
         if (visitId == null) return;
         final visit = ref.read(archiveProvider).visitById(visitId);
         if (visit == null) return;
-        await showVisitEditor(context, ref, existing: visit, day: visit.startAt);
+        await showVisitEditor(
+          context,
+          ref,
+          existing: visit,
+          day: visit.startAt,
+        );
       case TimelineSource.photo:
         if (item.sourceId == null) return;
         final media = ref.read(archiveProvider).mediaById(item.sourceId!);

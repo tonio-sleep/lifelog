@@ -37,11 +37,8 @@ Future<void> showMealsForDay(
 ) async {
   await showLifelogSheet<void>(
     context,
-    builder: (sheetContext) => _MealDaySheet(
-      sheetContext: sheetContext,
-      ref: ref,
-      day: dayStart(day),
-    ),
+    builder: (sheetContext) =>
+        _MealDaySheet(sheetContext: sheetContext, ref: ref, day: dayStart(day)),
   );
 }
 
@@ -121,13 +118,7 @@ class _MealEditorSheetState extends ConsumerState<_MealEditorSheet> {
     );
     if (picked == null || !mounted) return;
     setState(() {
-      _at = DateTime(
-        _at.year,
-        _at.month,
-        _at.day,
-        picked.hour,
-        picked.minute,
-      );
+      _at = DateTime(_at.year, _at.month, _at.day, picked.hour, picked.minute);
     });
   }
 
@@ -207,15 +198,17 @@ class _MealEditorSheetState extends ConsumerState<_MealEditorSheet> {
         ),
         if (!_isEditing && _recentMeals().isNotEmpty) ...[
           const SizedBox(height: Insets.md),
-          Text('Recent',
-              style: text.labelMedium?.copyWith(color: palette.mutedText)),
+          Text(
+            'Recent',
+            style: text.labelMedium?.copyWith(color: palette.mutedText),
+          ),
           const SizedBox(height: Insets.xs),
           SizedBox(
             height: 40,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: _recentMeals().length,
-              separatorBuilder: (_, __) => const SizedBox(width: Insets.sm),
+              separatorBuilder: (_, _) => const SizedBox(width: Insets.sm),
               itemBuilder: (context, i) {
                 final meal = _recentMeals()[i];
                 return ActionChip(
@@ -223,8 +216,9 @@ class _MealEditorSheetState extends ConsumerState<_MealEditorSheet> {
                   label: Text(meal.name),
                   onPressed: () => setState(() {
                     _name.text = meal.name;
-                    _name.selection =
-                        TextSelection.collapsed(offset: _name.text.length);
+                    _name.selection = TextSelection.collapsed(
+                      offset: _name.text.length,
+                    );
                     _kind = meal.kind;
                   }),
                 );
@@ -258,8 +252,9 @@ class _MealEditorSheetState extends ConsumerState<_MealEditorSheet> {
             Expanded(
               child: TextField(
                 controller: _amount,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
                 textInputAction: TextInputAction.done,
                 onEditingComplete: () =>
                     FocusManager.instance.primaryFocus?.unfocus(),
@@ -332,8 +327,11 @@ class _MealEditorSheetState extends ConsumerState<_MealEditorSheet> {
                   ),
                 ),
                 const SizedBox(width: Insets.xs),
-                Icon(Icons.chevron_right_rounded,
-                    size: 18, color: palette.dimText),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: palette.dimText,
+                ),
               ],
             ),
           ),
@@ -346,7 +344,9 @@ class _MealEditorSheetState extends ConsumerState<_MealEditorSheet> {
                 onPressed: _delete,
                 icon: const Icon(Icons.delete_outline_rounded, size: 18),
                 label: const Text('Delete'),
-                style: TextButton.styleFrom(foregroundColor: context.scheme.error),
+                style: TextButton.styleFrom(
+                  foregroundColor: context.scheme.error,
+                ),
               ),
             const Spacer(),
             TextButton(
@@ -392,10 +392,7 @@ class _MealDaySheet extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        SheetTitle(
-          title: 'Meals and drinks',
-          subtitle: formatDayLong(day),
-        ),
+        SheetTitle(title: 'Meals and drinks', subtitle: formatDayLong(day)),
         if (meals.isEmpty)
           Padding(
             padding: const EdgeInsets.only(bottom: Insets.lg),
@@ -410,12 +407,8 @@ class _MealDaySheet extends ConsumerWidget {
           for (final meal in meals)
             _MealListRow(
               meal: meal,
-              onTap: () => showMealEditor(
-                sheetContext,
-                ref,
-                day,
-                existing: meal,
-              ),
+              onTap: () =>
+                  showMealEditor(sheetContext, ref, day, existing: meal),
             ),
         const SizedBox(height: Insets.md),
         FilledButton.icon(
@@ -455,8 +448,9 @@ class _MealListRow extends StatelessWidget {
                     meal.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: context.text.bodyMedium
-                        ?.copyWith(fontWeight: FontWeight.w600),
+                    style: context.text.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   Text(
                     [

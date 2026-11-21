@@ -83,10 +83,7 @@ class _DayDetailScreenState extends ConsumerState<DayDetailScreen> {
         ),
       ],
       children: [
-        DayNavigator(
-          day: _day,
-          onChanged: _updateDay,
-        ),
+        DayNavigator(day: _day, onChanged: _updateDay),
         const SizedBox(height: Insets.lg),
         DaySwitcher(
           day: _day,
@@ -125,20 +122,20 @@ class _DayStoryState extends ConsumerState<_DayStory> {
   final Set<String> _expanded = {'entries', 'photos'};
 
   void _toggle(String id) => setState(() {
-        if (_expanded.contains(id)) {
-          _expanded.remove(id);
-        } else {
-          _expanded.add(id);
-        }
-      });
+    if (_expanded.contains(id)) {
+      _expanded.remove(id);
+    } else {
+      _expanded.add(id);
+    }
+  });
 
   void _setAll(bool value) => setState(() {
-        if (value) {
-          _expanded.addAll(_sectionIds);
-        } else {
-          _expanded.clear();
-        }
-      });
+    if (value) {
+      _expanded.addAll(_sectionIds);
+    } else {
+      _expanded.clear();
+    }
+  });
 
   static const _sectionIds = {
     'entries',
@@ -156,6 +153,7 @@ class _DayStoryState extends ConsumerState<_DayStory> {
     final day = widget.day;
     final archive = ref.watch(archiveProvider);
     final summary = DaySummary.of(archive, day);
+    final dayStats = DayStats.of(archive, day);
     final palette = context.palette;
     final entries = archive.entriesOn(day, includeDrafts: true);
     final checkins = archive.checkinsOn(day);
@@ -163,22 +161,24 @@ class _DayStoryState extends ConsumerState<_DayStory> {
         .where((e) => !e.isCheckinEntry && !_isMetricsOnly(e))
         .toList();
     final metrics = archive.dayMetricsEntryFor(day);
-    final mood = checkins.isEmpty ? dominantMood(archive, day) : checkins.last.mood;
+    final mood = checkins.isEmpty
+        ? dominantMood(archive, day)
+        : checkins.last.mood;
     final trackers = archive.activeTrackers
         .where((t) => TrackerMath.loggedOn(archive.trackerRecords, t.id, day))
         .toList();
     final memories = onThisDay(archive, day);
     final meals = archive.mealsOn(day);
     final hasHealth =
-        metrics != null && (metrics.sleepHours != null || metrics.steps != null);
+        metrics != null &&
+        (metrics.sleepHours != null || metrics.steps != null);
     final health = hasHealth ? metrics : null;
 
     if (summary.isEmpty && entries.isEmpty) {
       return EmptyState(
         icon: Icons.nights_stay_outlined,
         title: 'Nothing recorded',
-        message:
-            'This day is quiet. Add a check-in, an entry, or a photo to start its page.',
+        message: 'This day is quiet. Add a check-in, an entry, or a photo to start its page.',
         actionLabel: 'Add entry',
         onAction: () => createJournalEntry(
           context,
@@ -213,6 +213,45 @@ class _DayStoryState extends ConsumerState<_DayStory> {
     }
 
     final blocks = <Widget>[
+      QuietCard(
+        padding: const EdgeInsets.all(Insets.lg),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            IconBadge(
+              icon: mood == null
+                  ? Icons.auto_awesome_outlined
+                  : Icons.mood_outlined,
+              color: mood == null
+                  ? palette.mutedText
+                  : moodColor(mood, context.scheme),
+              size: 46,
+              iconSize: 24,
+            ),
+            const SizedBox(width: Insets.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    relativeDayLabel(day),
+                    style: AppTheme.serif(context.text.headlineSmall, size: 22),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    dayStats.summary,
+                    style: context.text.bodyMedium?.copyWith(
+                      color: palette.mutedText,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: Insets.lg),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: Insets.xs),
         child: Row(
@@ -236,7 +275,7 @@ class _DayStoryState extends ConsumerState<_DayStory> {
         ),
       ),
       const SizedBox(height: Insets.xs),
-      DayOverviewCard(stats: DayStats.of(archive, day)),
+      DayOverviewCard(stats: dayStats),
       const SizedBox(height: Insets.sm),
       _DayFeelingCard(
         day: day,
@@ -283,7 +322,11 @@ class _DayStoryState extends ConsumerState<_DayStory> {
         children: summary.photos.isEmpty
             ? const []
             : [
-                StoryStrip(items: summary.photos, scope: 'day-all', height: 150),
+                StoryStrip(
+                  items: summary.photos,
+                  scope: 'day-all',
+                  height: 150,
+                ),
               ],
       ),
     );
@@ -528,8 +571,9 @@ class _DayFeelingCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = context.palette;
     final text = context.text;
-    final accent =
-        mood == null ? palette.mutedText : moodColor(mood!, context.scheme);
+    final accent = mood == null
+        ? palette.mutedText
+        : moodColor(mood!, context.scheme);
     final latest = checkins.isEmpty ? null : checkins.last;
     final highlight = latest?.highlight.trim() ?? '';
     final health = metrics;
@@ -546,12 +590,8 @@ class _DayFeelingCard extends ConsumerWidget {
               const SizedBox(width: Insets.sm),
               Expanded(child: Text('How I felt today', style: text.titleSmall)),
               TextButton.icon(
-                onPressed: () => showDailyCheckinSheet(
-                  context,
-                  ref,
-                  day,
-                  existing: latest,
-                ),
+                onPressed: () =>
+                    showDailyCheckinSheet(context, ref, day, existing: latest),
                 icon: Icon(
                   latest == null ? Icons.add_rounded : Icons.edit_outlined,
                   size: 16,
@@ -578,7 +618,9 @@ class _DayFeelingCard extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      mood == null ? 'No mood recorded' : MoodScore.label(mood!),
+                      mood == null
+                          ? 'No mood recorded'
+                          : MoodScore.label(mood!),
                       style: AppTheme.serif(text.headlineMedium, size: 25)
                           .copyWith(
                             color: mood == null ? palette.mutedText : accent,
@@ -590,8 +632,10 @@ class _DayFeelingCard extends ConsumerWidget {
                         highlight,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: AppTheme.serif(text.bodyMedium, size: 15)
-                            .copyWith(color: palette.mutedText, height: 1.5),
+                        style: AppTheme.serif(
+                          text.bodyMedium,
+                          size: 15,
+                        ).copyWith(color: palette.mutedText, height: 1.5),
                       ),
                     ],
                   ],
@@ -611,7 +655,9 @@ class _DayFeelingCard extends ConsumerWidget {
                     ),
                     Text(
                       '/ 10',
-                      style: text.labelSmall?.copyWith(color: palette.mutedText),
+                      style: text.labelSmall?.copyWith(
+                        color: palette.mutedText,
+                      ),
                     ),
                   ],
                 ),
@@ -624,12 +670,8 @@ class _DayFeelingCard extends ConsumerWidget {
             for (final entry in checkins) ...[
               _DayCheckinTile(
                 entry: entry,
-                onTap: () => showDailyCheckinSheet(
-                  context,
-                  ref,
-                  day,
-                  existing: entry,
-                ),
+                onTap: () =>
+                    showDailyCheckinSheet(context, ref, day, existing: entry),
               ),
               if (entry != checkins.last)
                 Divider(height: 1, color: palette.border),
@@ -674,8 +716,9 @@ class _DayCheckinTile extends StatelessWidget {
     final palette = context.palette;
     final text = context.text;
     final mood = entry.mood;
-    final accent =
-        mood == null ? palette.mutedText : moodColor(mood, context.scheme);
+    final accent = mood == null
+        ? palette.mutedText
+        : moodColor(mood, context.scheme);
     final highlight = entry.highlight.trim();
 
     return InkWell(
@@ -715,8 +758,7 @@ class _DayCheckinTile extends StatelessWidget {
                       highlight,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style:
-                          text.bodySmall?.copyWith(color: palette.mutedText),
+                      style: text.bodySmall?.copyWith(color: palette.mutedText),
                     ),
                 ],
               ),

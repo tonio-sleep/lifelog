@@ -629,17 +629,9 @@ class _JournalEditorScreenState extends ConsumerState<JournalEditorScreen> {
                   ?.copyWith(color: sheetContext.palette.mutedText),
             ),
             const SizedBox(height: Insets.sm),
-            Wrap(
-              spacing: Insets.sm,
-              children: [
-                for (var i = 1; i <= 5; i++)
-                  ChoiceChip(
-                    label: Text('$i'),
-                    selected: energy == i,
-                    onSelected: (_) =>
-                        setSheetState(() => energy = energy == i ? null : i),
-                  ),
-              ],
+            EnergyScalePicker(
+              value: energy,
+              onChanged: (value) => setSheetState(() => energy = value),
             ),
             const SizedBox(height: Insets.md),
             TextField(

@@ -11,6 +11,7 @@ import '../../core/util/dates.dart';
 import '../../domain/models/places.dart';
 import 'background_location_channel.dart';
 import 'location_tracking.dart';
+import 'place_name_resolver.dart';
 
 final backgroundLocationChannelProvider =
     Provider<BackgroundLocationChannel>((ref) => BackgroundLocationChannel());
@@ -360,8 +361,29 @@ class LocationTrackingController with WidgetsBindingObserver {
   }
 
   Future<void> _refreshVisitsForDay(DateTime day) async {
+    final lookup = ref.read(settingsProvider).placeLookupEnabled;
+    if (lookup) {
+      // Name unsaved stays of 5+ minutes (bounded, failures are ignored).
+      final summary =
+          LocationTracking.summarizeDay(ref.read(archiveProvider), day);
+      var budget = 3;
+      for (final seg in summary.segments) {
+        if (!seg.wantsName || budget == 0) continue;
+        final lat = seg.latitude!;
+        final lon = seg.longitude!;
+        if (PlaceNameResolver.instance.hasAttempted(lat, lon)) continue;
+        budget--;
+        try {
+          await PlaceNameResolver.instance.resolve(lat, lon);
+        } catch (_) {}
+      }
+    }
     final archive = ref.read(archiveProvider);
-    final visits = LocationTracking.computeAutoVisitsForDay(archive, day);
+    final visits = LocationTracking.computeAutoVisitsForDay(
+      archive,
+      day,
+      nameFor: lookup ? PlaceNameResolver.instance.cached : null,
+    );
     await ref
         .read(archiveProvider.notifier)
         .replaceAutoVisitsForDay(dayStart(day), visits);

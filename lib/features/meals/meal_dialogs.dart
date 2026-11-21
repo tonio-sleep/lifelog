@@ -99,6 +99,21 @@ class _MealEditorSheetState extends ConsumerState<_MealEditorSheet> {
     super.dispose();
   }
 
+  /// Most recent distinct foods and drinks, for one-tap logging.
+  List<MealRecord> _recentMeals() {
+    final all = [...ref.read(archiveProvider).meals]
+      ..sort((a, b) => b.at.compareTo(a.at));
+    final seen = <String>{};
+    final out = <MealRecord>[];
+    for (final meal in all) {
+      final key = meal.name.trim().toLowerCase();
+      if (key.isEmpty || !seen.add(key)) continue;
+      out.add(meal);
+      if (out.length == 8) break;
+    }
+    return out;
+  }
+
   Future<void> _pickTime() async {
     final picked = await showTimePicker(
       context: widget.sheetContext,
@@ -190,10 +205,39 @@ class _MealEditorSheetState extends ConsumerState<_MealEditorSheet> {
               ),
           ],
         ),
+        if (!_isEditing && _recentMeals().isNotEmpty) ...[
+          const SizedBox(height: Insets.md),
+          Text('Recent',
+              style: text.labelMedium?.copyWith(color: palette.mutedText)),
+          const SizedBox(height: Insets.xs),
+          SizedBox(
+            height: 40,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _recentMeals().length,
+              separatorBuilder: (_, __) => const SizedBox(width: Insets.sm),
+              itemBuilder: (context, i) {
+                final meal = _recentMeals()[i];
+                return ActionChip(
+                  avatar: Icon(mealIcon(meal.kind), size: 16),
+                  label: Text(meal.name),
+                  onPressed: () => setState(() {
+                    _name.text = meal.name;
+                    _name.selection =
+                        TextSelection.collapsed(offset: _name.text.length);
+                    _kind = meal.kind;
+                  }),
+                );
+              },
+            ),
+          ),
+        ],
         const SizedBox(height: Insets.md),
         TextField(
           controller: _name,
           autofocus: true,
+          // Rebuild so the save button enables as soon as there is a name.
+          onChanged: (_) => setState(() {}),
           textCapitalization: TextCapitalization.sentences,
           textInputAction: TextInputAction.done,
           onEditingComplete: () =>

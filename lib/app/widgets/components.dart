@@ -411,6 +411,15 @@ class ListGroup extends StatelessWidget {
               color: palette.card,
               borderRadius: BorderRadius.circular(Radii.lg),
               border: Border.all(color: palette.border),
+              boxShadow: palette.isDark
+                  ? null
+                  : const [
+                      BoxShadow(
+                        color: Color(0x0D000000),
+                        blurRadius: 16,
+                        offset: Offset(0, 4),
+                      ),
+                    ],
             ),
             child: Column(
               children: [
@@ -823,10 +832,17 @@ Future<T?> showLifelogSheet<T>(
     isDismissible: isDismissible,
     enableDrag: enableDrag,
     useRootNavigator: useRootNavigator,
+    // Always show the grabber, even when dragging is disabled, so a sheet
+    // never looks like it lost its handle.
+    showDragHandle: true,
     constraints: const BoxConstraints(maxWidth: 560),
     builder: (sheetContext) {
       final keyboardHeight = MediaQuery.viewInsetsOf(sheetContext).bottom;
       final keyboardOpen = keyboardHeight > 0;
+      // Home indicator / system navigation bar. SafeArea in the route only
+      // covers the top, so the last button used to sit underneath it.
+      final bottomSystemInset =
+          keyboardOpen ? 0.0 : MediaQuery.viewPaddingOf(sheetContext).bottom;
       final availableHeight =
           MediaQuery.sizeOf(sheetContext).height - keyboardHeight - 8;
       return ConstrainedBox(
@@ -850,7 +866,9 @@ Future<T?> showLifelogSheet<T>(
                         Insets.page,
                         0,
                         Insets.page,
-                        footerBuilder == null ? Insets.xl : Insets.md,
+                        (footerBuilder == null
+                                ? Insets.xl + bottomSystemInset
+                                : Insets.md),
                       ),
                       child: builder(sheetContext),
                     ),

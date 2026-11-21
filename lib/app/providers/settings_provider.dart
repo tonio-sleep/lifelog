@@ -39,6 +39,9 @@ class SettingsController extends Notifier<AppSettings> {
   Future<void> setBackgroundLocationEnabled(bool value) =>
       update((current) => current.copyWith(backgroundLocationEnabled: value));
 
+  Future<void> setPlaceLookupEnabled(bool value) =>
+      update((current) => current.copyWith(placeLookupEnabled: value));
+
   Future<void> markMealsMigrated() =>
       update((current) => current.copyWith(mealsMigrated: true));
 

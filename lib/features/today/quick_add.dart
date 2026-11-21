@@ -245,14 +245,6 @@ class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
     'Write one sentence about your day so far.',
   ];
 
-  static const _energyLabels = <int, String>{
-    1: 'Very low',
-    2: 'Low',
-    3: 'Okay',
-    4: 'Good',
-    5: 'High',
-  };
-
   String get _prompt =>
       _prompts[(widget.day.day + (widget.existing?.createdAt.minute ?? DateTime.now().minute)) % _prompts.length];
 
@@ -387,32 +379,12 @@ class _DailyCheckinSheetState extends ConsumerState<_DailyCheckinSheet> {
           onChanged: (value) => setState(() => _mood = value),
         ),
         const SizedBox(height: Insets.md),
-        Row(
-          children: [
-            Text('Energy',
-                style: text.labelMedium?.copyWith(color: palette.mutedText)),
-            if (_energy != null) ...[
-              const SizedBox(width: Insets.sm),
-              Text(
-                _energyLabels[_energy!] ?? '',
-                style: text.labelSmall?.copyWith(color: palette.tracker),
-              ),
-            ],
-          ],
-        ),
+        Text('Energy',
+            style: text.labelMedium?.copyWith(color: palette.mutedText)),
         const SizedBox(height: Insets.sm),
-        Wrap(
-          spacing: Insets.sm,
-          runSpacing: Insets.sm,
-          children: [
-            for (var i = 1; i <= 5; i++)
-              ChoiceChip(
-                label: Text('$i'),
-                selected: _energy == i,
-                onSelected: (_) =>
-                    setState(() => _energy = _energy == i ? null : i),
-              ),
-          ],
+        EnergyScalePicker(
+          value: _energy,
+          onChanged: (value) => setState(() => _energy = value),
         ),
         const SizedBox(height: Insets.md),
         TextField(

@@ -9,12 +9,18 @@ import '../../core/util/dates.dart';
 import '../../domain/models/archive.dart';
 import '../../domain/models/journal.dart';
 import '../memories/day_detail_screen.dart';
-import 'journal_day_header.dart';
+import 'day_overview.dart';
 import 'journal_widgets.dart';
 
 enum _JournalFilter { active, drafts, archived }
 
 int _words(String text) => RegExp(r'\S+').allMatches(text).length;
+
+class _MonthRow {
+  const _MonthRow(this.month, this.days);
+  final DateTime month;
+  final int days;
+}
 
 class _JournalView {
   const _JournalView({
@@ -84,10 +90,45 @@ class _JournalView {
         return byTime != 0 ? byTime : a.updatedAt.compareTo(b.updatedAt);
       });
     }
-    final dayKeys = byDay.keys.toList()..sort((a, b) => b.compareTo(a));
-    final rows = <Object>[
-      for (final key in dayKeys) ...[key, ...byDay[key]!],
-    ];
+    // The plain journal shows every day that has anything recorded (photos,
+    // meals, music, places...), not only days with written entries.
+    final daySet = <String>{...byDay.keys};
+    if (filter == _JournalFilter.active && query.isEmpty) {
+      for (final m in archive.media) {
+        daySet.add(dayKey(m.createdAt));
+      }
+      for (final m in archive.meals) {
+        daySet.add(dayKey(m.at));
+      }
+      for (final v in archive.visits) {
+        daySet.add(dayKey(v.startAt));
+      }
+      for (final e in archive.events) {
+        if (!e.hidden) daySet.add(dayKey(e.occurredAt));
+      }
+      for (final r in archive.trackerRecords) {
+        daySet.add(dayKey(r.recordedAt));
+      }
+      for (final s in archive.scrobbles) {
+        daySet.add(dayKey(s.playedAt));
+      }
+    }
+    final dayKeys = daySet.toList()..sort((a, b) => b.compareTo(a));
+    final monthCounts = <String, int>{};
+    for (final key in dayKeys) {
+      final m = key.length >= 7 ? key.substring(0, 7) : key;
+      monthCounts[m] = (monthCounts[m] ?? 0) + 1;
+    }
+    final rows = <Object>[];
+    String? lastMonth;
+    for (final key in dayKeys) {
+      final m = key.length >= 7 ? key.substring(0, 7) : key;
+      if (m != lastMonth) {
+        rows.add(_MonthRow(parseDayKey(key), monthCounts[m] ?? 0));
+        lastMonth = m;
+      }
+      rows.add(key);
+    }
 
     final wordCount = all.fold<int>(
       0,
@@ -212,6 +253,8 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
                 ),
               ),
       ),
+      if (_filter == _JournalFilter.active && _query.isEmpty && !_searching)
+        JournalOverviewCard(archive: archive),
       FilterRow<_JournalFilter>(
         values: _JournalFilter.values,
         selected: _filter,
@@ -222,7 +265,7 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
         },
         onChanged: (value) => setState(() => _filter = value),
       ),
-      if (filtered.isEmpty)
+      if (rows.isEmpty)
         EmptyState(
           icon: _query.isEmpty
               ? Icons.menu_book_outlined
@@ -286,29 +329,33 @@ class _JournalScreenState extends ConsumerState<JournalScreen> {
           itemCount: rows.length,
           itemBuilder: (context, index) {
             final row = rows[index];
-            if (row is String) {
-              final day = parseDayKey(row);
-              return JournalDayHeader(
-                day: day,
-                count: byDay[row]?.length ?? 0,
-                mood: archive.latestCheckinOn(day)?.mood,
-                onOpen: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => DayDetailScreen(day: day),
-                  ),
-                ),
-                onAdd: () => createJournalEntry(
-                  context,
-                  date: day,
-                  createNew: true,
-                  focusBody: true,
+            if (row is _MonthRow) {
+              return SectionHeader(
+                title: formatMonthYear(row.month),
+                subtitle: '${row.days} ${plural(row.days, 'day')}',
+                padding: const EdgeInsets.only(
+                  top: Insets.lg,
+                  bottom: Insets.sm,
                 ),
               );
             }
-            final card = JournalEntryCard(
-              key: ValueKey((row as JournalEntry).id),
-              entry: row,
-              showDate: false,
+            final key = row as String;
+            final day = parseDayKey(key);
+            final card = JournalDayCard(
+              key: ValueKey(key),
+              stats: DayStats.of(archive, day),
+              previews: _query.isEmpty ? null : byDay[key],
+              onOpen: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => DayDetailScreen(day: day),
+                ),
+              ),
+              onAdd: () => createJournalEntry(
+                context,
+                date: day,
+                createNew: true,
+                focusBody: true,
+              ),
             );
             return revealAt(index, card, limit: 6);
           },

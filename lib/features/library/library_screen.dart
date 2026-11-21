@@ -137,44 +137,54 @@ class LibraryScreen extends ConsumerWidget {
                   icon: Icons.auto_awesome_rounded,
                   color: palette.journal,
                   title: 'Memories',
-                  subtitle: 'On this day',
+                  subtitle: 'Look back, year by year',
                   onTap: () => onOpen('memories'),
                 ),
               ),
             ),
           ],
         ),
-        Reveal(
-          index: 4,
-          child: ListGroup(
-            children: [
-              ListRow(
-                icon: Icons.timeline_rounded,
-                iconColor: palette.manual,
-                title: 'Timeline',
-                subtitle: count(archive.events.length, 'event'),
-                chevron: true,
-                onTap: () => onOpen('timeline'),
+        const SizedBox(height: Insets.md),
+        Row(
+          children: [
+            Expanded(
+              child: Reveal(
+                index: 4,
+                child: _LibraryTile(
+                  icon: Icons.timeline_rounded,
+                  color: palette.manual,
+                  title: 'Timeline',
+                  subtitle: archive.events.isEmpty
+                      ? 'Your days in order'
+                      : count(archive.events.length, 'event'),
+                  onTap: () => onOpen('timeline'),
+                ),
               ),
-              ListRow(
-                icon: Icons.insights_rounded,
-                iconColor: palette.tracker,
-                title: 'Insights',
-                subtitle: 'Patterns in what you recorded',
-                chevron: true,
-                onTap: () => onOpen('insights'),
+            ),
+            const SizedBox(width: Insets.md),
+            Expanded(
+              child: Reveal(
+                index: 5,
+                child: _LibraryTile(
+                  icon: Icons.insights_rounded,
+                  color: palette.tracker,
+                  title: 'Insights',
+                  subtitle: 'Patterns and trends',
+                  onTap: () => onOpen('insights'),
+                ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
         Reveal(
-          index: 5,
+          index: 6,
           child: ListGroup(
             children: [
               ListRow(
                 icon: Icons.settings_rounded,
                 iconColor: palette.manual,
                 title: 'Settings',
+                subtitle: 'Backup, privacy, reminders and sync',
                 chevron: true,
                 onTap: () => onOpen('settings'),
               ),

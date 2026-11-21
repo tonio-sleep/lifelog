@@ -238,22 +238,23 @@ class _AppShellState extends ConsumerState<AppShell> {
           ],
         ),
       ),
-      bottomNavigationBar: Padding(
-        padding: EdgeInsets.only(bottom: keyboardHeight),
-        child: _BottomBar(
-          selected: _tab,
-          onSelect: (index) {
-            if (index == _tab) {
-              // iOS convention: tapping the active tab returns to its root.
-              _tabNavigators[index].currentState?.popUntil(
-                (route) => route.isFirst,
-              );
-              return;
-            }
-            setState(() => _tab = index);
-          },
-        ),
-      ),
+      // Scaffold already lifts this above the keyboard; extra padding made the
+      // bar float over page content. Hide it while typing instead.
+      bottomNavigationBar: keyboardHeight > 0
+          ? null
+          : _BottomBar(
+              selected: _tab,
+              onSelect: (index) {
+                if (index == _tab) {
+                  // iOS convention: tapping the active tab returns to its root.
+                  _tabNavigators[index].currentState?.popUntil(
+                    (route) => route.isFirst,
+                  );
+                  return;
+                }
+                setState(() => _tab = index);
+              },
+            ),
     );
   }
 }

@@ -95,46 +95,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           child: AccountSyncCard(),
         ),
         ListGroup(
-          title: 'Reminders',
-          footer:
-              'In-app reminders to nudge you (for example: journal, check-in, habits, or vocab review). Enable notifications in a future update for system alerts.',
-          children: [
-            for (final reminder in settings.reminders)
-              ListRow(
-                icon: reminder.enabled
-                    ? Icons.notifications_active_outlined
-                    : Icons.notifications_off_outlined,
-                iconColor:
-                    reminder.enabled ? palette.tracker : palette.dimText,
-                title: reminder.title,
-                subtitle:
-                    '${reminder.timeLabel} · ${reminder.repeat.label}${reminder.note.trim().isEmpty ? '' : ' · ${reminder.note.trim()}'}',
-                trailing: Switch(
-                  value: reminder.enabled,
-                  onChanged: (value) => guard(
-                    context,
-                    ref
-                        .read(settingsProvider.notifier)
-                        .toggleReminder(reminder.id, value),
-                    errorPrefix: 'Could not update reminder',
-                  ),
-                ),
-                chevron: true,
-                onTap: () => _editReminder(context, ref, reminder),
-              ),
-            ListRow(
-              icon: Icons.add_alarm_rounded,
-              iconColor: context.scheme.primary,
-              title: 'Add reminder',
-              subtitle: settings.reminders.isEmpty
-                  ? 'Create a reminder for something you want to do'
-                  : 'Add another reminder',
-              chevron: true,
-              onTap: () => _editReminder(context, ref, null),
-            ),
-          ],
-        ),
-        ListGroup(
           title: 'Appearance',
           children: [
             Padding(
@@ -173,6 +133,46 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ref.read(settingsProvider.notifier).setWeekStartsMonday(!settings.weekStartsMonday),
                 errorPrefix: 'Could not save the setting',
               ),
+            ),
+          ],
+        ),
+        ListGroup(
+          title: 'Reminders',
+          footer:
+              'Gentle in-app nudges for journaling, check-ins and habits.',
+          children: [
+            for (final reminder in settings.reminders)
+              ListRow(
+                icon: reminder.enabled
+                    ? Icons.notifications_active_outlined
+                    : Icons.notifications_off_outlined,
+                iconColor:
+                    reminder.enabled ? palette.tracker : palette.dimText,
+                title: reminder.title,
+                subtitle:
+                    '${reminder.timeLabel} · ${reminder.repeat.label}${reminder.note.trim().isEmpty ? '' : ' · ${reminder.note.trim()}'}',
+                trailing: Switch(
+                  value: reminder.enabled,
+                  onChanged: (value) => guard(
+                    context,
+                    ref
+                        .read(settingsProvider.notifier)
+                        .toggleReminder(reminder.id, value),
+                    errorPrefix: 'Could not update reminder',
+                  ),
+                ),
+                chevron: true,
+                onTap: () => _editReminder(context, ref, reminder),
+              ),
+            ListRow(
+              icon: Icons.add_alarm_rounded,
+              iconColor: context.scheme.primary,
+              title: 'Add reminder',
+              subtitle: settings.reminders.isEmpty
+                  ? 'Create a reminder for something you want to do'
+                  : 'Add another reminder',
+              chevron: true,
+              onTap: () => _editReminder(context, ref, null),
             ),
           ],
         ),
@@ -286,7 +286,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               icon: Icons.hourglass_top_rounded,
               iconColor: palette.music,
               title: 'Screen Time (advanced)',
-              subtitle: 'iPhone Screen Time/app usage access requires Apple Family Controls entitlement and approval',
+              subtitle: 'Not available yet',
               chevron: true,
               onTap: () => _showScreenTimeInfo(context),
             ),

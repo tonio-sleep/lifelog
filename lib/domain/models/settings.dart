@@ -184,6 +184,7 @@ class AppSettings {
     this.reminders = const [],
     this.locationTrackingEnabled = false,
     this.backgroundLocationEnabled = false,
+    this.placeLookupEnabled = true,
     this.mealsMigrated = false,
   });
 
@@ -252,6 +253,10 @@ class AppSettings {
   /// foregrounded. Events are queued locally and flushed into the archive.
   final bool backgroundLocationEnabled;
 
+  /// Name unsaved stops (5+ minutes) using OpenStreetMap reverse lookup.
+  /// Sends rounded coordinates to that service, so it can be turned off.
+  final bool placeLookupEnabled;
+
   /// Set after the one-time migration of old meal habits and entry meal text.
   final bool mealsMigrated;
 
@@ -319,6 +324,7 @@ class AppSettings {
     List<ReminderItem>? reminders,
     bool? locationTrackingEnabled,
     bool? backgroundLocationEnabled,
+    bool? placeLookupEnabled,
     bool? mealsMigrated,
   }) {
     final clearCloud = clearCloudflareSession;
@@ -382,6 +388,7 @@ class AppSettings {
           locationTrackingEnabled ?? this.locationTrackingEnabled,
       backgroundLocationEnabled:
           backgroundLocationEnabled ?? this.backgroundLocationEnabled,
+      placeLookupEnabled: placeLookupEnabled ?? this.placeLookupEnabled,
       mealsMigrated: mealsMigrated ?? this.mealsMigrated,
     );
   }
@@ -415,6 +422,7 @@ class AppSettings {
         'reminders': reminders.map((r) => r.toJson()).toList(),
         'locationTrackingEnabled': locationTrackingEnabled,
         'backgroundLocationEnabled': backgroundLocationEnabled,
+        'placeLookupEnabled': placeLookupEnabled,
         'mealsMigrated': mealsMigrated,
       };
 
@@ -472,6 +480,7 @@ class AppSettings {
       locationTrackingEnabled: json['locationTrackingEnabled'] as bool? ?? false,
       backgroundLocationEnabled:
           json['backgroundLocationEnabled'] as bool? ?? false,
+      placeLookupEnabled: json['placeLookupEnabled'] as bool? ?? true,
       mealsMigrated: json['mealsMigrated'] as bool? ?? false,
     );
   }

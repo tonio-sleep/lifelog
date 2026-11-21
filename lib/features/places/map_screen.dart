@@ -15,6 +15,7 @@ import '../../domain/models/places.dart';
 import '../../integrations/location/background_location_channel.dart';
 import '../../integrations/location/location_tracking.dart';
 import '../../integrations/location/location_tracking_controller.dart';
+import '../../integrations/location/place_name_resolver.dart';
 import '../../integrations/maps/map_models.dart';
 import '../../integrations/maps/map_platform.dart';
 import 'place_dialogs.dart';
@@ -39,6 +40,35 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   DateTime? _liveCheckedAt;
   bool _refreshingLive = false;
   bool _permissionRequested = false;
+  bool _namingStops = false;
+
+  /// Looks up names for unsaved stays of 5+ minutes, then rebuilds.
+  void _ensureNames(DayLocationSummary summary) {
+    if (_namingStops) return;
+    final missing = [
+      for (final seg in summary.segments)
+        if (seg.wantsName &&
+            !PlaceNameResolver.instance
+                .hasAttempted(seg.latitude!, seg.longitude!))
+          seg,
+    ];
+    if (missing.isEmpty) return;
+    _namingStops = true;
+    () async {
+      try {
+        for (final seg in missing.take(6)) {
+          await PlaceNameResolver.instance
+              .resolve(seg.latitude!, seg.longitude!);
+          if (!mounted) return;
+          setState(() {});
+        }
+      } catch (_) {
+        // Offline or rate limited: keep the generic label.
+      } finally {
+        _namingStops = false;
+      }
+    }();
+  }
 
   @override
   void initState() {
@@ -284,9 +314,23 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         ListGroup(
           title: 'Day tracking',
           footer: _isIOS
-              ? 'Day tracking records your route while the app is in use. Background visits use iOS place monitoring (not continuous GPS) and need Location Access set to Always in iOS Settings. All of it stays on this device in your encrypted archive — nothing is sent to a server.'
-              : 'Day tracking records your route while the app is in use. Background visits are an iOS-only feature. All of it stays on this device in your encrypted archive — nothing is sent to a server.',
+              ? 'Day tracking records your route while the app is in use. Background visits use iOS place monitoring (not continuous GPS) and need Location Access set to Always in iOS Settings. Your route stays on this device in your encrypted archive. Naming stops sends only rounded coordinates of a stop to OpenStreetMap; turn it off to keep everything offline.'
+              : 'Day tracking records your route while the app is in use. Background visits are an iOS-only feature. Your route stays on this device in your encrypted archive. Naming stops sends only rounded coordinates of a stop to OpenStreetMap; turn it off to keep everything offline.',
           children: [
+            ListRow(
+              icon: Icons.storefront_outlined,
+              iconColor: palette.place,
+              title: 'Name places I stop at',
+              subtitle: settings.placeLookupEnabled
+                  ? 'On · stops of 5+ min get the nearest place name (OpenStreetMap)'
+                  : 'Off · stops stay as “Another location”',
+              trailing: Switch.adaptive(
+                value: settings.placeLookupEnabled,
+                onChanged: (v) => ref
+                    .read(settingsProvider.notifier)
+                    .setPlaceLookupEnabled(v),
+              ),
+            ),
             ListRow(
               icon: Icons.location_searching_rounded,
               iconColor: palette.place,
@@ -341,8 +385,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           onSwipe: _shift,
           builder: (context, day) {
             final visits = archive.visitsOn(day);
-            final summary = LocationTracking.summarizeDay(archive, day);
-            final stops = LocationTracking.inferStops(archive, day);
+            final String? Function(double, double)? nameFor =
+                settings.placeLookupEnabled
+                    ? PlaceNameResolver.instance.cached
+                    : null;
+            final summary =
+                LocationTracking.summarizeDay(archive, day, nameFor: nameFor);
+            final stops =
+                LocationTracking.inferStops(archive, day, nameFor: nameFor);
+            if (settings.placeLookupEnabled) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) _ensureNames(summary);
+              });
+            }
             final isToday = sameDay(day, DateTime.now());
             final lastStayBeforeTravel = _lastStayBeforeCurrentTravel(summary);
             return Column(
@@ -438,10 +493,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     compact: true,
                   )
                 else
-                  for (final segment in summary.segments)
+                  for (final entry in summary.segments.indexed)
                     _JourneySegmentCard(
-                      segment: segment,
+                      segment: entry.$2,
                       isToday: isToday,
+                      movedOn: entry.$1 < summary.segments.length - 1,
                     ),
                 if (visits.any((v) => v.id.startsWith('auto-loc-'))) ...[
                   const SectionHeader(title: 'Auto-tracked places'),
@@ -803,10 +859,17 @@ class _StatChip extends StatelessWidget {
 }
 
 class _JourneySegmentCard extends StatelessWidget {
-  const _JourneySegmentCard({required this.segment, required this.isToday});
+  const _JourneySegmentCard({
+    required this.segment,
+    required this.isToday,
+    this.movedOn = false,
+  });
 
   final DayLocationSegment segment;
   final bool isToday;
+
+  /// True when a later segment exists, i.e. the person left this spot.
+  final bool movedOn;
 
   @override
   Widget build(BuildContext context) {
@@ -830,9 +893,17 @@ class _JourneySegmentCard extends StatelessWidget {
         ? (segment.isCurrent && isToday
             ? 'You are moving between places.'
             : 'Time spent on the move.')
-        : (segment.placeId == null
-            ? 'Stopped at a location not saved as a place.'
-            : 'Time spent here.');
+        : (segment.isCurrent && isToday)
+            ? (dur.inMinutes > 0
+                ? 'Here for ${formatDurationMinutes(dur.inMinutes)} so far.'
+                : 'You just arrived.')
+            : movedOn && dur.inMinutes > 0
+                ? 'Stayed ${formatDurationMinutes(dur.inMinutes)}, then moved on at ${formatTime(segment.endAt)}.'
+                : (segment.placeId == null
+                    ? (segment.detail == 'Near this spot'
+                        ? 'Closest named spot to where you stopped.'
+                        : 'Stopped at a location not saved as a place.')
+                    : 'Time spent here.');
     return Padding(
       padding: const EdgeInsets.only(bottom: Insets.sm),
       child: QuietCard(

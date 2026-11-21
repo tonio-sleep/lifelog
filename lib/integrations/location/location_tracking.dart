@@ -47,6 +47,8 @@ class DayLocationSegment {
     this.placeId,
     this.distanceMeters,
     this.detail,
+    this.latitude,
+    this.longitude,
   });
 
   final DayLocationKind kind;
@@ -57,6 +59,18 @@ class DayLocationSegment {
   final String? placeId;
   final double? distanceMeters;
   final String? detail;
+
+  /// Average position of a stay (null for travel).
+  final double? latitude;
+  final double? longitude;
+
+  /// A stay long enough, and not at a saved place, to be worth naming.
+  bool get wantsName =>
+      !isTravel &&
+      placeId == null &&
+      latitude != null &&
+      longitude != null &&
+      duration >= const Duration(minutes: 5);
 
   Duration get duration =>
       endAt.isAfter(startAt) ? endAt.difference(startAt) : Duration.zero;
@@ -310,8 +324,12 @@ class LocationTracking {
 
   /// Compute auto-tracked visits for [day] from stored location samples.
   /// Manual (non-auto) visits are preserved by the caller.
-  static List<Visit> computeAutoVisitsForDay(Archive archive, DateTime day) {
-    final summary = summarizeDay(archive, day);
+  static List<Visit> computeAutoVisitsForDay(
+    Archive archive,
+    DateTime day, {
+    String? Function(double lat, double lon)? nameFor,
+  }) {
+    final summary = summarizeDay(archive, day, nameFor: nameFor);
     final segments = summary.segments;
     if (segments.isEmpty) return const [];
     final key = dayKey(day);
@@ -414,7 +432,11 @@ class LocationTracking {
   }
 
   /// Rich day summary including journey segments, travel/stay, and current status.
-  static DayLocationSummary summarizeDay(Archive archive, DateTime day) {
+  static DayLocationSummary summarizeDay(
+    Archive archive,
+    DateTime day, {
+    String? Function(double lat, double lon)? nameFor,
+  }) {
     final samples = archive.locationSamplesOn(day);
     if (samples.isEmpty) {
       return DayLocationSummary(day: day, segments: const [], sampleCount: 0);
@@ -454,6 +476,9 @@ class LocationTracking {
       if (last.canMergeWith(seg)) {
         last.end = seg.end;
         last.distanceMeters = (last.distanceMeters ?? 0) + (seg.distanceMeters ?? 0);
+        last.latSum += seg.latSum;
+        last.lonSum += seg.lonSum;
+        last.count += seg.count;
       } else {
         merged.add(seg.copy());
       }
@@ -473,6 +498,15 @@ class LocationTracking {
       } else {
         label = seg.attr.label == 'Other location' ? 'Another location' : seg.attr.label;
         detail = seg.attr.place == null ? 'Stopped nearby' : 'At this saved place';
+        if (seg.attr.place == null &&
+            nameFor != null &&
+            end.difference(seg.start) >= const Duration(minutes: 5)) {
+          final found = nameFor(seg.latSum / seg.count, seg.lonSum / seg.count);
+          if (found != null && found.trim().isNotEmpty) {
+            label = found.trim();
+            detail = 'Near this spot';
+          }
+        }
       }
       segments.add(
         DayLocationSegment(
@@ -484,6 +518,10 @@ class LocationTracking {
           placeId: seg.kind == DayLocationKind.stay ? seg.attr.place?.id : null,
           distanceMeters: seg.kind == DayLocationKind.travel ? seg.distanceMeters : null,
           detail: detail,
+          latitude:
+              seg.kind == DayLocationKind.stay ? seg.latSum / seg.count : null,
+          longitude:
+              seg.kind == DayLocationKind.stay ? seg.lonSum / seg.count : null,
         ),
       );
     }
@@ -527,6 +565,7 @@ class LocationTracking {
     DateTime day, {
     double clusterMeters = 160,
     Duration minimumStay = const Duration(minutes: 4),
+    String? Function(double lat, double lon)? nameFor,
   }) {
     final samples = [...archive.locationSamplesOn(day)]
       ..sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
@@ -563,11 +602,16 @@ class LocationTracking {
       final duration = last.recordedAt.difference(first.recordedAt);
       final named = attr.place != null;
       if (duration >= minimumStay || (named && cluster.length >= 2)) {
+        final lookedUp = (!named && nameFor != null && duration.inMinutes >= 5)
+            ? nameFor(lat, lon)
+            : null;
         final label = named
             ? attr.place!.name
-            : (duration.inMinutes >= 1
-                ? 'Stopped nearby'
-                : 'Brief stop');
+            : (lookedUp != null && lookedUp.trim().isNotEmpty)
+                ? lookedUp.trim()
+                : (duration.inMinutes >= 1
+                    ? 'Stopped nearby'
+                    : 'Brief stop');
         final lastStop = stops.isEmpty ? null : stops.last;
         if (lastStop != null &&
             lastStop.placeId == attr.place?.id &&
@@ -786,13 +830,18 @@ class _RawSegment {
     required this.kind,
     required this.attr,
     this.distanceMeters,
-  });
+  })  : latSum = attr.sample.latitude,
+        lonSum = attr.sample.longitude,
+        count = 1;
 
   final DateTime start;
   DateTime end;
   final DayLocationKind kind;
   final _Attr attr;
   double? distanceMeters;
+  double latSum;
+  double lonSum;
+  int count;
 
   _RawSegment copy() => _RawSegment(
         start: start,
@@ -800,7 +849,10 @@ class _RawSegment {
         kind: kind,
         attr: attr,
         distanceMeters: distanceMeters,
-      );
+      )
+        ..latSum = latSum
+        ..lonSum = lonSum
+        ..count = count;
 
   bool canMergeWith(_RawSegment other) {
     if (kind != other.kind) return false;

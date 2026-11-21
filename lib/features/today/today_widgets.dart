@@ -23,7 +23,11 @@ class TodayHeader extends StatelessWidget {
     required this.onToggleCalendar,
     required this.onSearch,
     required this.onAdd,
+    this.onToday,
   });
+
+  /// Jumps back to today; shown only when another day is selected.
+  final VoidCallback? onToday;
 
   final DateTime day;
   final bool calendarOpen;
@@ -59,35 +63,50 @@ class TodayHeader extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 2),
-                AnimatedSwitcher(
-                  duration: Motion.base,
-                  transitionBuilder: (child, animation) => FadeTransition(
-                    opacity: animation,
-                    child: SlideTransition(
-                      position: Tween<Offset>(
-                        begin: const Offset(0, 0.08),
-                        end: Offset.zero,
-                      ).animate(animation),
-                      child: child,
+                Semantics(
+                  button: true,
+                  label: calendarOpen ? 'Show week' : 'Show month',
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: onToggleCalendar,
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: AnimatedSwitcher(
+                            duration: Motion.base,
+                            transitionBuilder: (child, animation) =>
+                                FadeTransition(
+                              opacity: animation,
+                              child: SlideTransition(
+                                position: Tween<Offset>(
+                                  begin: const Offset(0, 0.08),
+                                  end: Offset.zero,
+                                ).animate(animation),
+                                child: child,
+                              ),
+                            ),
+                            child: Text(
+                              dateFormat.format(day),
+                              key: ValueKey<String>(dateFormat.format(day)),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: text.displaySmall,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        AnimatedRotation(
+                          turns: calendarOpen ? 0.5 : 0,
+                          duration: Motion.base,
+                          child: Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            size: 26,
+                            color: palette.mutedText,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  child: Text(
-                    dateFormat.format(day),
-                    key: ValueKey<String>(dateFormat.format(day)),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: text.displaySmall,
-                  ),
-                ),
-                const SizedBox(height: Insets.xs),
-                TextButton(
-                  onPressed: onToggleCalendar,
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: Insets.sm),
-                    minimumSize: const Size(0, 30),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  child: Text(calendarOpen ? 'Show week' : 'Show month'),
                 ),
               ],
             ),
@@ -95,6 +114,12 @@ class TodayHeader extends StatelessWidget {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (!isToday && onToday != null)
+                HeaderButton(
+                  icon: Icons.today_rounded,
+                  tooltip: 'Back to today',
+                  onPressed: onToday!,
+                ),
               HeaderButton(
                 icon: Icons.search_rounded,
                 tooltip: 'Search',

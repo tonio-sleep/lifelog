@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../app/theme/app_theme.dart';
 import '../../domain/models/journal.dart';
@@ -42,16 +43,32 @@ class QuietCard extends StatelessWidget {
     final palette = context.palette;
     final shape = BorderRadius.circular(radius);
 
-    Widget surface = ClipRRect(
-      borderRadius: shape,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: gradient == null ? (color ?? palette.card) : null,
-          gradient: gradient,
-          borderRadius: shape,
-          border: border ? Border.all(color: palette.border) : null,
+    // A whisper of shadow in light mode lifts cards off the grey page;
+    // dark mode keeps the flat look.
+    Widget surface = DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: shape,
+        boxShadow: palette.isDark
+            ? null
+            : const [
+                BoxShadow(
+                  color: Color(0x0D000000),
+                  blurRadius: 16,
+                  offset: Offset(0, 4),
+                ),
+              ],
+      ),
+      child: ClipRRect(
+        borderRadius: shape,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: gradient == null ? (color ?? palette.card) : null,
+            gradient: gradient,
+            borderRadius: shape,
+            border: border ? Border.all(color: palette.border) : null,
+          ),
+          child: Padding(padding: padding, child: child),
         ),
-        child: Padding(padding: padding, child: child),
       ),
     );
 
@@ -437,7 +454,17 @@ Color moodColor(int mood, ColorScheme scheme) {
   return color;
 }
 
-/// Compact picker for selecting a mood score from 1 to 10.
+const _moodEmoji = <String>[
+  '😖', '😞', '😟', '😕', '😐', '🙂', '😊', '😄', '😁', '🤩',
+];
+const _energyEmoji = <String>['🪫', '😴', '😐', '⚡', '🔥'];
+/// Emoji face for a 1-10 mood score.
+String moodEmoji(int mood) => _moodEmoji[mood.clamp(1, 10) - 1];
+
+const _energyLabels = <String>['Very low', 'Low', 'Okay', 'Good', 'High'];
+
+/// Mood picker (1-10): a swipeable strip. Swipe or tap to choose; the centred
+/// tile is the value. Left unset until the person interacts with it.
 class MoodScorePicker extends StatelessWidget {
   const MoodScorePicker({
     super.key,
@@ -450,94 +477,279 @@ class MoodScorePicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.palette;
-    final text = context.text;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: [
-            for (var score = 1; score <= 10; score++)
-              _MoodChip(
-                score: score,
-                selected: value == score,
-                onTap: () => onChanged(value == score ? null : score),
-              ),
-          ],
-        ),
-        const SizedBox(height: Insets.xs),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text('Low', style: text.labelSmall?.copyWith(color: palette.dimText)),
-            if (value != null)
-              Text(
-                '${value!}/10 · ${MoodScore.label(value!)}',
-                style: text.labelSmall?.copyWith(
-                  color: moodColor(value!, context.scheme),
-                  fontWeight: FontWeight.w600,
-                ),
-              )
-            else
-              Text(
-                'Tap a number (optional)',
-                style: text.labelSmall?.copyWith(color: palette.dimText),
-              ),
-            Text('High', style: text.labelSmall?.copyWith(color: palette.dimText)),
-          ],
-        ),
-      ],
+    return SwipeScalePicker(
+      value: value,
+      onChanged: onChanged,
+      min: 1,
+      max: 10,
+      emojiFor: (v) => _moodEmoji[v.clamp(1, 10) - 1],
+      labelFor: (v) => '$v/10 · ${MoodScore.label(v)}',
+      semanticsFor: (v) => 'Mood $v out of 10, ${MoodScore.label(v)}',
+      colorFor: (context, v) => moodColor(v, context.scheme),
+      lowLabel: 'Low',
+      highLabel: 'High',
     );
   }
 }
 
-class _MoodChip extends StatelessWidget {
-  const _MoodChip({
-    required this.score,
-    required this.selected,
-    required this.onTap,
+/// Energy picker (1-5), same swipeable strip as [MoodScorePicker].
+class EnergyScalePicker extends StatelessWidget {
+  const EnergyScalePicker({
+    super.key,
+    required this.value,
+    required this.onChanged,
   });
 
-  final int score;
-  final bool selected;
-  final VoidCallback onTap;
+  final int? value;
+  final ValueChanged<int?> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    final color = moodColor(score, context.scheme);
-    final scheme = context.scheme;
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: 'Mood $score out of 10, ${MoodScore.label(score)}',
-      child: Pressable(
-        borderRadius: BorderRadius.circular(Radii.sm),
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: Motion.fast,
-          curve: Motion.out,
-          // At least 44 logical pixels; grows with larger text sizes.
-          constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: selected ? color : color.withValues(alpha: 0.10),
-            borderRadius: BorderRadius.circular(Radii.sm),
-            border: Border.all(
-              color: selected ? color : color.withValues(alpha: 0.25),
-            ),
-          ),
-          child: Text(
-            '$score',
-            style: context.text.labelMedium?.copyWith(
-              color: selected ? scheme.onPrimary : color,
-              fontWeight: FontWeight.w700,
-              fontFeatures: tabularFigures,
-            ),
+    return SwipeScalePicker(
+      value: value,
+      onChanged: onChanged,
+      min: 1,
+      max: 5,
+      emojiFor: (v) => _energyEmoji[v.clamp(1, 5) - 1],
+      labelFor: (v) => 'Energy $v/5 · ${_energyLabels[v.clamp(1, 5) - 1]}',
+      semanticsFor: (v) =>
+          'Energy $v out of 5, ${_energyLabels[v.clamp(1, 5) - 1]}',
+      colorFor: (context, v) => moodColor(v * 2, context.scheme),
+      lowLabel: 'Drained',
+      highLabel: 'Charged',
+    );
+  }
+}
+
+/// A horizontally swipeable strip of tiles for choosing one value from a
+/// small numeric range. Swiping snaps tile by tile (with a light haptic tick);
+/// tapping a neighbouring tile slides it to the centre.
+class SwipeScalePicker extends StatefulWidget {
+  const SwipeScalePicker({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    required this.min,
+    required this.max,
+    required this.emojiFor,
+    required this.labelFor,
+    required this.semanticsFor,
+    required this.colorFor,
+    this.lowLabel = 'Low',
+    this.highLabel = 'High',
+  });
+
+  final int? value;
+  final ValueChanged<int?> onChanged;
+  final int min;
+  final int max;
+  final String Function(int value) emojiFor;
+  final String Function(int value) labelFor;
+  final String Function(int value) semanticsFor;
+  final Color Function(BuildContext context, int value) colorFor;
+  final String lowLabel;
+  final String highLabel;
+
+  @override
+  State<SwipeScalePicker> createState() => _SwipeScalePickerState();
+}
+
+class _SwipeScalePickerState extends State<SwipeScalePicker> {
+  late int _page = _startPage();
+  late final PageController _controller = PageController(
+    viewportFraction: 0.24,
+    initialPage: _page,
+  );
+
+  int get _count => widget.max - widget.min + 1;
+
+  int _startPage() {
+    final v = widget.value;
+    final fallback = ((widget.max - widget.min) / 2).floor();
+    return ((v ?? (widget.min + fallback)) - widget.min)
+        .clamp(0, widget.max - widget.min);
+  }
+
+  @override
+  void didUpdateWidget(covariant SwipeScalePicker oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final v = widget.value;
+    if (v != null && v - widget.min != _page && _controller.hasClients) {
+      _page = (v - widget.min).clamp(0, _count - 1);
+      _controller.animateToPage(
+        _page,
+        duration: Motion.base,
+        curve: Motion.out,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _tap(int index) {
+    if (index == _page) {
+      if (widget.value == null) {
+        HapticFeedback.selectionClick();
+        widget.onChanged(widget.min + index);
+      }
+      return;
+    }
+    _controller.animateToPage(
+      index,
+      duration: Motion.base,
+      curve: Motion.out,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final text = context.text;
+    final value = widget.value;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          height: 96,
+          child: PageView.builder(
+            controller: _controller,
+            itemCount: _count,
+            clipBehavior: Clip.none,
+            onPageChanged: (page) {
+              _page = page;
+              HapticFeedback.selectionClick();
+              widget.onChanged(widget.min + page);
+            },
+            itemBuilder: (context, index) {
+              final number = widget.min + index;
+              return AnimatedBuilder(
+                animation: _controller,
+                builder: (context, _) {
+                  var current = _page.toDouble();
+                  if (_controller.hasClients &&
+                      _controller.position.haveDimensions) {
+                    current = _controller.page ?? current;
+                  }
+                  final distance = (current - index).abs().clamp(0.0, 1.0);
+                  final focus = 1 - distance;
+                  final active = value != null && distance < 0.5;
+                  final color = widget.colorFor(context, number);
+                  return Semantics(
+                    button: true,
+                    selected: active,
+                    label: widget.semanticsFor(number),
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => _tap(index),
+                      child: Center(
+                        child: Opacity(
+                          opacity: 0.45 + 0.55 * focus,
+                          child: Transform.scale(
+                            scale: 0.74 + 0.26 * focus,
+                            child: Container(
+                              width: 64,
+                              height: 84,
+                              decoration: BoxDecoration(
+                                color: color.withValues(
+                                  alpha: active ? 0.18 : 0.07,
+                                ),
+                                borderRadius: BorderRadius.circular(Radii.lg),
+                                border: Border.all(
+                                  color: active
+                                      ? color
+                                      : color.withValues(alpha: 0.22),
+                                  width: active ? 2 : 1,
+                                ),
+                              ),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    widget.emojiFor(number),
+                                    style: const TextStyle(fontSize: 30),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '$number',
+                                    style: text.labelLarge?.copyWith(
+                                      color: color,
+                                      fontWeight: FontWeight.w700,
+                                      fontFeatures: tabularFigures,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              );
+            },
           ),
         ),
-      ),
+        const SizedBox(height: Insets.xs),
+        Row(
+          children: [
+            Text(
+              widget.lowLabel,
+              style: text.labelSmall?.copyWith(color: palette.dimText),
+            ),
+            Expanded(
+              child: Center(
+                child: value == null
+                    ? Text(
+                        'Swipe or tap (optional)',
+                        style: text.labelSmall?.copyWith(
+                          color: palette.dimText,
+                        ),
+                      )
+                    : Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              widget.labelFor(value),
+                              overflow: TextOverflow.ellipsis,
+                              style: text.labelMedium?.copyWith(
+                                color: widget.colorFor(context, value),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          Semantics(
+                            button: true,
+                            label: 'Clear',
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(Radii.pill),
+                              onTap: () => widget.onChanged(null),
+                              child: Padding(
+                                padding: const EdgeInsets.all(8),
+                                child: Icon(
+                                  Icons.close_rounded,
+                                  size: 16,
+                                  color: palette.dimText,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
+            ),
+            Text(
+              widget.highLabel,
+              style: text.labelSmall?.copyWith(color: palette.dimText),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

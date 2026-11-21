@@ -10,6 +10,7 @@ import '../../domain/memories.dart';
 import '../../domain/models/journal.dart';
 import '../../domain/models/timeline.dart';
 import '../../domain/models/trackers.dart';
+import '../journal/day_overview.dart';
 import '../journal/journal_widgets.dart';
 import '../meals/meal_dialogs.dart';
 import '../meals/meal_widgets.dart';
@@ -235,6 +236,8 @@ class _DayStoryState extends ConsumerState<_DayStory> {
         ),
       ),
       const SizedBox(height: Insets.xs),
+      DayOverviewCard(stats: DayStats.of(archive, day)),
+      const SizedBox(height: Insets.sm),
       _DayFeelingCard(
         day: day,
         checkins: checkins,

@@ -12,6 +12,7 @@ import '../../domain/memories.dart';
 import '../../domain/models/journal.dart';
 import '../../domain/models/music.dart';
 import '../../domain/models/timeline.dart';
+import '../journal/day_overview.dart';
 import '../journal/journal_widgets.dart';
 import '../memories/calendar.dart';
 import '../memories/day_detail_screen.dart';
@@ -78,6 +79,7 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
         onToggleCalendar: () => setState(() => _showMonth = !_showMonth),
         onSearch: () => widget.onNavigate?.call('search'),
         onAdd: () => showQuickAdd(context, ref),
+        onToday: () => _select(dayStart(DateTime.now())),
       ),
       children: [
         AnimatedSize(
@@ -191,30 +193,42 @@ class _DayBody extends ConsumerWidget {
             createNew: true,
           ),
         ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => DayDetailScreen(day: day),
+        const SizedBox(height: Insets.md),
+        DayStatStrip(stats: DayStats.of(archive, day)),
+        const SizedBox(height: Insets.md),
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.tonalIcon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => DayDetailScreen(day: day),
+                  ),
+                ),
+                icon: const Icon(Icons.auto_stories_outlined, size: 18),
+                label: Text(isToday ? 'Today’s summary' : 'Day summary'),
               ),
             ),
-            icon: const Icon(Icons.auto_stories_outlined, size: 16),
-            label: Text(
-              isToday ? 'See today’s full story' : 'See this day’s full story',
+            const SizedBox(width: Insets.sm),
+            Expanded(
+              child: FilledButton.tonalIcon(
+                onPressed: () => onNavigate?.call('places', day: day),
+                icon: const Icon(Icons.place_outlined, size: 18),
+                label: const Text('Map'),
+              ),
             ),
-          ),
+          ],
         ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: () => onNavigate?.call('places', day: day),
-            icon: const Icon(Icons.place_outlined, size: 16),
-            label: Text(
-              isToday ? 'See today on the map' : 'See this day on the map',
-            ),
-          ),
-        ),
+        // The composer already summarises the latest check-in; the detailed
+        // list only appears when there is more than one to look through.
+        if (checkins.length > 1) ...[
+          const SizedBox(height: Insets.md),
+          _DayCheckinsCard(day: day, checkins: checkins, metrics: metrics),
+        ],
+        const SizedBox(height: Insets.md),
+        TodayHabits(day: day, onSeeAll: () => onNavigate?.call('trackers')),
+        const SizedBox(height: Insets.md),
+        MealsDayCard(day: day, maxItems: 3),
         if (latest != null) ...[
           const SizedBox(height: Insets.md),
           NowPlayingCard(scrobble: latest, onTap: () => onNavigate?.call('music')),
@@ -222,14 +236,6 @@ class _DayBody extends ConsumerWidget {
           const SizedBox(height: Insets.md),
           DayListeningCard(summary: listening, onTap: () => onNavigate?.call('music')),
         ],
-        if (checkins.isNotEmpty || metrics != null) ...[
-          const SizedBox(height: Insets.md),
-          _DayCheckinsCard(day: day, checkins: checkins, metrics: metrics),
-        ],
-        const SizedBox(height: Insets.md),
-        MealsDayCard(day: day, maxItems: 4),
-        const SizedBox(height: Insets.md),
-        TodayHabits(day: day, onSeeAll: () => onNavigate?.call('trackers')),
         if (summary.photos.isNotEmpty) ...[
           SectionHeader(
             title: 'Moments',
@@ -246,7 +252,7 @@ class _DayBody extends ConsumerWidget {
         TimelineDayList(
           day: day,
           compact: true,
-          maxItems: 6,
+          maxItems: 4,
           showEmptyAction: false,
           sources: const {
             TimelineSource.journal,
